@@ -1,0 +1,190 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { renderHook, act, waitFor } from '@testing-library/react'
+import { useDashboardLayout } from '../hooks/useDashboardLayout'
+import * as dashboardLayoutService from '../services/dashboardLayoutService'
+
+vi.mock('../services/dashboardLayoutService')
+
+function componente(component_id, order, extra = {}) {
+  return {
+    component_id, type: 'kpi', chart_type: '', row: order, order, width: 2, height: 180,
+    is_visible: true, content: {}, styles: {}, config: {}, ...extra,
+  }
+}
+
+function layoutDePrueba(version = 1) {
+  return {
+    dashboard_id: 'cartera',
+    version,
+    components: [
+      componente('a', 1), componente('b', 2), componente('c', 3), componente('d', 4),
+    ],
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  dashboardLayoutService.obtenerLayout.mockResolvedValue(layoutDePrueba())
+})
+
+async function montarYCargar() {
+  const { result } = renderHook(() => useDashboardLayout('cartera'))
+  await waitFor(() => expect(result.current.layoutGuardado).not.toBeNull())
+  return result
+}
+
+describe('useDashboardLayout', () => {
+  it('carga el layout guardado y lo clona como borrador al montar', async () => {
+    const result = await montarYCargar()
+    expect(dashboardLayoutService.obtenerLayout).toHaveBeenCalledWith('cartera')
+    expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  it('activarEdicion entra en modo edición sin llamar de nuevo al servicio', async () => {
+    const result = await montarYCargar()
+    act(() => result.current.activarEdicion())
+    expect(result.current.modoEdicion).toBe(true)
+    expect(dashboardLayoutService.obtenerLayout).toHaveBeenCalledTimes(1)
+  })
+
+  describe('moverComponente (regresión: el reordenamiento no debe deshacerse a sí mismo)', () => {
+    it('"abajo" intercambia el componente con el siguiente y dos movimientos lo devuelven a su posición', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('b', 'abajo'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'c', 'b', 'd'])
+
+      act(() => result.current.moverComponente('b', 'abajo'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'c', 'd', 'b'])
+    })
+
+    it('"arriba" intercambia el componente con el anterior', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('c', 'arriba'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'c', 'b', 'd'])
+    })
+
+    it('"inicio" mueve el componente al principio', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('d', 'inicio'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['d', 'a', 'b', 'c'])
+    })
+
+    it('"fin" mueve el componente al final', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('a', 'fin'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['b', 'c', 'd', 'a'])
+    })
+
+    it('reasigna los valores de "order" de forma secuencial y única tras mover', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('b', 'abajo'))
+
+      const ordenes = result.current.borrador.map((c) => c.order)
+      expect(ordenes).toEqual([1, 2, 3, 4])
+      expect(new Set(ordenes).size).toBe(4)
+    })
+
+    it('mover el primero "arriba" no cambia nada (límite superior)', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.moverComponente('a', 'arriba'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
+    })
+  })
+
+  describe('reordenarPorIds (arrastre con dnd-kit)', () => {
+    it('reordena el borrador según la lista de ids provista', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.reordenarPorIds(['d', 'a', 'c', 'b']))
+
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['d', 'a', 'c', 'b'])
+      expect(result.current.borrador.map((c) => c.order)).toEqual([1, 2, 3, 4])
+    })
+  })
+
+  describe('separación entre estilo/contenido y datos', () => {
+    it('actualizarEstilos y actualizarContenido no llaman al servicio de layout (sin round-trip)', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.actualizarEstilos('a', { colorPrincipal: '#112233' }))
+      act(() => result.current.actualizarContenido('a', { titulo: 'Nuevo título' }))
+
+      expect(result.current.borrador.find((c) => c.component_id === 'a').styles.colorPrincipal).toBe('#112233')
+      expect(result.current.borrador.find((c) => c.component_id === 'a').content.titulo).toBe('Nuevo título')
+      expect(dashboardLayoutService.obtenerLayout).toHaveBeenCalledTimes(1)
+      expect(dashboardLayoutService.guardarLayout).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('guardar / cancelar / restablecer', () => {
+    it('guardar envía la version y los componentes, y sale del modo edición', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+      act(() => result.current.moverComponente('b', 'abajo'))
+
+      dashboardLayoutService.guardarLayout.mockResolvedValue(layoutDePrueba(2))
+      await act(async () => { await result.current.guardar('Ana') })
+
+      expect(dashboardLayoutService.guardarLayout).toHaveBeenCalledWith('cartera', expect.objectContaining({
+        version: 1, changedBy: 'Ana',
+      }))
+      expect(result.current.modoEdicion).toBe(false)
+    })
+
+    it('un 409 del servidor deja el conflicto disponible sin tocar el borrador', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      dashboardLayoutService.guardarLayout.mockRejectedValue({ response: { status: 409, data: layoutDePrueba(5) } })
+      const respuesta = await act(async () => result.current.guardar('Ana'))
+
+      expect(respuesta).toEqual({ ok: false, conflicto: true })
+      expect(result.current.conflicto).toEqual(layoutDePrueba(5))
+    })
+
+    it('cancelar descarta el borrador y restaura el guardado', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+      act(() => result.current.moverComponente('b', 'abajo'))
+
+      act(() => result.current.cancelar())
+
+      expect(result.current.modoEdicion).toBe(false)
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
+    })
+
+    it('restablecer llama al endpoint de reset y reemplaza guardado/borrador', async () => {
+      const result = await montarYCargar()
+      const layoutPorDefecto = layoutDePrueba(1)
+      dashboardLayoutService.restablecerLayout.mockResolvedValue(layoutPorDefecto)
+
+      await act(async () => { await result.current.restablecer('Ana') })
+
+      expect(dashboardLayoutService.restablecerLayout).toHaveBeenCalledWith('cartera', { changedBy: 'Ana' })
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
+    })
+
+    it('hayCambiosSinGuardar detecta cambios y guardar los limpia', async () => {
+      const result = await montarYCargar()
+      expect(result.current.hayCambiosSinGuardar()).toBe(false)
+
+      act(() => result.current.activarEdicion())
+      act(() => result.current.moverComponente('b', 'abajo'))
+      expect(result.current.hayCambiosSinGuardar()).toBe(true)
+    })
+  })
+})

@@ -1,0 +1,140 @@
+:root {
+  color-scheme: light;
+  --surface-1: #ffffff;
+  --page-plane: #eeeeee;
+  --text-primary: #000000;
+  --text-secondary: #000000;
+  --text-muted: #000000;
+  --gridline: #999999;
+  --baseline: #666666;
+  --border: #999999;
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+}
+
+body {
+  background: var(--page-plane);
+  color: var(--text-primary);
+}
+
+.cartera-app {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.kpi-card {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  height: 100%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  color: var(--text-primary);
+}
+
+.kpi-card__label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.kpi-card__value {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: proportional-nums;
+}
+
+.kpi-card__sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.kpi-card:focus-visible,
+[role='button']:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+}
+
+.chart-panel {
+  background: var(--surface-1);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  height: 100%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  color: var(--text-primary);
+}
+
+.chart-panel__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.chart-panel__subtitle {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.recharts-cartesian-axis-tick text {
+  fill: var(--text-primary);
+  font-size: 12px;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  stroke: var(--gridline);
+}
+
+.upload-dropzone {
+  border: 2px dashed var(--baseline);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+  color: var(--text-primary);
+}
+
+.upload-dropzone--active {
+  border-color: var(--series-1);
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.table-scroll table {
+  color: var(--text-primary);
+}
+
+.table-scroll th,
+.table-scroll td {
+  border-color: var(--border) !important;
+}
+
+.matrix-table th,
+.matrix-table td {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

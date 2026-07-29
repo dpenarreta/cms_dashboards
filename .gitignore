@@ -1,0 +1,32 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Django
+backend/media/
+backend/staticfiles/
+backend/*.log
+db.sqlite3
+
+# Env / secretos
+.env
+backend/.env
+*.env.local
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Archivos de datos reales del usuario (nunca commitear)
+*.xlsx
+*.xls
+!backend/cartera/tests/fixtures/*.xlsx
