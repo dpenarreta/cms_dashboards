@@ -69,7 +69,7 @@ describe('EditModeToolbar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer diseño' }))
 
     expect(props.onRestablecer).not.toHaveBeenCalled()
-    expect(screen.getByText('Restablecer diseño predeterminado')).toBeInTheDocument()
+    expect(screen.getByText('Restablecer visibilidad de componentes')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
     expect(props.onRestablecer).toHaveBeenCalledTimes(1)

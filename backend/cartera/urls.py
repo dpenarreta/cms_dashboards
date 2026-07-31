@@ -4,6 +4,9 @@ from . import views
 
 urlpatterns = [
     path('validar-archivo', views.ValidarArchivoView.as_view(), name='validar-archivo'),
+    path('analizar-columnas', views.AnalizarColumnasView.as_view(), name='analizar-columnas'),
+    path('recomendar-graficas', views.RecomendarGraficasView.as_view(), name='recomendar-graficas'),
+    path('agregar-grafica', views.AgregarGraficaView.as_view(), name='agregar-grafica'),
     path('procesar', views.ProcesarView.as_view(), name='procesar'),
     path('resumen/<uuid:carga_id>', views.ResumenView.as_view(), name='resumen'),
     path('top-clientes/<uuid:carga_id>', views.TopClientesView.as_view(), name='top-clientes'),

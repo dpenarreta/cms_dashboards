@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Button } from 'react-bootstrap'
@@ -6,13 +7,15 @@ import MoveButtons from './MoveButtons'
 /**
  * Chrome de edición alrededor de cualquier componente del dashboard (sección 7): borde visual,
  * manija de arrastre (dnd-kit, con soporte de teclado), engranaje para abrir el panel de
- * propiedades, ocultar/mostrar y los botones de mover como alternativa accesible al arrastre.
+ * propiedades, ocultar/mostrar, eliminar (con confirmación in-line, ya que a diferencia de
+ * ocultar no es reversible) y los botones de mover como alternativa accesible al arrastre.
  */
 export default function ComponentWrapper({
   componente, esPrimero, esUltimo, seleccionado,
-  onSeleccionar, onMover, onOcultar, onMostrar, permiteEstilo,
+  onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, permiteEstilo, permiteEliminar,
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: componente.component_id })
+  const [confirmandoEliminar, setConfirmandoEliminar] = useState(false)
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -67,6 +70,19 @@ export default function ComponentWrapper({
               <Button size="sm" variant="outline-primary" onClick={() => onMostrar(componente.component_id)} title="Mostrar">
                 Mostrar
               </Button>
+            )}
+            {permiteEliminar && (
+              confirmandoEliminar ? (
+                <div className="d-flex gap-1 align-items-center">
+                  <span className="text-danger" style={{ fontSize: '0.8rem' }}>¿Eliminar?</span>
+                  <Button size="sm" variant="danger" onClick={() => onEliminar(componente.component_id)}>Sí</Button>
+                  <Button size="sm" variant="outline-secondary" onClick={() => setConfirmandoEliminar(false)}>No</Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="outline-danger" onClick={() => setConfirmandoEliminar(true)} title="Eliminar (no se puede deshacer)">
+                  Eliminar
+                </Button>
+              )
             )}
           </div>
         </div>

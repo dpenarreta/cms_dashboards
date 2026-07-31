@@ -64,14 +64,14 @@ export default function EditModeToolbar({
 
       <ConfirmModal
         show={confirmando === 'restablecer'}
-        title="Restablecer diseño predeterminado"
+        title="Restablecer visibilidad de componentes"
         confirmLabel="Restablecer"
         onConfirm={() => { setConfirmando(null); onRestablecer(nombreEditor) }}
         onCancel={() => setConfirmando(null)}
       >
         <Alert variant="warning" className="mb-0">
-          Esta acción reemplaza la configuración actual del dashboard por el diseño predeterminado
-          para todos los usuarios. No se puede deshacer (aunque queda registrada en el historial).
+          Esta acción vuelve a mostrar cualquier componente que hayas ocultado, para todos los
+          usuarios. No se puede deshacer (aunque queda registrada en el historial).
         </Alert>
       </ConfirmModal>
     </div>

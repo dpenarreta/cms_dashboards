@@ -22,11 +22,31 @@
   --status-warning: #fab219;
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
+
+  /* Identidad institucional (apps.branding) — valores "de arranque en frío" antes de que
+     ThemeProvider aplique el tema real desde el backend (GET /api/branding/current). Coinciden
+     a propósito con la paleta de arriba, para que activar el theming no cambie nada visualmente
+     el día 1 (docs/integracion/decisions.md). Un administrador los cambia desde
+     /admin/settings; ThemeProvider los sobreescribe en runtime con `element.style.setProperty`. */
+  --color-primary: #2a78d6;
+  --color-secondary: #eb6834;
+  --color-background: #eeeeee;
+  --color-headings: #000000;
+  --color-text: #000000;
+  --color-links: #2a78d6;
+  --color-buttons: #2a78d6;
+  --color-menu: #ffffff;
+  --font-primary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-secondary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-size-base: 16px;
+  --border-radius: 10px;
 }
 
 body {
-  background: var(--page-plane);
+  background: var(--color-background);
   color: var(--text-primary);
+  font-family: var(--font-primary);
+  font-size: var(--font-size-base);
 }
 
 .cartera-app {
@@ -38,7 +58,7 @@ body {
 .kpi-card {
   background: var(--surface-1);
   border: 1.5px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--border-radius);
   padding: 16px 18px;
   height: 100%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
@@ -66,14 +86,14 @@ body {
 
 .kpi-card:focus-visible,
 [role='button']:focus-visible {
-  outline: 2px solid var(--series-1);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
 .chart-panel {
   background: var(--surface-1);
   border: 1.5px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--border-radius);
   padding: 16px;
   height: 100%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
@@ -91,6 +111,33 @@ body {
   font-size: 0.8rem;
   color: var(--text-secondary);
   margin-bottom: 12px;
+}
+
+/* Tarjetas de "Mis dashboards" (DashboardsListPage) — los botones de acción (Entrar/Editar/
+   Eliminar) siempre existen en el DOM, solo se revelan visualmente al pasar el cursor o al
+   recibir foco de teclado (accesible sin mouse). */
+.dashboard-card {
+  position: relative;
+}
+
+.dashboard-card__actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  border-radius: var(--border-radius);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.dashboard-card:hover .dashboard-card__actions,
+.dashboard-card:focus-within .dashboard-card__actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .recharts-cartesian-axis-tick text {
@@ -137,4 +184,43 @@ body {
 .matrix-table td {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.pagination-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pagination-bar__selector,
+.pagination-bar__controles {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pagination-bar__resumen {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 576px) {
+  .pagination-bar {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .pagination-bar__selector,
+  .pagination-bar__controles {
+    justify-content: center;
+  }
+
+  .pagination-bar__resumen {
+    order: -1;
+  }
 }

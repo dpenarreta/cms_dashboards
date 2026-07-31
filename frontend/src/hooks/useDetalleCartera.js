@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as carteraService from '../services/carteraService'
 
-const PAGE_SIZE_DEFECTO = 50
+const PAGE_SIZE_DEFECTO = 10
 
 function limpiarParams(params) {
   const limpio = { ...params }
@@ -16,8 +16,9 @@ function limpiarParams(params) {
  * Lo usan tanto la tabla principal del dashboard como el panel de detalle del drill-down,
  * para no duplicar la lógica de paginación/orden/búsqueda en cada componente.
  */
-export function useDetalleCartera({ cargaId, filtros, fechaCorte, pageSize = PAGE_SIZE_DEFECTO }) {
+export function useDetalleCartera({ cargaId, filtros, fechaCorte, pageSizeInicial = PAGE_SIZE_DEFECTO }) {
   const [pagina, setPagina] = useState(1)
+  const [pageSize, setPageSize] = useState(pageSizeInicial)
   const [orden, setOrden] = useState('-saldo')
   const [busqueda, setBusqueda] = useState('')
   const [detalle, setDetalle] = useState({ results: [], count: 0, saldo_filtrado: 0, porcentaje_sobre_cartera_total: 0 })
@@ -52,16 +53,17 @@ export function useDetalleCartera({ cargaId, filtros, fechaCorte, pageSize = PAG
   useEffect(() => {
     if (cargaId) cargar(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cargaId, filtrosClave, fechaCorte, orden, busqueda])
+  }, [cargaId, filtrosClave, fechaCorte, orden, busqueda, pageSize])
 
   const irAPagina = useCallback((numero) => cargar(numero), [cargar])
   const alternarOrden = useCallback((campo) => {
     setOrden((prev) => (prev === campo ? `-${campo}` : campo))
   }, [])
   const actualizar = useCallback(() => cargar(pagina), [cargar, pagina])
+  const cambiarPageSize = useCallback((nuevo) => setPageSize(nuevo), [])
 
   return {
-    detalle, pagina, orden, busqueda, cargando, error,
-    irAPagina, setOrden: alternarOrden, setBusqueda, actualizar,
+    detalle, pagina, pageSize, orden, busqueda, cargando, error,
+    irAPagina, setOrden: alternarOrden, setBusqueda, actualizar, cambiarPageSize,
   }
 }

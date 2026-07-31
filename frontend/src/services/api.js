@@ -1,7 +1,5 @@
-import axios from 'axios'
+import { createApiClient } from './httpClient'
 
-const api = axios.create({
-  baseURL: '/api/cartera',
-})
+const api = createApiClient('/api/cartera')
 
 export default api

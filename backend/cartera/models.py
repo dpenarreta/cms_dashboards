@@ -1,6 +1,26 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
+
+
+class Dashboard(models.Model):
+    """Un dashboard por área, creado dinámicamente por un administrador. Cada uno aloja el mismo
+    pipeline de carga y cálculo de KPIs de cartera (ver `cartera/services/dashboard_layout.py` y
+    `cartera/views.py`) — no existe ya un único dashboard especial con lógica propia."""
+
+    dashboard_id = models.SlugField(max_length=100, unique=True)
+    name = models.CharField(max_length=150)
+    area = models.CharField(max_length=100, blank=True, default='')
+    description = models.CharField(max_length=300, blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.dashboard_id})'
 
 
 class CargaArchivo(models.Model):
@@ -11,6 +31,9 @@ class CargaArchivo(models.Model):
         ERROR = 'ERROR', 'Error'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # `default='cartera'`: valor histórico (preserva compatibilidad con cargas anteriores a la
+    # existencia de este campo) — cada carga nueva manda su `dashboard_id` real explícitamente.
+    dashboard_id = models.SlugField(max_length=100, default='cartera', db_index=True)
     nombre_original = models.CharField(max_length=255)
     nombre_hoja = models.CharField(max_length=255, blank=True)
     tamano_bytes = models.BigIntegerField(default=0)
@@ -147,6 +170,7 @@ class DashboardAuditLog(models.Model):
         TAMANO = 'CAMBIO_DE_TAMANO', 'Cambio de tamaño'
         COLOR = 'CAMBIO_DE_COLOR', 'Cambio de color'
         TEXTO = 'CAMBIO_DE_TEXTO', 'Cambio de texto'
+        CONFIG = 'CAMBIO_DE_CONFIGURACION', 'Cambio de configuración'
         OCULTADO = 'COMPONENTE_OCULTADO', 'Componente ocultado'
         ELIMINADO = 'COMPONENTE_ELIMINADO', 'Componente eliminado'
         RESTABLECIDO = 'DISENO_RESTABLECIDO', 'Diseño restablecido'

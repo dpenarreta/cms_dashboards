@@ -95,6 +95,16 @@ export function useDashboardLayout(dashboardId) {
     )))
   }, [])
 
+  /**
+   * A diferencia de ocultar (reversible, is_visible=false), esto quita el componente del
+   * borrador: al guardar, `aplicar_layout` interpreta cualquier componente que ya no venga en la
+   * lista como eliminado (sección "editor del dashboard debe permitir borrar componentes").
+   */
+  const eliminarComponente = useCallback((componentId) => {
+    setBorrador((prev) => prev.filter((c) => c.component_id !== componentId))
+    setSeleccionado((prev) => (prev === componentId ? null : prev))
+  }, [])
+
   const moverComponente = useCallback((componentId, direccion) => {
     setBorrador((prev) => {
       const ordenados = [...prev].sort((a, b) => a.order - b.order)
@@ -189,11 +199,15 @@ export function useDashboardLayout(dashboardId) {
     actualizarComponente,
     actualizarContenido,
     actualizarEstilos,
+    eliminarComponente,
     moverComponente,
     reordenarPorIds,
     guardar,
     restablecer,
     recargarPorConflicto,
     hayCambiosSinGuardar,
+    // Expuesto para refrescar el layout tras una acción externa a este hook (p. ej. generar el
+    // dashboard a partir de columnas elegidas en `useGenericDashboardBuilder`).
+    recargar: cargar,
   }
 }

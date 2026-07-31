@@ -1,0 +1,262 @@
+import { useEffect, useState } from 'react'
+import { Alert, Button, Card, Form, Modal, Spinner } from 'react-bootstrap'
+import { Link } from 'react-router-dom'
+import { useAuth } from '../../context/AuthContext'
+import * as dashboardLayoutService from '../../services/dashboardLayoutService'
+
+function rutaDashboard(dashboardId) {
+  return `/app/dashboards/${dashboardId}`
+}
+
+function ModalCrearDashboard({ show, onHide, onCreado }) {
+  const [name, setName] = useState('')
+  const [area, setArea] = useState('')
+  const [description, setDescription] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  const limpiarYCerrar = () => {
+    setName(''); setArea(''); setDescription(''); setError('')
+    onHide()
+  }
+
+  const enviar = async (e) => {
+    e.preventDefault()
+    setGuardando(true)
+    setError('')
+    try {
+      const dashboard = await dashboardLayoutService.crearDashboard({ name, area, description })
+      onCreado(dashboard)
+      limpiarYCerrar()
+    } catch (err) {
+      setError(err.response?.data?.mensaje || 'No se pudo crear el dashboard.')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <Modal show={show} onHide={limpiarYCerrar}>
+      <Modal.Header closeButton>
+        <Modal.Title>Crear dashboard</Modal.Title>
+      </Modal.Header>
+      <Form onSubmit={enviar}>
+        <Modal.Body>
+          {error && <Alert variant="danger">{error}</Alert>}
+          <Form.Group className="mb-3" controlId="crear-dashboard-name">
+            <Form.Label>Nombre</Form.Label>
+            <Form.Control value={name} onChange={(e) => setName(e.target.value)} required autoFocus disabled={guardando} />
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="crear-dashboard-area">
+            <Form.Label>Área</Form.Label>
+            <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
+          </Form.Group>
+          <Form.Group controlId="crear-dashboard-description">
+            <Form.Label>Descripción (opcional)</Form.Label>
+            <Form.Control as="textarea" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} disabled={guardando} />
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-secondary" onClick={limpiarYCerrar} disabled={guardando} type="button">Cancelar</Button>
+          <Button variant="primary" type="submit" disabled={guardando}>
+            {guardando ? <Spinner size="sm" animation="border" /> : 'Crear'}
+          </Button>
+        </Modal.Footer>
+      </Form>
+    </Modal>
+  )
+}
+
+function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
+  const [name, setName] = useState('')
+  const [area, setArea] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (dashboard) {
+      setName(dashboard.name || '')
+      setArea(dashboard.area || '')
+      setError('')
+    }
+  }, [dashboard])
+
+  const cerrar = () => { setError(''); onHide() }
+
+  const enviar = async (e) => {
+    e.preventDefault()
+    setGuardando(true)
+    setError('')
+    try {
+      const actualizado = await dashboardLayoutService.actualizarDashboard(dashboard.dashboard_id, { name, area })
+      onEditado(actualizado)
+      cerrar()
+    } catch (err) {
+      setError(err.response?.data?.mensaje || 'No se pudo editar el dashboard.')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <Modal show={show} onHide={cerrar}>
+      <Modal.Header closeButton>
+        <Modal.Title>Editar dashboard</Modal.Title>
+      </Modal.Header>
+      <Form onSubmit={enviar}>
+        <Modal.Body>
+          {error && <Alert variant="danger">{error}</Alert>}
+          <Form.Group className="mb-3" controlId="editar-dashboard-name">
+            <Form.Label>Nombre</Form.Label>
+            <Form.Control value={name} onChange={(e) => setName(e.target.value)} required autoFocus disabled={guardando} />
+          </Form.Group>
+          <Form.Group controlId="editar-dashboard-area">
+            <Form.Label>Área</Form.Label>
+            <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="outline-secondary" onClick={cerrar} disabled={guardando} type="button">Cancelar</Button>
+          <Button variant="primary" type="submit" disabled={guardando}>
+            {guardando ? <Spinner size="sm" animation="border" /> : 'Guardar cambios'}
+          </Button>
+        </Modal.Footer>
+      </Form>
+    </Modal>
+  )
+}
+
+function ModalEliminarDashboard({ show, dashboard, onHide, onEliminado }) {
+  const [confirmacion, setConfirmacion] = useState('')
+  const [eliminando, setEliminando] = useState(false)
+  const [error, setError] = useState('')
+
+  const cerrar = () => { setConfirmacion(''); setError(''); onHide() }
+  const coincide = Boolean(dashboard) && confirmacion === dashboard.name
+
+  const eliminar = async () => {
+    setEliminando(true)
+    setError('')
+    try {
+      await dashboardLayoutService.eliminarDashboard(dashboard.dashboard_id, confirmacion)
+      onEliminado(dashboard.dashboard_id)
+      cerrar()
+    } catch (err) {
+      setError(err.response?.data?.mensaje || 'No se pudo eliminar el dashboard.')
+    } finally {
+      setEliminando(false)
+    }
+  }
+
+  return (
+    <Modal show={show} onHide={cerrar}>
+      <Modal.Header closeButton>
+        <Modal.Title>Eliminar dashboard</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        {error && <Alert variant="danger">{error}</Alert>}
+        <p>Esta acción no se puede deshacer. Para confirmar, escriba exactamente el nombre del dashboard:</p>
+        <span className="fw-bold d-block mb-2">{dashboard?.name}</span>
+        <Form.Control
+          value={confirmacion}
+          onChange={(e) => setConfirmacion(e.target.value)}
+          disabled={eliminando}
+          autoFocus
+          aria-label="Confirmar nombre del dashboard"
+        />
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="outline-secondary" onClick={cerrar} disabled={eliminando}>Cancelar</Button>
+        <Button variant="danger" disabled={!coincide || eliminando} onClick={eliminar}>
+          {eliminando ? <Spinner size="sm" animation="border" /> : 'Eliminar'}
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+export default function DashboardsListPage() {
+  const { user } = useAuth()
+  const puedeCrear = user?.permissions?.includes('dashboard.crear')
+  const puedeEditar = user?.permissions?.includes('dashboard.editar')
+  const puedeEliminar = user?.permissions?.includes('dashboard.eliminar')
+
+  const [dashboards, setDashboards] = useState(null)
+  const [error, setError] = useState('')
+  const [mostrarModalCrear, setMostrarModalCrear] = useState(false)
+  const [dashboardAEditar, setDashboardAEditar] = useState(null)
+  const [dashboardAEliminar, setDashboardAEliminar] = useState(null)
+
+  const cargar = () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados()
+      .then(setDashboards)
+      .catch(() => setError('No se pudieron cargar los dashboards autorizados.'))
+  }
+
+  useEffect(cargar, [])
+
+  return (
+    <div className="cartera-app">
+      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h1 className="mb-0">Mis dashboards</h1>
+        {puedeCrear && (
+          <Button size="sm" onClick={() => setMostrarModalCrear(true)}>Crear dashboard</Button>
+        )}
+      </div>
+
+      {error && <Alert variant="danger">{error}</Alert>}
+      {!dashboards && !error && (
+        <div className="text-center" role="status" aria-live="polite"><Spinner animation="border" /></div>
+      )}
+      {dashboards && dashboards.length === 0 && (
+        <Alert variant="secondary">No tiene ningún dashboard autorizado. Contacte a un administrador.</Alert>
+      )}
+
+      <div className="d-flex flex-wrap gap-3">
+        {dashboards?.map((d) => (
+          <div key={d.dashboard_id} className="dashboard-card" data-testid={`dashboard-card-${d.dashboard_id}`}>
+            <Card style={{ width: 260 }} className="chart-panel h-100">
+              <Card.Body>
+                <Card.Title className="mb-0">{d.name}</Card.Title>
+                {d.area && <Card.Subtitle className="chart-panel__subtitle mt-1">{d.area}</Card.Subtitle>}
+              </Card.Body>
+            </Card>
+
+            {/* Los 3 botones de acción solo se revelan al pasar el cursor (o con foco de
+                teclado, ver :focus-within en dashboard.css) — siempre están en el DOM para que
+                sean accesibles/testeables, la revelación es puramente visual. */}
+            <div className="dashboard-card__actions">
+              <Button as={Link} to={rutaDashboard(d.dashboard_id)} size="sm" variant="primary">Entrar</Button>
+              {puedeEditar && (
+                <Button size="sm" variant="light" onClick={() => setDashboardAEditar(d)}>Editar</Button>
+              )}
+              {puedeEliminar && (
+                <Button size="sm" variant="danger" onClick={() => setDashboardAEliminar(d)}>Eliminar</Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <ModalCrearDashboard
+        show={mostrarModalCrear}
+        onHide={() => setMostrarModalCrear(false)}
+        onCreado={cargar}
+      />
+
+      <ModalEditarDashboard
+        show={Boolean(dashboardAEditar)}
+        dashboard={dashboardAEditar}
+        onHide={() => setDashboardAEditar(null)}
+        onEditado={cargar}
+      />
+
+      <ModalEliminarDashboard
+        show={Boolean(dashboardAEliminar)}
+        dashboard={dashboardAEliminar}
+        onHide={() => setDashboardAEliminar(null)}
+        onEliminado={cargar}
+      />
+    </div>
+  )
+}

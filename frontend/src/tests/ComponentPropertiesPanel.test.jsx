@@ -73,14 +73,128 @@ describe('ComponentPropertiesPanel', () => {
     expect(props.onActualizarEstilos).not.toHaveBeenCalled()
   })
 
-  it('"Restablecer colores" limpia todos los campos de color de una vez', async () => {
-    const { props } = renderPanel({ componente: componenteDePrueba({ styles: { colorPrincipal: '#112233' } }) })
+  it('"Restablecer colores" limpia el mapa de colores por categoría, más título y fondo', async () => {
+    const { props } = renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales',
+        content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+        styles: { coloresPorCategoria: { Quito: '#112233' }, colorTexto: '#111111', colorFondo: '#eeeeee' },
+      }),
+    })
 
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer colores' }))
 
-    expect(props.onActualizarEstilos).toHaveBeenCalledWith('kpi-cartera-vencida', expect.objectContaining({
-      colorPrincipal: '', colorVencido: '', colorNoVencido: '', colorSinGestion: '', colorTexto: '', colorFondo: '',
-    }))
+    expect(props.onActualizarEstilos).toHaveBeenCalledWith('saldo-por-causal', {
+      coloresPorCategoria: {}, colorTexto: '', colorFondo: '',
+    })
+  })
+
+  describe('colores precargados con lo que realmente está en pantalla', () => {
+    it('una tarjeta KPI no precarga ningún color (no tiene acento por defecto)', () => {
+      renderPanel()
+      expect(screen.getByLabelText('Color principal (hexadecimal)')).toHaveValue('')
+    })
+
+    it('una gráfica de tipo tabla no ofrece colores de datos, solo título y fondo', () => {
+      renderPanel({
+        componente: componenteDePrueba({ component_id: 'saldo-tabla', type: 'chart', chart_type: 'tabla' }),
+      })
+      expect(screen.queryByLabelText(/Color de "/)).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Color del título (hexadecimal)')).toHaveValue('#000000')
+      expect(screen.getByLabelText('Color de fondo (hexadecimal)')).toHaveValue('#ffffff')
+    })
+
+    it('una gráfica de líneas tiene un único "Color de la línea" (es un solo trazo, no una por categoría)', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-en-el-tiempo', type: 'chart', chart_type: 'lineas',
+          content: { titulo: 'Saldo en el tiempo', categorias: ['Enero', 'Febrero'] },
+        }),
+      })
+      expect(screen.getByLabelText('Color de la línea (hexadecimal)')).toHaveValue('#2a78d6')
+      expect(screen.queryByLabelText('Color de "Enero" (hexadecimal)')).not.toBeInTheDocument()
+    })
+
+    it('una gráfica de barras/pastel ofrece un selector de color por cada categoría, precargado con la paleta que se está dibujando', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil', 'Cuenca'] },
+        }),
+      })
+      // Debe coincidir con --series-1/2/3 en styles/dashboard.css: son los colores que recharts
+      // pinta hoy, en el mismo orden, cuando no hay overrides guardados.
+      expect(screen.getByLabelText('Color de "Quito" (hexadecimal)')).toHaveValue('#2a78d6')
+      expect(screen.getByLabelText('Color de "Guayaquil" (hexadecimal)')).toHaveValue('#eb6834')
+      expect(screen.getByLabelText('Color de "Cuenca" (hexadecimal)')).toHaveValue('#1baf7a')
+    })
+
+    it('un override guardado para una categoría tiene prioridad sobre el color por defecto de esa categoría, sin afectar a las demás', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+          styles: { coloresPorCategoria: { Quito: '#abcdef' } },
+        }),
+      })
+      expect(screen.getByLabelText('Color de "Quito" (hexadecimal)')).toHaveValue('#abcdef')
+      expect(screen.getByLabelText('Color de "Guayaquil" (hexadecimal)')).toHaveValue('#eb6834')
+    })
+
+    it('cambiar el color de una categoría invoca onActualizarEstilos con el mapa completo, sin perder el color ya guardado de las demás', () => {
+      const { props } = renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+          styles: { coloresPorCategoria: { Guayaquil: '#111111' } },
+        }),
+      })
+      const campo = screen.getByLabelText('Color de "Quito" (hexadecimal)')
+      fireEvent.change(campo, { target: { value: '#222222' } })
+
+      expect(props.onActualizarEstilos).toHaveBeenLastCalledWith('saldo-por-causal', {
+        coloresPorCategoria: { Guayaquil: '#111111', Quito: '#222222' },
+      })
+    })
+
+    it('una gráfica agrupada/apilada ofrece un selector de color por cada serie, no por categoría', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-ciudad-y-causal', type: 'chart', chart_type: 'barras_agrupadas',
+          content: {
+            titulo: 'Saldo por ciudad y causal', categorias: ['Quito', 'Guayaquil'],
+            series: [{ nombre: 'Vencido', valores: [10, 20] }, { nombre: 'No vencido', valores: [5, 8] }],
+          },
+        }),
+      })
+      expect(screen.getByLabelText('Color de "Vencido" (hexadecimal)')).toHaveValue('#2a78d6')
+      expect(screen.getByLabelText('Color de "No vencido" (hexadecimal)')).toHaveValue('#eb6834')
+      expect(screen.queryByLabelText('Color de "Quito" (hexadecimal)')).not.toBeInTheDocument()
+    })
+
+    it('una gráfica de área apilada ofrece un selector de color por cada serie, igual que agrupada/apilada', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-ciudad-y-causal', type: 'chart', chart_type: 'area_apilada',
+          content: {
+            titulo: 'Saldo por ciudad y causal', categorias: ['Quito', 'Guayaquil'],
+            series: [{ nombre: 'Vencido', valores: [10, 20] }, { nombre: 'No vencido', valores: [5, 8] }],
+          },
+        }),
+      })
+      expect(screen.getByLabelText('Color de "Vencido" (hexadecimal)')).toHaveValue('#2a78d6')
+      expect(screen.getByLabelText('Color de "No vencido" (hexadecimal)')).toHaveValue('#eb6834')
+    })
+
+    it('una gráfica de dispersión tiene un único "Color de los puntos" (no hay categorías ni series)', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-vs-dias-credito', type: 'chart', chart_type: 'dispersion',
+          content: { titulo: 'Saldo vs. Dias credito', puntos: [{ x: 100, y: 10 }] },
+        }),
+      })
+      expect(screen.getByLabelText('Color de los puntos (hexadecimal)')).toHaveValue('#2a78d6')
+    })
   })
 
   it('cambiar el ancho invoca onCambiarAncho con el component_id y el número elegido', async () => {
@@ -103,5 +217,82 @@ describe('ComponentPropertiesPanel', () => {
   it('no muestra el reordenamiento de filtros para un componente que no es el panel de filtros', () => {
     renderPanel()
     expect(screen.queryByText('Orden de los filtros')).not.toBeInTheDocument()
+  })
+
+  it('muestra el selector de registros por defecto solo para componentes de tipo tabla', () => {
+    renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'tabla-detalle',
+        type: 'table',
+        config: { defaultPageSize: 10, allowedPageSizes: [5, 10, 25, 50, 100] },
+      }),
+    })
+    expect(screen.getByText('Registros visibles por defecto')).toBeInTheDocument()
+  })
+
+  it('no muestra el selector de paginación para un componente que no es tabla', () => {
+    renderPanel()
+    expect(screen.queryByText('Registros visibles por defecto')).not.toBeInTheDocument()
+  })
+
+  it('cambiar el selector de registros por defecto invoca onActualizarConfig con el número elegido', async () => {
+    const { props } = renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'tabla-detalle',
+        type: 'table',
+        config: { defaultPageSize: 10, allowedPageSizes: [5, 10, 25, 50, 100] },
+      }),
+    })
+
+    await userEvent.selectOptions(screen.getByLabelText('Registros visibles por defecto'), '50')
+
+    expect(props.onActualizarConfig).toHaveBeenCalledWith('tabla-detalle', expect.objectContaining({ defaultPageSize: 50 }))
+  })
+
+  it('muestra el selector de posición de leyenda solo para tipos de gráfica que dibujan una leyenda', () => {
+    renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'saldo-por-causal', type: 'chart', chart_type: 'pastel',
+        config: { leyenda_posicion: 'abajo' },
+      }),
+    })
+    expect(screen.getByText('Posición de la leyenda')).toBeInTheDocument()
+  })
+
+  it('no muestra el selector de posición de leyenda para una gráfica de una sola serie', () => {
+    renderPanel({
+      componente: componenteDePrueba({ component_id: 'saldo-total', type: 'chart', chart_type: 'barras_horizontales', config: {} }),
+    })
+    expect(screen.queryByText('Posición de la leyenda')).not.toBeInTheDocument()
+  })
+
+  it('muestra el selector de posición de leyenda para área apilada', () => {
+    renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'saldo-por-ciudad-y-causal', type: 'chart', chart_type: 'area_apilada',
+        config: { leyenda_posicion: 'abajo' },
+      }),
+    })
+    expect(screen.getByText('Posición de la leyenda')).toBeInTheDocument()
+  })
+
+  it('no muestra el selector de posición de leyenda para una dispersión', () => {
+    renderPanel({
+      componente: componenteDePrueba({ component_id: 'saldo-vs-dias-credito', type: 'chart', chart_type: 'dispersion', config: {} }),
+    })
+    expect(screen.queryByText('Posición de la leyenda')).not.toBeInTheDocument()
+  })
+
+  it('cambiar la posición de la leyenda invoca onActualizarConfig con el valor elegido', async () => {
+    const { props } = renderPanel({
+      componente: componenteDePrueba({
+        component_id: 'saldo-por-causal', type: 'chart', chart_type: 'dona',
+        config: { leyenda_posicion: 'abajo' },
+      }),
+    })
+
+    await userEvent.selectOptions(screen.getByLabelText('Posición de la leyenda'), 'derecha')
+
+    expect(props.onActualizarConfig).toHaveBeenCalledWith('saldo-por-causal', expect.objectContaining({ leyenda_posicion: 'derecha' }))
   })
 })

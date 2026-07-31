@@ -1,5 +1,7 @@
 import { Table } from 'react-bootstrap'
+import Pagination from '../common/Pagination'
 import { useDrilldown } from '../../hooks/useDrilldown'
+import { usePaginacionCliente } from '../../hooks/usePaginacionCliente'
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/format'
 
 function CeldaSeleccionable({ onSeleccionar, children }) {
@@ -18,6 +20,9 @@ function CeldaSeleccionable({ onSeleccionar, children }) {
 
 export default function RecuperadorCausalMatrix({ matriz, metrica, override }) {
   const { abrirDetalle } = useDrilldown()
+  const {
+    pagina, pageSize, totalPaginas, totalRegistros, itemsPagina: filasPaginadas, irAPagina, cambiarPageSize,
+  } = usePaginacionCliente(matriz?.filas, { defaultPageSize: override?.config?.defaultPageSize ?? 10, resetKey: matriz })
 
   if (!matriz || matriz.filas.length === 0) return null
 
@@ -57,7 +62,7 @@ export default function RecuperadorCausalMatrix({ matriz, metrica, override }) {
             </tr>
           </thead>
           <tbody>
-            {matriz.filas.map((recuperador) => (
+            {filasPaginadas.map((recuperador) => (
               <tr key={recuperador}>
                 <td>{recuperador}</td>
                 {matriz.columnas.map((causal) => (
@@ -87,6 +92,16 @@ export default function RecuperadorCausalMatrix({ matriz, metrica, override }) {
           </tfoot>
         </Table>
       </div>
+      <Pagination
+        idBase="matriz-recuperador-causal"
+        paginaActual={pagina}
+        totalPaginas={totalPaginas}
+        totalRegistros={totalRegistros}
+        pageSize={pageSize}
+        allowedPageSizes={override?.config?.allowedPageSizes || [5, 10, 25, 50, 100]}
+        onCambiarPagina={irAPagina}
+        onCambiarPageSize={cambiarPageSize}
+      />
     </div>
   )
 }

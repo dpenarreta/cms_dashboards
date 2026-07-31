@@ -130,6 +130,37 @@ describe('useDashboardLayout', () => {
     })
   })
 
+  describe('eliminarComponente', () => {
+    it('quita el componente del borrador', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+
+      act(() => result.current.eliminarComponente('b'))
+      expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'c', 'd'])
+    })
+
+    it('si el componente eliminado estaba seleccionado, limpia la selección', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+      act(() => result.current.setSeleccionado('b'))
+
+      act(() => result.current.eliminarComponente('b'))
+      expect(result.current.seleccionado).toBeNull()
+    })
+
+    it('al guardar, un componente eliminado no viaja en la lista enviada al servidor', async () => {
+      const result = await montarYCargar()
+      act(() => result.current.activarEdicion())
+      act(() => result.current.eliminarComponente('b'))
+
+      dashboardLayoutService.guardarLayout.mockResolvedValue({ dashboard_id: 'cartera', version: 2, components: [] })
+      await act(async () => { await result.current.guardar('Ana') })
+
+      const enviados = dashboardLayoutService.guardarLayout.mock.calls[0][1].components
+      expect(enviados.map((c) => c.component_id)).toEqual(['a', 'c', 'd'])
+    })
+  })
+
   describe('guardar / cancelar / restablecer', () => {
     it('guardar envía la version y los componentes, y sale del modo edición', async () => {
       const result = await montarYCargar()

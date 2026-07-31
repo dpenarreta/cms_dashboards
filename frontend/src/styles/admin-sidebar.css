@@ -1,0 +1,214 @@
+/* Layout de pantalla completa de /admin/* (AdminLayout) + barra lateral (AdminSidebar) — fondo
+   oscuro fijo (independiente del tema institucional, igual que el navbar de la landing), avatar
+   de iniciales (nunca una foto de stock: se genera con la inicial real del usuario), navegación
+   con íconos, y colapso opcional (se recuerda entre sesiones vía localStorage). */
+
+:root {
+  --admin-navy: #16213a;
+  --admin-navy-2: #1f3157;
+}
+
+/* `AdminLayout` es dueño de toda la pantalla (fuera de `AuthenticatedLayout`, ver el comentario
+   en `AdminLayout.jsx`) — por eso puede fijar `height: 100vh` sin pelear contra una barra
+   superior compartida por encima. La barra lateral es un hijo flex de este contenedor: al ser
+   `100vh` de alto y no tener `align-items` distinto de `stretch` (el valor por defecto), la
+   barra lateral automáticamente ocupa el 100% del alto, de borde a borde. */
+.admin-shell {
+  display: flex;
+  height: 100vh;
+}
+
+.admin-shell__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.admin-shell__topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 12px 24px;
+  background: var(--surface-1, #fff);
+  border-bottom: 1px solid var(--border, #e0e0e0);
+}
+
+/* Única región que hace scroll dentro del panel de administración — el resto de la pantalla
+   (sidebar, barra superior) permanece fijo. */
+.admin-shell__page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.admin-sidebar {
+  flex-shrink: 0;
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: linear-gradient(180deg, var(--admin-navy) 0%, var(--admin-navy-2) 100%);
+  padding: 20px 14px;
+  transition: width 0.2s ease;
+}
+
+.admin-sidebar--colapsado {
+  width: 72px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* Centrado verticalmente respecto al contenedor de la barra lateral (`.admin-sidebar`, que ocupa
+   el 100% del alto de la pantalla — ver el comentario de `.admin-shell` más arriba), no respecto
+   al texto/logo de arriba. `top: 50%` + `translateY(-50%)` centra el botón sin importar cuánto
+   contenido tenga el menú por encima o por debajo. */
+.admin-sidebar__toggle {
+  position: absolute;
+  top: 50%;
+  right: -20px;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--admin-navy);
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.admin-sidebar__perfil {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  flex-shrink: 0;
+  padding: 8px 4px 20px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.admin-sidebar__avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 1.3rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.admin-sidebar--colapsado .admin-sidebar__avatar { width: 40px; height: 40px; font-size: 1.05rem; }
+
+.admin-sidebar__nombre {
+  margin-top: 10px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.92rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.admin-sidebar--colapsado .admin-sidebar__nombre { display: none; }
+
+.admin-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  /* `min-height: 0` es necesario para que un hijo flex pueda encogerse por debajo del alto de
+     su contenido — sin esto, `overflow-y: auto` nunca llega a activarse dentro de un
+     contenedor flex en columna. */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.admin-sidebar__nav::-webkit-scrollbar { width: 6px; }
+.admin-sidebar__nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+}
+
+.admin-sidebar__link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.75);
+  text-decoration: none;
+  font-size: 0.92rem;
+  border-left: 3px solid transparent;
+  white-space: nowrap;
+  /* Reset de estilos nativos de <button> — el botón de "Cerrar sesión" reutiliza esta misma
+     clase que usan los <a> de navegación, para verse idéntico. */
+  background: none;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-sidebar__link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+
+.admin-sidebar__link--activo {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-left-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.admin-sidebar__icono {
+  font-size: 1.1rem;
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.admin-sidebar__texto {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-sidebar--colapsado .admin-sidebar__link {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.admin-sidebar--colapsado .admin-sidebar__texto {
+  display: none;
+}
+
+.admin-sidebar__footer {
+  flex-shrink: 0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}

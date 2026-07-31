@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Alert, Button, Form, Spinner, Table } from 'react-bootstrap'
+import Pagination from '../common/Pagination'
 import * as carteraService from '../../services/carteraService'
 import { useDetalleCartera } from '../../hooks/useDetalleCartera'
-import { formatCurrency, formatDate, formatNumber } from '../../utils/format'
+import { formatCurrency, formatDate } from '../../utils/format'
 
 const COLUMNAS = [
   { campo: 'cliente', etiqueta: 'Cliente' },
@@ -27,8 +28,11 @@ const COLUMNAS = [
  */
 export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenValidacion, titulo = 'Detalle de documentos', override }) {
   titulo = override?.titulo || titulo
-  const { detalle, pagina, orden, busqueda, cargando, error, irAPagina, setOrden, setBusqueda, actualizar } =
-    useDetalleCartera({ cargaId, filtros, fechaCorte })
+  const allowedPageSizes = override?.config?.allowedPageSizes || [5, 10, 25, 50, 100]
+  const {
+    detalle, pagina, pageSize, orden, busqueda, cargando, error,
+    irAPagina, setOrden, setBusqueda, actualizar, cambiarPageSize,
+  } = useDetalleCartera({ cargaId, filtros, fechaCorte, pageSizeInicial: override?.config?.defaultPageSize ?? 10 })
   const [busquedaVisible, setBusquedaVisible] = useState(false)
 
   const contraerBusqueda = () => {
@@ -36,7 +40,8 @@ export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenVali
     setBusqueda('')
   }
 
-  const totalPaginas = Math.max(Math.ceil((detalle?.count || 0) / 50), 1)
+  const pageSizeAplicado = detalle?.page_size || pageSize
+  const totalPaginas = Math.max(Math.ceil((detalle?.count || 0) / pageSizeAplicado), 1)
   const paramsExport = { ...filtros, fecha_corte: fechaCorte, ordering: orden, buscar: busqueda }
 
   return (
@@ -148,15 +153,17 @@ export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenVali
         </div>
       )}
 
-      <div className="d-flex justify-content-between align-items-center">
-        <div className="chart-panel__subtitle mb-0">
-          {formatNumber(detalle?.count || 0)} registros · página {pagina} de {totalPaginas}
-        </div>
-        <div className="d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={pagina <= 1 || cargando} onClick={() => irAPagina(pagina - 1)}>Anterior</Button>
-          <Button size="sm" variant="outline-secondary" disabled={pagina >= totalPaginas || cargando} onClick={() => irAPagina(pagina + 1)}>Siguiente</Button>
-        </div>
-      </div>
+      <Pagination
+        idBase="detalle"
+        paginaActual={pagina}
+        totalPaginas={totalPaginas}
+        totalRegistros={detalle?.count || 0}
+        pageSize={pageSizeAplicado}
+        allowedPageSizes={allowedPageSizes}
+        onCambiarPagina={irAPagina}
+        onCambiarPageSize={cambiarPageSize}
+        cargando={cargando}
+      />
     </div>
   )
 }

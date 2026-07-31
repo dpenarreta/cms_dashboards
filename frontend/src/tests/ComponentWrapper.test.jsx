@@ -23,7 +23,9 @@ function renderWrapper(overrides = {}) {
     onMover: vi.fn(),
     onOcultar: vi.fn(),
     onMostrar: vi.fn(),
+    onEliminar: vi.fn(),
     permiteEstilo: true,
+    permiteEliminar: true,
     ...overrides,
   }
   const utils = render(
@@ -77,5 +79,30 @@ describe('ComponentWrapper', () => {
     const { props } = renderWrapper()
     await userEvent.click(screen.getByRole('button', { name: 'Mover abajo' }))
     expect(props.onMover).toHaveBeenCalledWith('kpi-cartera-vencida', 'abajo')
+  })
+
+  it('sin permiso de eliminar (permiteEliminar=false) no muestra el botón Eliminar', () => {
+    renderWrapper({ permiteEliminar: false })
+    expect(screen.queryByRole('button', { name: 'Eliminar' })).not.toBeInTheDocument()
+  })
+
+  it('Eliminar pide confirmación antes de invocar onEliminar', async () => {
+    const { props } = renderWrapper()
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
+
+    expect(props.onEliminar).not.toHaveBeenCalled()
+    expect(screen.getByText('¿Eliminar?')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sí' }))
+    expect(props.onEliminar).toHaveBeenCalledWith('kpi-cartera-vencida')
+  })
+
+  it('"No" en la confirmación de eliminar cancela sin invocar onEliminar', async () => {
+    const { props } = renderWrapper()
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'No' }))
+
+    expect(props.onEliminar).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Eliminar' })).toBeInTheDocument()
   })
 })

@@ -13,7 +13,7 @@ const FILTROS_INICIALES = {
   fecha_vencimiento_desde: '', fecha_vencimiento_hasta: '', fecha_emision_desde: '', fecha_emision_hasta: '',
 }
 
-export function useCarteraDashboard() {
+export function useCarteraDashboard(dashboardId) {
   const [fase, setFase] = useState(FASE.CARGA)
   const [archivoInfo, setArchivoInfo] = useState(null)
   const [mapeoSugerido, setMapeoSugerido] = useState(null)
@@ -49,7 +49,7 @@ export function useCarteraDashboard() {
     setError(null)
     archivoLocalRef.current = archivo
     try {
-      const data = await carteraService.validarArchivo(archivo, hoja)
+      const data = await carteraService.validarArchivo(archivo, hoja, dashboardId)
       setArchivoInfo({
         cargaId: data.carga_id,
         nombreArchivo: data.nombre_archivo,
@@ -73,7 +73,7 @@ export function useCarteraDashboard() {
     } finally {
       setCargando(false)
     }
-  }, [])
+  }, [dashboardId])
 
   const cambiarHoja = useCallback(async (hoja) => {
     if (!archivoLocalRef.current) return

@@ -11,7 +11,7 @@ import ComponentWrapper from './ComponentWrapper'
  */
 export default function EditableGrid({
   componentes, registro, modoEdicion, vistaPrevia, seleccionado,
-  onSeleccionar, onMover, onOcultar, onMostrar, onReordenar, permiteEstilo,
+  onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, onReordenar, permiteEstilo, permiteEliminar,
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -65,7 +65,9 @@ export default function EditableGrid({
                 onMover={onMover}
                 onOcultar={onOcultar}
                 onMostrar={onMostrar}
+                onEliminar={onEliminar}
                 permiteEstilo={permiteEstilo}
+                permiteEliminar={permiteEliminar}
               />
             )
           })}

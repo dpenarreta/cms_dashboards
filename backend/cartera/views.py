@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 
@@ -8,11 +9,24 @@ from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 
+from apps.permissions.permissions import require_permission
+
+from . import permisos
+from .constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from .exceptions import CarteraError
 from .models import CargaArchivo, RegistroCartera
-from .services import aggregations, column_mapper, export_service, excel_reader, filters, ingest
+from .services import aggregations, column_mapper, dashboard_layout, export_service, excel_reader, filters, generic_charts, ingest
 from .services.calculator import anotar_estado_y_mora, resumen_kpis
 from .utils.dates import fecha_corte_por_defecto, parse_fecha
+
+logger = logging.getLogger(__name__)
+
+# Único permiso reutilizado por todos los endpoints de datos de cartera (sección "Proteger
+# dashboards" de la integración con skelleton_base): quien puede ver el dashboard puede cargar,
+# consultar y exportar sus datos. No existe un permiso "dashboard.file.upload" separado en el
+# catálogo existente y crear uno solo para esto no aporta valor todavía (ver
+# docs/integracion/decisions.md).
+_PERMISO_DATOS_CARTERA = [require_permission(permisos.DASHBOARD_VIEW)]
 
 CAMPOS_VALUES = [
     'cliente', 'ruc_cliente', 'codigo_cliente', 'identificador_cliente', 'sucursal', 'ciudad',
@@ -60,6 +74,8 @@ def _df_anotado_y_filtrado(carga, request):
 
 
 class ValidarArchivoView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def post(self, request):
         archivo = request.FILES.get('archivo')
         if archivo is None:
@@ -94,6 +110,7 @@ class ValidarArchivoView(APIView):
         preview = excel_reader.preview_hoja(df, 20)
 
         carga = CargaArchivo.objects.create(
+            dashboard_id=(request.data.get('dashboard_id') or 'cartera').strip() or 'cartera',
             nombre_original=nombre_original,
             nombre_hoja=hoja,
             tamano_bytes=archivo.size,
@@ -104,6 +121,8 @@ class ValidarArchivoView(APIView):
 
         return Response({
             'carga_id': str(carga.id),
+            'dashboard_id': carga.dashboard_id,
+            'columnas_detectadas': df.columns.tolist(),
             'nombre_archivo': nombre_original,
             'tamano_bytes': archivo.size,
             'fecha_carga': carga.fecha_carga.isoformat(),
@@ -115,7 +134,139 @@ class ValidarArchivoView(APIView):
         }, status=200)
 
 
+def _leer_archivo_temporal_de_carga(carga):
+    if not carga.archivo_temp_nombre:
+        raise CarteraError('El archivo temporal ya no está disponible; vuelve a cargarlo.', codigo='ARCHIVO_NO_DISPONIBLE')
+    ruta_temp = settings.CARTERA_TEMP_UPLOADS_DIR / carga.archivo_temp_nombre
+    return ruta_temp, excel_reader.leer_hoja(str(ruta_temp), carga.nombre_hoja)
+
+
+class AnalizarColumnasView(APIView):
+    """`POST /api/cartera/analizar-columnas` — analiza las columnas de un archivo ya subido
+    (`carga_id`, ver `ValidarArchivoView`) y devuelve cuáles son aptas para generar una gráfica
+    (columnas de valor numéricas, columnas de categoría para agrupar), sin asumir ningún esquema
+    de negocio fijo (`services/generic_charts.py`)."""
+
+    permission_classes = _PERMISO_DATOS_CARTERA
+
+    def post(self, request):
+        carga_id = request.data.get('carga_id')
+        if not carga_id:
+            raise CarteraError('carga_id es requerido.', codigo='CARGA_ID_REQUERIDO')
+
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
+
+        return Response({'carga_id': str(carga.id), **generic_charts.analizar_columnas(df)})
+
+
+class RecomendarGraficasView(APIView):
+    """`POST /api/cartera/recomendar-graficas` — a partir de las columnas ya analizadas
+    (`AnalizarColumnasView`) y de cuáles marcó el usuario como utilizables (`columnas_utilizables`
+    — el análisis automático es solo una sugerencia, nunca excluye una columna por sí solo),
+    propone qué gráficas armar: un KPI de total por cada columna numérica marcada y una gráfica de
+    barras por cada combinación razonable de valor × categoría entre las marcadas
+    (`services/generic_charts.py::generar_recomendaciones`). También calcula de una vez los datos
+    de cada recomendación (`calcular_datos_recomendaciones`) para que el frontend pueda mostrar
+    una vista previa real de todas, sin una solicitud aparte por cada una — todavía no persiste
+    nada, eso ocurre al confirmar una recomendación (`AgregarGraficaView`)."""
+
+    permission_classes = _PERMISO_DATOS_CARTERA
+
+    def post(self, request):
+        carga_id = request.data.get('carga_id')
+        if not carga_id:
+            raise CarteraError('carga_id es requerido.', codigo='CARGA_ID_REQUERIDO')
+
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
+
+        analisis = generic_charts.analizar_columnas(df)
+        columnas = analisis['columnas']
+
+        columnas_utilizables = request.data.get('columnas_utilizables')
+        if columnas_utilizables is not None:
+            columnas = generic_charts.aplicar_seleccion_usuario(columnas, columnas_utilizables)
+
+        recomendaciones = generic_charts.generar_recomendaciones(columnas)
+        recomendaciones = generic_charts.calcular_datos_recomendaciones(df, recomendaciones)
+        return Response({'carga_id': str(carga.id), 'recomendaciones': recomendaciones})
+
+
+_TIPOS_QUE_REQUIEREN_SERIE = {t['id'] for t in generic_charts.TIPOS_VISUALIZACION if t['requiere_serie']}
+
+
+class AgregarGraficaView(APIView):
+    """`POST /api/cartera/agregar-grafica` — confirma UNA recomendación (o una gráfica armada a
+    mano con las mismas columnas), en cualquiera de sus formas de visualización disponibles
+    (`tipo_visualizacion`, uno de `generic_charts.TIPOS_VISUALIZACION`): calcula sus datos y la
+    agrega al dashboard de la carga (`services/dashboard_layout.py::agregar_componente_generado`).
+    `reemplazar_existentes` limpia el dashboard antes de agregar (se usa en la primera gráfica que
+    se confirma tras cargar un archivo nuevo, para no mezclar datos de dos archivos)."""
+
+    permission_classes = _PERMISO_DATOS_CARTERA
+
+    def post(self, request):
+        carga_id = request.data.get('carga_id')
+        if not carga_id:
+            raise CarteraError('carga_id es requerido.', codigo='CARGA_ID_REQUERIDO')
+
+        titulo = (request.data.get('titulo') or '').strip()
+        descripcion = (request.data.get('descripcion') or '').strip()
+        columna_valor = request.data.get('columna_valor')
+        columna_categoria = request.data.get('columna_categoria') or None
+        columna_serie = request.data.get('columna_serie') or None
+        columna_valor_y = request.data.get('columna_valor_y') or None
+        tipo_visualizacion = request.data.get('tipo_visualizacion') or None
+        if not titulo:
+            raise CarteraError('La gráfica necesita un título.', codigo='TITULO_REQUERIDO')
+        if not columna_valor:
+            raise CarteraError('La gráfica necesita una columna de valor.', codigo='COLUMNA_VALOR_REQUERIDA')
+
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
+
+        if tipo_visualizacion == 'kpi':
+            datos = generic_charts.generar_datos_grafica(df, columna_valor, None)
+        elif tipo_visualizacion == 'dispersion':
+            if not columna_valor_y:
+                raise CarteraError(
+                    'Esta visualización necesita una segunda columna numérica.', codigo='COLUMNA_VALOR_Y_REQUERIDA',
+                )
+            datos = generic_charts.generar_datos_dispersion(df, columna_valor, columna_valor_y)
+        elif tipo_visualizacion in _TIPOS_QUE_REQUIEREN_SERIE:
+            if not columna_serie:
+                raise CarteraError(
+                    'Esta visualización necesita una segunda columna de agrupación.', codigo='COLUMNA_SERIE_REQUERIDA',
+                )
+            datos = generic_charts.generar_datos_multiserie(df, columna_valor, columna_categoria, columna_serie)
+        else:
+            datos = generic_charts.generar_datos_grafica(df, columna_valor, columna_categoria)
+
+        if datos is None:
+            raise CarteraError(f'La columna elegida para "{titulo}" ya no existe en el archivo.', codigo='COLUMNA_INVALIDA')
+
+        layout = dashboard_layout.agregar_componente_generado(
+            carga.dashboard_id,
+            {
+                'titulo': titulo, 'descripcion': descripcion, 'columna_valor': columna_valor,
+                'columna_categoria': columna_categoria, 'columna_serie': columna_serie,
+                'columna_valor_y': columna_valor_y, 'tipo_visualizacion': tipo_visualizacion, 'datos': datos,
+            },
+            reemplazar_existentes=bool(request.data.get('reemplazar_existentes')),
+            actor=request.user, request=request,
+        )
+
+        if carga.estado != CargaArchivo.Estado.PROCESADO:
+            carga.estado = CargaArchivo.Estado.PROCESADO
+            carga.save(update_fields=['estado'])
+
+        return Response(dashboard_layout.serializar_layout(layout), status=201)
+
+
 class ProcesarView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def post(self, request):
         carga_id = request.data.get('carga_id')
         if not carga_id:
@@ -187,6 +338,8 @@ class ProcesarView(APIView):
 
 
 class ResumenView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, fecha_corte = _df_anotado_y_filtrado(carga, request)
@@ -194,6 +347,8 @@ class ResumenView(APIView):
 
 
 class TopClientesView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, fecha_corte = _df_anotado_y_filtrado(carga, request)
@@ -203,6 +358,8 @@ class TopClientesView(APIView):
 
 
 class ParetoCiudadesView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, fecha_corte = _df_anotado_y_filtrado(carga, request)
@@ -210,6 +367,8 @@ class ParetoCiudadesView(APIView):
 
 
 class RecuperadoresView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, fecha_corte = _df_anotado_y_filtrado(carga, request)
@@ -217,6 +376,8 @@ class RecuperadoresView(APIView):
 
 
 class CausalesView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, _ = _df_anotado_y_filtrado(carga, request)
@@ -224,6 +385,8 @@ class CausalesView(APIView):
 
 
 class RecuperadoresCausalesView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, _ = _df_anotado_y_filtrado(carga, request)
@@ -264,6 +427,25 @@ def _buscar_y_ordenar(df, request):
     return df
 
 
+def _resolver_page(request):
+    try:
+        return max(int(request.query_params.get('page', 1)), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _resolver_page_size(request):
+    crudo = request.query_params.get('page_size')
+    try:
+        valor = int(crudo)
+    except (TypeError, ValueError):
+        return PAGE_SIZE_POR_DEFECTO
+    if valor not in PAGE_SIZES_PERMITIDOS:
+        logger.info('page_size no permitido recibido (%r); usando fallback %s', crudo, PAGE_SIZE_POR_DEFECTO)
+        return PAGE_SIZE_POR_DEFECTO
+    return valor
+
+
 def _fila_a_dict(fila):
     return {
         'cliente': fila.get('cliente'),
@@ -282,6 +464,8 @@ def _fila_a_dict(fila):
 
 
 class DetalleView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         df, fecha_corte = _df_anotado_y_filtrado(carga, request)
@@ -289,8 +473,8 @@ class DetalleView(APIView):
 
         df = _buscar_y_ordenar(df, request)
 
-        page = max(int(request.query_params.get('page', 1)), 1)
-        page_size = min(max(int(request.query_params.get('page_size', 50)), 1), 1000)
+        page = _resolver_page(request)
+        page_size = _resolver_page_size(request)
         total = len(df)
         inicio = (page - 1) * page_size
         pagina = df.iloc[inicio:inicio + page_size]
@@ -319,6 +503,8 @@ class DetalleView(APIView):
 
 
 class ExportarView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         formato = request.query_params.get('formato', 'xlsx')
@@ -352,6 +538,8 @@ class ExportarView(APIView):
 
 
 class ArchivoView(APIView):
+    permission_classes = _PERMISO_DATOS_CARTERA
+
     def delete(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         if carga.archivo_temp_nombre:

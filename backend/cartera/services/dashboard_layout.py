@@ -1,115 +1,78 @@
 """Layout configurable del dashboard (secciones 8, 17, 19, 23 del prompt de personalización).
 
-Define el layout por defecto como código (no como datos precargados), valida cualquier layout
-entrante contra una lista blanca de componentes conocidos, y clasifica los cambios para la
-auditoría. Los componentes del grid (KPIs, gráficos, mensajes, alertas, tablas, título, panel de
-filtros) viven en `DashboardComponent`; los 16 campos de filtro individuales se reordenan
-*dentro* del componente `panel-filtros` (su propio `config['filtros']`), no como componentes de
-grid independientes — mezclarlos con gráficos/KPIs en el mismo grid 2D no aporta valor de UX y
-complica el modelo sin necesidad.
+Cada dashboard nace sin componentes: no hay un layout fijo predefinido por `dashboard_id`. Los
+componentes (KPIs y gráficas) se agregan de a uno, cuando el usuario confirma una recomendación
+generada a partir de un archivo cargado (`services/generic_charts.py` +
+`agregar_componente_generado`, único punto que puede introducir componentes nuevos). La edición
+manual del grid (`aplicar_layout`, vía el editor visual) solo puede reordenar/redimensionar/ocultar
+/retitular los componentes que YA existen — se valida contra ellos mismos, no contra un catálogo
+fijo. Los 16 campos de filtro individuales del pipeline de cartera original quedaron huérfanos
+junto con el resto de ese pipeline fijo (ver `docs/integracion/migration_report.md`).
 """
 
 import re
 
+from django.utils.text import slugify
+
+from apps.audit.models import AuditEvent
+from apps.audit.services import log_event
+
+from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
-from ..models import DashboardAuditLog, DashboardComponent, DashboardLayout
+from ..models import DashboardComponent, DashboardLayout
+
+# Vocabulario de tipos de cambio (antes `DashboardAuditLog.TipoCambio`, hoy valores de `action`
+# en `AuditEvent` — Módulo A de "trabajo futuro post-integración": auditoría unificada). Se
+# mantienen los mismos literales para que la futura migración de datos históricos
+# (docs/audit/unified_audit.md) pueda mapear 1:1 las filas legacy de `DashboardAuditLog`.
+class CambioLayout:
+    ORDEN = 'CAMBIO_DE_ORDEN'
+    TAMANO = 'CAMBIO_DE_TAMANO'
+    COLOR = 'CAMBIO_DE_COLOR'
+    TEXTO = 'CAMBIO_DE_TEXTO'
+    CONFIG = 'CAMBIO_DE_CONFIGURACION'
+    OCULTADO = 'COMPONENTE_OCULTADO'
+    ELIMINADO = 'COMPONENTE_ELIMINADO'
+    RESTABLECIDO = 'DISENO_RESTABLECIDO'
 
 ANCHO_MIN, ANCHO_MAX = 1, 12
 ALTO_MIN, ALTO_MAX = 60, 1200
 LONGITUD_MAXIMA_TITULO = 200
 LONGITUD_MAXIMA_DESCRIPCION = 500
 
+KPI_ANCHO, KPI_ALTO = 3, 180
+CHART_ANCHO, CHART_ALTO = 6, 420
+
 _HEX_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 _RGBA_RE = re.compile(
     r'^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(,\s*(0|1|0?\.\d+)\s*)?\)$'
 )
 
-DEFAULT_FILTROS = [
-    {'id': 'cliente', 'label': 'Cliente / RUC', 'order': 1, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'ciudad', 'label': 'Ciudad', 'order': 2, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'zona', 'label': 'Zona', 'order': 3, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'sucursal', 'label': 'Sucursal', 'order': 4, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'recuperador', 'label': 'Recuperador', 'order': 5, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'causal', 'label': 'Causal', 'order': 6, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'estado_cartera', 'label': 'Estado de cartera', 'order': 7, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'rango_mora', 'label': 'Rango de mora', 'order': 8, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'producto', 'label': 'Producto', 'order': 9, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'articulo', 'label': 'Artículo', 'order': 10, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'tipo_venta', 'label': 'Tipo de venta', 'order': 11, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'estado_cliente', 'label': 'Estado del cliente', 'order': 12, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'fecha_vencimiento_desde', 'label': 'Vencimiento desde', 'order': 13, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'fecha_vencimiento_hasta', 'label': 'Vencimiento hasta', 'order': 14, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'fecha_emision_desde', 'label': 'Emisión desde', 'order': 15, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-    {'id': 'fecha_emision_hasta', 'label': 'Emisión hasta', 'order': 16, 'width': 2, 'is_visible': True, 'is_required': False, 'scope': 'global'},
-]
 
-
-def _comp(component_id, type_, row, order, width, height, titulo=None, descripcion=None, extra_config=None):
+def componentes_validos(dashboard_id):
+    """Los componentes válidos para editar un dashboard son los que YA existen en su layout —
+    no hay un catálogo fijo: solo se puede reordenar/redimensionar/ocultar/retitular lo que ya
+    fue generado (`establecer_componentes_generados`)."""
+    existentes = DashboardComponent.objects.filter(layout__dashboard_id=dashboard_id)
     return {
-        'component_id': component_id,
-        'type': type_,
-        'chart_type': '',
-        'row': row,
-        'order': order,
-        'width': width,
-        'height': height,
-        'is_visible': True,
-        'content': {'titulo': titulo, 'descripcion': descripcion},
-        'styles': {},
-        'config': extra_config or {},
+        c.component_id: {
+            'component_id': c.component_id,
+            'type': c.type,
+            'chart_type': c.chart_type,
+            'row': c.row,
+            'order': c.order,
+            'width': c.width,
+            'height': c.height,
+            'content': c.content,
+            'styles': c.styles,
+            'config': c.config,
+        }
+        for c in existentes
     }
 
 
-def _layout_por_defecto_cartera():
-    # `order` es una secuencia global única (1..N), no se reinicia por fila: el frontend
-    # (EditableGrid/useDashboardLayout) ordena todos los componentes por este único valor y
-    # arma las filas con flex-wrap; `row` es solo informativo/auditoría. Si dos componentes
-    # comparten `order`, el orden de renderizado deja de coincidir con el de este listado.
-    return [
-        _comp('titulo-cartera', DashboardComponent.Tipo.TITLE, 1, 1, 12, 90, 'Cartera con corte al {fecha_corte}'),
-        _comp('mensaje-resumen-validacion', DashboardComponent.Tipo.MESSAGE, 2, 2, 12, 110),
-        _comp('alerta-sin-fecha', DashboardComponent.Tipo.ALERT, 3, 3, 12, 90),
-        _comp('kpi-clientes-unicos', DashboardComponent.Tipo.KPI, 4, 4, 2, 180, 'Clientes únicos'),
-        _comp('kpi-cartera-total', DashboardComponent.Tipo.KPI, 4, 5, 2, 180, 'Cartera total'),
-        _comp('kpi-cartera-vencida', DashboardComponent.Tipo.KPI, 4, 6, 2, 180, 'Cartera vencida'),
-        _comp('kpi-cartera-no-vencida', DashboardComponent.Tipo.KPI, 4, 7, 2, 180, 'Cartera no vencida'),
-        _comp('kpi-mayor-120', DashboardComponent.Tipo.KPI, 4, 8, 2, 180, 'Cartera > 120 días'),
-        _comp('kpi-mayor-360', DashboardComponent.Tipo.KPI, 4, 9, 2, 180, 'Cartera > 360 días'),
-        _comp('panel-filtros', DashboardComponent.Tipo.FILTERS_PANEL, 5, 10, 12, 320, 'Filtros',
-              extra_config={'filtros': DEFAULT_FILTROS}),
-        _comp('chart-top-clientes', DashboardComponent.Tipo.CHART, 6, 11, 6, 420,
-              'Top 10 clientes que más adeudan', 'Ordenado por saldo total descendente. Clic en una barra para ver el detalle.'),
-        _comp('chart-cartera-vencida-ciudad', DashboardComponent.Tipo.CHART, 6, 12, 6, 420,
-              'Cartera vencida por ciudad'),
-        _comp('chart-recuperadores', DashboardComponent.Tipo.CHART, 7, 13, 6, 420,
-              'Saldo pendiente por recuperador'),
-        _comp('chart-causales', DashboardComponent.Tipo.CHART, 7, 14, 6, 420,
-              'Estado general de la cartera por causal', 'Los saldos vacíos se agrupan como SIN GESTIÓN.'),
-        _comp('chart-recuperador-causal', DashboardComponent.Tipo.CHART, 8, 15, 12, 440,
-              'Causales por recuperador de cartera'),
-        _comp('tabla-matriz-recuperador-causal', DashboardComponent.Tipo.TABLE, 9, 16, 12, 420,
-              'Matriz de recuperadores y causales'),
-        _comp('tabla-detalle', DashboardComponent.Tipo.TABLE, 10, 17, 12, 600,
-              'Detalle de documentos'),
-    ]
-
-
-LAYOUTS_POR_DEFECTO = {
-    'cartera': _layout_por_defecto_cartera,
-}
-
-
-def componentes_validos(dashboard_id):
-    constructor = LAYOUTS_POR_DEFECTO.get(dashboard_id)
-    if not constructor:
-        raise CarteraError(f'Dashboard "{dashboard_id}" no reconocido.', codigo='DASHBOARD_NO_ENCONTRADO')
-    return {c['component_id']: c for c in constructor()}
-
-
 def obtener_o_crear_layout(dashboard_id):
-    layout, creado = DashboardLayout.objects.get_or_create(dashboard_id=dashboard_id)
-    if creado:
-        _escribir_componentes(layout, componentes_validos(dashboard_id).values())
+    layout, _creado = DashboardLayout.objects.get_or_create(dashboard_id=dashboard_id)
     return layout
 
 
@@ -163,8 +126,33 @@ def serializar_layout(layout):
 def _validar_color(valor, campo):
     if not valor:
         return
-    if not (_HEX_RE.match(valor) or _RGBA_RE.match(valor)):
+    if not isinstance(valor, str) or not (_HEX_RE.match(valor) or _RGBA_RE.match(valor)):
         raise CarteraError(f'Color inválido en "{campo}": {valor}', codigo='COLOR_INVALIDO')
+
+
+# Campos de `styles` que son un mapa {nombre_de_categoria_o_serie: color}, no un color suelto —
+# "cada categoría/serie debe tener su propio color editable" (una gráfica de barras/pastel puede
+# tener hasta 16 categorías, una agrupada/apilada hasta `MAX_SERIES_EN_GRAFICA` series, así que no
+# hay una cantidad fija de campos: el frontend arma un color por cada nombre que trae `content`).
+CAMPOS_COLOR_POR_NOMBRE = {'coloresPorCategoria', 'coloresPorSerie'}
+
+
+def _validar_estilos(styles):
+    resultado = {}
+    for campo, valor in styles.items():
+        if campo in CAMPOS_COLOR_POR_NOMBRE:
+            if not isinstance(valor, dict):
+                raise CarteraError(f'El campo "{campo}" debe ser un objeto de colores.', codigo='COLOR_INVALIDO')
+            mapa = {}
+            for nombre, color in valor.items():
+                _validar_color(color, f'{campo}.{nombre}')
+                if color:
+                    mapa[nombre] = color
+            resultado[campo] = mapa
+        else:
+            _validar_color(valor, campo)
+            resultado[campo] = valor
+    return resultado
 
 
 _ETIQUETA_HTML_RE = re.compile(r'<[^>]*>')
@@ -183,13 +171,31 @@ def _sanitizar_texto(valor, longitud_maxima, campo):
     return limpio
 
 
+def _sanitizar_config_paginacion(config):
+    """Nunca lanza error: si `allowedPageSizes`/`defaultPageSize` no son válidos, cae al
+    valor por defecto (sección 4/5 de la especificación de paginación configurable)."""
+    permitidos = [p for p in (config.get('allowedPageSizes') or []) if p in PAGE_SIZES_PERMITIDOS]
+    if not permitidos:
+        permitidos = sorted(PAGE_SIZES_PERMITIDOS)
+    config['allowedPageSizes'] = permitidos
+
+    default_page_size = config.get('defaultPageSize')
+    if default_page_size not in permitidos:
+        default_page_size = PAGE_SIZE_POR_DEFECTO if PAGE_SIZE_POR_DEFECTO in permitidos else permitidos[0]
+    config['defaultPageSize'] = default_page_size
+
+    return config
+
+
 def validar_componentes(dashboard_id, componentes):
     """Valida y sanitiza la lista de componentes entrante. Lanza CarteraError si algo no es
-    válido. Devuelve la lista ya sanitizada, lista para persistir."""
+    válido. Devuelve la lista ya sanitizada, lista para persistir. Una lista vacía es válida: el
+    editor visual permite borrar componentes (sección "editor del dashboard"), y borrarlos todos
+    deja el dashboard vacío — el mismo estado en el que nace cualquier dashboard nuevo."""
     validos = componentes_validos(dashboard_id)
 
-    if not isinstance(componentes, list) or not componentes:
-        raise CarteraError('La configuración debe incluir al menos un componente.', codigo='LAYOUT_VACIO')
+    if not isinstance(componentes, list):
+        raise CarteraError('La configuración debe ser una lista de componentes.', codigo='LAYOUT_INVALIDO')
 
     ids_vistos = set()
     resultado = []
@@ -217,9 +223,11 @@ def validar_componentes(dashboard_id, componentes):
         if 'descripcion' in content:
             content['descripcion'] = _sanitizar_texto(content['descripcion'], LONGITUD_MAXIMA_DESCRIPCION, 'descripcion')
 
-        styles = dict(comp.get('styles') or {})
-        for campo, valor in styles.items():
-            _validar_color(valor, campo)
+        styles = _validar_estilos(dict(comp.get('styles') or {}))
+
+        config = dict(comp.get('config') if comp.get('config') is not None else definicion.get('config', {}))
+        if definicion['type'] == DashboardComponent.Tipo.TABLE:
+            config = _sanitizar_config_paginacion(config)
 
         resultado.append({
             'component_id': component_id,
@@ -232,7 +240,7 @@ def validar_componentes(dashboard_id, componentes):
             'is_visible': bool(comp.get('is_visible', True)),
             'content': content,
             'styles': styles,
-            'config': comp.get('config') if comp.get('config') is not None else definicion.get('config', {}),
+            'config': config,
         })
 
     return resultado
@@ -243,64 +251,176 @@ def _clasificar_cambio(anterior, nuevo):
     if anterior is None:
         return cambios
     if (anterior['row'], anterior['order']) != (nuevo['row'], nuevo['order']):
-        cambios.append(DashboardAuditLog.TipoCambio.ORDEN)
+        cambios.append(CambioLayout.ORDEN)
     if (anterior['width'], anterior['height']) != (nuevo['width'], nuevo['height']):
-        cambios.append(DashboardAuditLog.TipoCambio.TAMANO)
+        cambios.append(CambioLayout.TAMANO)
     if anterior['styles'] != nuevo['styles']:
-        cambios.append(DashboardAuditLog.TipoCambio.COLOR)
+        cambios.append(CambioLayout.COLOR)
     if anterior['content'] != nuevo['content']:
-        cambios.append(DashboardAuditLog.TipoCambio.TEXTO)
+        cambios.append(CambioLayout.TEXTO)
+    if anterior.get('config') != nuevo.get('config'):
+        cambios.append(CambioLayout.CONFIG)
     if anterior['is_visible'] and not nuevo['is_visible']:
-        cambios.append(DashboardAuditLog.TipoCambio.OCULTADO)
+        cambios.append(CambioLayout.OCULTADO)
     return cambios
 
 
-def aplicar_layout(dashboard_id, componentes_nuevos, changed_by):
+def aplicar_layout(dashboard_id, componentes_nuevos, changed_by, actor=None, request=None):
     """Persiste el layout validado en una sola operación (sección 9) y registra auditoría por
-    cada tipo de cambio detectado por componente (sección 19)."""
+    cada tipo de cambio detectado por componente (sección 19) vía el servicio unificado
+    `apps.audit.services.log_event` (Módulo A). Un componente existente que no venga incluido en
+    `componentes_nuevos` se interpreta como una eliminación (el editor visual borra componentes
+    quitándolos del borrador antes de guardar, no hay un endpoint aparte)."""
     layout = obtener_o_crear_layout(dashboard_id)
     anteriores = {c['component_id']: c for c in serializar_layout(layout)['components']}
 
     nueva_version = layout.version + 1
-    entradas_auditoria = []
+    ids_nuevos = {nuevo['component_id'] for nuevo in componentes_nuevos}
+    cambios_detectados = []
     for nuevo in componentes_nuevos:
         anterior = anteriores.get(nuevo['component_id'])
         for tipo_cambio in _clasificar_cambio(anterior, nuevo):
-            entradas_auditoria.append(DashboardAuditLog(
-                dashboard_id=dashboard_id,
-                component_id=nuevo['component_id'],
-                change_type=tipo_cambio,
-                changed_by=changed_by or 'Anónimo',
-                version=nueva_version,
-                previous_config=anterior or {},
-                new_config=nuevo,
-            ))
+            cambios_detectados.append((tipo_cambio, nuevo['component_id'], anterior, nuevo))
+
+    for component_id, anterior in anteriores.items():
+        if component_id not in ids_nuevos:
+            cambios_detectados.append((CambioLayout.ELIMINADO, component_id, anterior, {}))
 
     _escribir_componentes(layout, componentes_nuevos)
     layout.version = nueva_version
     layout.save(update_fields=['version', 'actualizado_en'])
 
-    if entradas_auditoria:
-        DashboardAuditLog.objects.bulk_create(entradas_auditoria)
+    for tipo_cambio, component_id, anterior, nuevo in cambios_detectados:
+        log_event(
+            domain=AuditEvent.Domain.DASHBOARD_LAYOUT, action=tipo_cambio, actor=actor,
+            dashboard_id=dashboard_id, component_id=component_id,
+            previous_values=anterior or {}, new_values=nuevo,
+            metadata={'version': nueva_version, 'changed_by_label': changed_by or 'Anónimo'},
+            request=request,
+        )
 
     return layout
 
 
-def restablecer_layout(dashboard_id, changed_by):
+def restablecer_layout(dashboard_id, changed_by, actor=None, request=None):
+    """"Restablecer" ya no regenera un layout fijo (no existe uno): vuelve a mostrar cualquier
+    componente que se haya ocultado, sin alterar su posición/tamaño/título. Para regenerar las
+    gráficas desde cero hay que cargar un archivo nuevo (`establecer_componentes_generados`)."""
     layout = obtener_o_crear_layout(dashboard_id)
-    componentes_default = list(componentes_validos(dashboard_id).values())
+    componentes = list(componentes_validos(dashboard_id).values())
+    for componente in componentes:
+        componente['is_visible'] = True
 
     layout.version += 1
-    _escribir_componentes(layout, componentes_default)
+    _escribir_componentes(layout, componentes)
     layout.save(update_fields=['version', 'actualizado_en'])
 
-    DashboardAuditLog.objects.create(
-        dashboard_id=dashboard_id,
-        component_id='',
-        change_type=DashboardAuditLog.TipoCambio.RESTABLECIDO,
-        changed_by=changed_by or 'Anónimo',
-        version=layout.version,
-        previous_config={},
-        new_config={},
+    log_event(
+        domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action=CambioLayout.RESTABLECIDO, actor=actor,
+        dashboard_id=dashboard_id, metadata={'version': layout.version, 'changed_by_label': changed_by or 'Anónimo'},
+        request=request,
+    )
+    return layout
+
+
+# Tipos de visualización que dibujan una leyenda (varias series o porciones) — los únicos donde
+# tiene sentido ofrecer "posición de la leyenda" en el panel de propiedades. Las gráficas de una
+# sola serie (barras simples, líneas) no tienen nada que distinguir en una leyenda.
+TIPOS_CON_LEYENDA = {'barras_agrupadas', 'barras_apiladas', 'area_apilada', 'pastel', 'dona'}
+LEYENDA_POSICION_POR_DEFECTO = 'abajo'
+
+
+def _generar_component_id_unico(titulo, usados):
+    base = slugify(titulo)[:80] or 'grafica'
+    candidato = base
+    sufijo = 2
+    while candidato in usados:
+        candidato = f'{base}-{sufijo}'
+        sufijo += 1
+    usados.add(candidato)
+    return candidato
+
+
+def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existentes=False, actor=None, request=None):
+    """Agrega UNA gráfica/KPI generado a partir de una recomendación confirmada por el usuario
+    (`generic_charts.py::generar_recomendaciones` + `generar_datos_grafica`) — único punto que
+    puede introducir componentes nuevos (su `component_id` se deriva del título, no de un catálogo
+    fijo). Por defecto se suma al resto de componentes ya existentes (el usuario va agregando
+    gráficas de a una desde la lista de recomendaciones); `reemplazar_existentes=True` empieza de
+    cero primero (se usa en la primera gráfica que se agrega tras cargar un archivo nuevo, para no
+    mezclar datos de dos archivos distintos en el mismo dashboard).
+
+    `especificacion` es `{'titulo', 'descripcion', 'columna_valor', 'columna_categoria',
+    'columna_serie', 'columna_valor_y', 'tipo_visualizacion', 'datos'}`, donde `datos` ya viene
+    calculado por
+    `generic_charts.generar_datos_grafica`/`generar_datos_multiserie`/`generar_datos_dispersion` — su forma (`datos['tipo']`
+    = 'kpi'/'chart'/'multiserie') decide qué se guarda en `content`; `tipo_visualizacion` (una de
+    `generic_charts.TIPOS_VISUALIZACION`, p. ej. 'barras_verticales', 'lineas', 'pastel', 'dona',
+    'tabla', 'barras_agrupadas', 'barras_apiladas') solo decide CÓMO se dibuja esa misma
+    información — el frontend la usa para elegir el componente de renderizado. Todo componente
+    generado trae una descripción de partida (editable después desde el panel de propiedades,
+    igual que el título) y, si su tipo dibuja una leyenda, una posición por defecto también
+    editable ahí."""
+    layout = obtener_o_crear_layout(dashboard_id)
+
+    existentes = [] if reemplazar_existentes else list(componentes_validos(dashboard_id).values())
+    usados = {c['component_id'] for c in existentes}
+
+    titulo = especificacion['titulo']
+    descripcion = especificacion.get('descripcion') or ''
+    datos = especificacion['datos']
+    component_id = _generar_component_id_unico(titulo, usados)
+    orden = len(existentes) + 1
+    config = {
+        'columna_valor': especificacion['columna_valor'],
+        'columna_categoria': especificacion.get('columna_categoria') or None,
+        'columna_serie': especificacion.get('columna_serie') or None,
+    }
+
+    if datos['tipo'] == 'dispersion':
+        config['columna_valor_y'] = especificacion.get('columna_valor_y')
+        nuevo = {
+            'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': 'dispersion',
+            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'content': {'titulo': titulo, 'descripcion': descripcion, 'puntos': datos['puntos']},
+            'styles': {}, 'config': config,
+        }
+    elif datos['tipo'] == 'kpi':
+        nuevo = {
+            'component_id': component_id, 'type': DashboardComponent.Tipo.KPI, 'chart_type': '',
+            'row': orden, 'order': orden, 'width': KPI_ANCHO, 'height': KPI_ALTO, 'is_visible': True,
+            'content': {'titulo': titulo, 'descripcion': descripcion, 'valor': datos['valor']},
+            'styles': {}, 'config': config,
+        }
+    elif datos['tipo'] == 'multiserie':
+        chart_type = especificacion.get('tipo_visualizacion') or 'barras_agrupadas'
+        if chart_type in TIPOS_CON_LEYENDA:
+            config['leyenda_posicion'] = LEYENDA_POSICION_POR_DEFECTO
+        nuevo = {
+            'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
+            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'series': datos['series']},
+            'styles': {}, 'config': config,
+        }
+    else:
+        chart_type = especificacion.get('tipo_visualizacion') or 'barras_horizontales'
+        if chart_type in TIPOS_CON_LEYENDA:
+            config['leyenda_posicion'] = LEYENDA_POSICION_POR_DEFECTO
+        nuevo = {
+            'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
+            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'valores': datos['valores']},
+            'styles': {}, 'config': config,
+        }
+
+    _escribir_componentes(layout, existentes + [nuevo])
+    layout.version += 1
+    layout.save(update_fields=['version', 'actualizado_en'])
+
+    log_event(
+        domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_CHART_ADDED', actor=actor,
+        dashboard_id=dashboard_id, component_id=component_id, new_values=nuevo,
+        metadata={'version': layout.version, 'reemplazo_existentes': reemplazar_existentes},
+        request=request,
     )
     return layout

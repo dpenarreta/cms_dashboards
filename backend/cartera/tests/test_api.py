@@ -1,16 +1,26 @@
 import os
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from cartera.models import CargaArchivo, RegistroCartera
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
+User = get_user_model()
 
 
 class FlujoCompletoApiTests(TestCase):
+    """Se autentica con un superusuario en `setUp`: desde la Fase 5 de la integración con
+    skelleton_base, todos los endpoints de `cartera` exigen `IsAuthenticated` + `dashboard.view`
+    (docs/integracion/decisions.md #6). Las pruebas de autorización dedicadas (401/403/200 y
+    `ADMINISTRADOR_GENERAL`) viven en `test_dashboard_authorization.py`; aquí solo se preserva el
+    comportamiento funcional ya existente."""
+
     def setUp(self):
         self.client = APIClient()
+        usuario = User.objects.create_superuser(username='tester', email='tester@example.com', password='Clave-Segura-123')
+        self.client.force_authenticate(user=usuario)
 
     def _validar_y_mapear(self):
         with open(FIXTURE_PATH, 'rb') as f:
@@ -217,6 +227,41 @@ class FlujoCompletoApiTests(TestCase):
         resp = self.client.get(f'/api/cartera/exportar/{carga_id}', {'formato': 'xlsx'})
         self.assertEqual(resp.status_code, 200)
         self.assertIn('spreadsheetml', resp['Content-Type'])
+
+    def test_page_size_no_permitido_usa_fallback_sin_error(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/detalle/{carga_id}', {'page_size': 7})
+        self.assertEqual(resp.status_code, 200)
+        detalle = resp.json()
+        self.assertEqual(detalle['page_size'], 10)
+        self.assertLessEqual(len(detalle['results']), 10)
+
+    def test_page_size_no_numerico_usa_fallback_sin_error(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/detalle/{carga_id}', {'page_size': 'abc'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['page_size'], 10)
+
+    def test_page_size_valido_se_respeta(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        for valor in (5, 10, 25, 50, 100):
+            resp = self.client.get(f'/api/cartera/detalle/{carga_id}', {'page_size': valor})
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.json()['page_size'], valor)
+
+    def test_page_no_numerico_usa_fallback_sin_error(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/detalle/{carga_id}', {'page': 'xyz'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['page'], 1)
 
     def test_eliminar_archivo_borra_registros(self):
         carga_id, mapeo = self._validar_y_mapear()
