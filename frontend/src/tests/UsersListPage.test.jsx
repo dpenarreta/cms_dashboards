@@ -4,8 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import UsersListPage from '../pages/administration/users/UsersListPage'
 import * as usersService from '../services/usersService'
+import { useAuth } from '../context/AuthContext'
 
 vi.mock('../services/usersService')
+vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 const USUARIO_ACTIVO = {
   id: 1, username: 'ana', email: 'ana@example.com', first_name: 'Ana', last_name: 'Pérez',
@@ -17,7 +19,10 @@ function renderPagina() {
 }
 
 describe('UsersListPage', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useAuth.mockReturnValue({ user: { permissions: [] } })
+  })
 
   it('renderiza los usuarios devueltos por el backend', async () => {
     usersService.list.mockResolvedValue({ results: [USUARIO_ACTIVO], count: 1, next: null, previous: null })
@@ -53,5 +58,56 @@ describe('UsersListPage', () => {
     usersService.list.mockResolvedValue({ results: [], count: 0, next: null, previous: null })
     renderPagina()
     expect(await screen.findByText(/no hay usuarios que coincidan/i)).toBeInTheDocument()
+  })
+})
+
+describe('UsersListPage — restablecer contraseña', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('sin el permiso "usuarios.restablecer_password", no muestra el botón', async () => {
+    useAuth.mockReturnValue({ user: { permissions: [] } })
+    usersService.list.mockResolvedValue({ results: [USUARIO_ACTIVO], count: 1, next: null, previous: null })
+    renderPagina()
+    await screen.findByText('ana')
+    expect(screen.queryByRole('button', { name: 'Restablecer contraseña' })).not.toBeInTheDocument()
+  })
+
+  it('con el permiso, confirmar el restablecimiento llama al servicio y muestra la contraseña generada', async () => {
+    useAuth.mockReturnValue({ user: { permissions: ['usuarios.restablecer_password'] } })
+    usersService.list.mockResolvedValue({ results: [USUARIO_ACTIVO], count: 1, next: null, previous: null })
+    usersService.resetPassword.mockResolvedValue({ temporary_password: 'Abc123XyZ9' })
+    renderPagina()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Restablecer contraseña' }))
+    expect(await screen.findByText(/se generará una nueva contraseña temporal/i)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
+
+    expect(usersService.resetPassword).toHaveBeenCalledWith(1)
+    expect(await screen.findByDisplayValue('Abc123XyZ9')).toBeInTheDocument()
+    await waitFor(() => expect(usersService.list).toHaveBeenCalledTimes(2))
+  })
+
+  it('cancelar la confirmación no llama al servicio', async () => {
+    useAuth.mockReturnValue({ user: { permissions: ['usuarios.restablecer_password'] } })
+    usersService.list.mockResolvedValue({ results: [USUARIO_ACTIVO], count: 1, next: null, previous: null })
+    renderPagina()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Restablecer contraseña' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(usersService.resetPassword).not.toHaveBeenCalled()
+  })
+
+  it('si el servicio falla, muestra un mensaje de error', async () => {
+    useAuth.mockReturnValue({ user: { permissions: ['usuarios.restablecer_password'] } })
+    usersService.list.mockResolvedValue({ results: [USUARIO_ACTIVO], count: 1, next: null, previous: null })
+    usersService.resetPassword.mockRejectedValue(new Error('falló'))
+    renderPagina()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Restablecer contraseña' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
+
+    expect(await screen.findByText('No se pudo restablecer la contraseña del usuario.')).toBeInTheDocument()
   })
 })

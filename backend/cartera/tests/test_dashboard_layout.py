@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 
 from apps.audit.models import AuditEvent
 from cartera import permisos
+from cartera.exceptions import CarteraError
 from cartera.models import DashboardComponent, DashboardLayout
 from cartera.services import dashboard_layout as dl
 
@@ -113,6 +114,95 @@ class AgregarComponenteGeneradoTests(TestCase):
         ).exists())
 
 
+class AgregarComponentePresentacionalTests(TestCase):
+    def test_crea_un_titulo_con_texto_de_partida(self):
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TITLE)
+        componente = layout.components.get()
+        self.assertEqual(componente.type, DashboardComponent.Tipo.TITLE)
+        self.assertEqual(componente.content, {'titulo': 'Nuevo título'})
+        self.assertEqual(componente.width, 12)
+        self.assertEqual(componente.height, 70)
+
+    def test_crea_un_separador_sin_titulo(self):
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TEXT)
+        componente = layout.components.get()
+        self.assertEqual(componente.type, DashboardComponent.Tipo.TEXT)
+        self.assertEqual(componente.content, {'titulo': ''})
+        self.assertEqual(componente.height, 40)
+
+    def test_tipo_invalido_lanza_error(self):
+        with self.assertRaises(CarteraError) as contexto:
+            dl.agregar_componente_presentacional('finanzas', 'kpi')
+        self.assertEqual(contexto.exception.codigo, 'TIPO_INVALIDO')
+
+    def test_ancho_columnas_traduce_a_width(self):
+        for ancho_columnas, width_esperado in ((1, 12), (2, 6), (4, 3)):
+            layout = dl.agregar_componente_presentacional(
+                'finanzas', DashboardComponent.Tipo.TITLE, ancho_columnas=ancho_columnas,
+            )
+            nuevo = layout.components.order_by('-order').first()
+            self.assertEqual(nuevo.width, width_esperado)
+
+    def test_sin_ancho_columnas_usa_ancho_completo(self):
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TEXT)
+        self.assertEqual(layout.components.get().width, 12)
+
+    def test_zona_queda_en_config(self):
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TITLE, zona='personal')
+        self.assertEqual(layout.components.get().config, {'zona': 'personal'})
+
+    def test_sin_zona_config_queda_vacio(self):
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TITLE)
+        self.assertEqual(layout.components.get().config, {})
+
+    def test_dos_separadores_seguidos_generan_ids_unicos(self):
+        dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TEXT)
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TEXT)
+        ids = sorted(c.component_id for c in layout.components.all())
+        self.assertEqual(ids, ['separador', 'separador-2'])
+
+    def test_se_agrega_al_final_de_los_componentes_existentes(self):
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'KPI existente', 'columna_valor': 'x', 'columna_categoria': None, 'datos': {'tipo': 'kpi', 'valor': 1.0},
+        })
+        layout = dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TITLE)
+        nuevo = layout.components.get(type=DashboardComponent.Tipo.TITLE)
+        self.assertEqual(nuevo.order, 2)
+
+    def test_registra_auditoria(self):
+        usuario = User.objects.create_user(username='ana4', email='ana4@example.com', password='Clave-Segura-123')
+        dl.agregar_componente_presentacional('finanzas', DashboardComponent.Tipo.TITLE, actor=usuario)
+        self.assertTrue(AuditEvent.objects.filter(
+            domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_CHART_ADDED',
+            dashboard_id='finanzas', actor=usuario,
+        ).exists())
+
+
+class DashboardComponentePresentacionalViewTests(TestCase):
+    def setUp(self):
+        self.client = _cliente_autenticado()
+
+    def test_crea_el_componente_y_devuelve_el_layout(self):
+        resp = self.client.post(
+            '/api/dashboards/finanzas/componentes-presentacionales', {'tipo': 'title', 'zona': 'personal'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        data = resp.json()
+        self.assertEqual(len(data['components']), 1)
+        self.assertEqual(data['components'][0]['type'], 'title')
+        self.assertEqual(data['components'][0]['config']['zona'], 'personal')
+
+    def test_tipo_invalido_devuelve_400(self):
+        resp = self.client.post('/api/dashboards/finanzas/componentes-presentacionales', {'tipo': 'kpi'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TIPO_INVALIDO')
+
+    def test_sin_permiso_de_edicion_devuelve_403(self):
+        with mock.patch('cartera.permisos.tiene_permiso', return_value=False):
+            resp = self.client.post('/api/dashboards/finanzas/componentes-presentacionales', {'tipo': 'text'}, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+
 class GuardarLayoutTests(TestCase):
     def setUp(self):
         self.client = _cliente_autenticado()
@@ -154,6 +244,46 @@ class GuardarLayoutTests(TestCase):
             domain=AuditEvent.Domain.DASHBOARD_LAYOUT,
             dashboard_id='finanzas', component_id=comps[0]['component_id'], action=dl.CambioLayout.OCULTADO,
         ).exists())
+
+    def test_permite_cambiar_el_chart_type_de_un_componente(self):
+        comps = self.data_inicial['components']
+        comps[0]['chart_type'] = 'lineas'
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.chart_type, 'lineas')
+
+    def test_un_chart_type_no_reconocido_cae_al_que_ya_tenia(self):
+        comps = self.data_inicial['components']
+        original = comps[0]['chart_type']
+        comps[0]['chart_type'] = 'no_existe'
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.chart_type, original)
+
+    def test_permite_guardar_el_mapeo_de_un_componente(self):
+        comps = self.data_inicial['components']
+        comps[0]['mapeo'] = {'columna_valor': 'saldo', 'columna_categoria': 'ciudad'}
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.mapeo, {'columna_valor': 'saldo', 'columna_categoria': 'ciudad'})
+
+    def test_mapeo_invalido_devuelve_400(self):
+        comps = self.data_inicial['components']
+        comps[0]['mapeo'] = 'no es un objeto'
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'MAPEO_INVALIDO')
 
     def test_omitir_un_componente_lo_elimina_y_registra_auditoria(self):
         comps = self.data_inicial['components']

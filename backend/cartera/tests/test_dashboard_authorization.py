@@ -9,6 +9,7 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from cartera.models import CargaArchivo
 from cartera.services.dashboards import crear_dashboard
 
 User = get_user_model()
@@ -22,11 +23,22 @@ class ProteccionEndpointsCarteraTests(TestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_autenticado_sin_permiso_dashboard_view_devuelve_403(self):
+        # Con una carga real (no un id inexistente): el chequeo de acceso por dashboard necesita
+        # resolver `carga.dashboard_id`, así que la carga debe existir para poder distinguir "no
+        # autorizado" (403) de "no existe" (404) — ver `test_carga_inexistente_devuelve_404`.
+        carga = CargaArchivo.objects.create(dashboard_id='cartera', nombre_original='archivo.xlsx')
         client = APIClient()
         usuario = User.objects.create_user(username='sin_permiso', email='sp@example.com', password='Clave-Segura-123')
         client.force_authenticate(user=usuario)
-        resp = client.get(f'/api/cartera/resumen/{CARGA_ID_INEXISTENTE}')
+        resp = client.get(f'/api/cartera/resumen/{carga.id}')
         self.assertEqual(resp.status_code, 403)
+
+    def test_carga_inexistente_devuelve_404_incluso_sin_permiso(self):
+        client = APIClient()
+        usuario = User.objects.create_user(username='sin_permiso2', email='sp3@example.com', password='Clave-Segura-123')
+        client.force_authenticate(user=usuario)
+        resp = client.get(f'/api/cartera/resumen/{CARGA_ID_INEXISTENTE}')
+        self.assertEqual(resp.status_code, 404)
 
     def test_autenticado_con_permiso_dashboard_view_pasa_la_verificacion(self):
         """Con el permiso concedido, la solicitud ya no se rechaza por autorización — si el
@@ -79,7 +91,9 @@ class DashboardsAuthorizedViewTests(TestCase):
         client.force_authenticate(user=usuario)
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), [{'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera'}])
+        self.assertEqual(resp.json(), [{
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': False,
+        }])
 
     def test_administrador_general_ve_todos_los_dashboards_autorizados(self):
         crear_dashboard(nombre='Cobranza', area='Cartera')
@@ -89,7 +103,9 @@ class DashboardsAuthorizedViewTests(TestCase):
         client.force_authenticate(user=usuario)
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), [{'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera'}])
+        self.assertEqual(resp.json(), [{
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': False,
+        }])
 
     def test_superusuario_ve_todos_los_dashboards(self):
         crear_dashboard(nombre='Cobranza', area='Cartera')
@@ -98,4 +114,6 @@ class DashboardsAuthorizedViewTests(TestCase):
         client.force_authenticate(user=admin)
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), [{'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera'}])
+        self.assertEqual(resp.json(), [{
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': True,
+        }])

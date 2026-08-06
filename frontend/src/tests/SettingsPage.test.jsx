@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import SettingsPage from '../pages/administration/settings/SettingsPage'
 import * as brandingService from '../services/brandingService'
 import { useTheme } from '../context/ThemeContext'
@@ -33,7 +34,7 @@ describe('SettingsPage', () => {
   it('precarga los valores institucionales actuales', async () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     expect(await screen.findByDisplayValue('Dashboard de Cartera')).toBeInTheDocument()
     expect(screen.getByLabelText('Color principal (selector visual)')).toHaveValue('#2a78d6')
@@ -43,7 +44,7 @@ describe('SettingsPage', () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
     brandingService.update.mockResolvedValue({ ...TEMA, site_name: 'Nuevo nombre' })
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     const campoNombre = await screen.findByLabelText('Nombre del sitio')
     await userEvent.clear(campoNombre)
@@ -60,7 +61,7 @@ describe('SettingsPage', () => {
     brandingService.options.mockResolvedValue(OPCIONES)
     brandingService.reset.mockResolvedValue(TEMA)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     await screen.findByDisplayValue('Dashboard de Cartera')
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
@@ -74,7 +75,7 @@ describe('SettingsPage', () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
     vi.spyOn(window, 'confirm').mockReturnValue(false)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     await screen.findByDisplayValue('Dashboard de Cartera')
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
@@ -85,7 +86,7 @@ describe('SettingsPage', () => {
   it('muestra los campos de colores semánticos precargados', async () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     expect(await screen.findByLabelText('Éxito (selector visual)')).toHaveValue('#198754')
     expect(screen.getByLabelText('Peligro (selector visual)')).toHaveValue('#dc3545')
@@ -94,7 +95,7 @@ describe('SettingsPage', () => {
   it('advierte (sin bloquear) cuando un color no alcanza el contraste WCAG AA frente a su contraparte', async () => {
     brandingService.getAdmin.mockResolvedValue({ ...TEMA, color_warning: '#ffc107', color_button_text: '#ffffff' })
     brandingService.options.mockResolvedValue(OPCIONES)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     const avisos = await screen.findAllByText(/contraste bajo/i)
     expect(avisos.length).toBeGreaterThan(0)
@@ -105,7 +106,7 @@ describe('SettingsPage', () => {
   it('no advierte cuando un color tiene buen contraste frente a su contraparte', async () => {
     brandingService.getAdmin.mockResolvedValue({ ...TEMA, color_buttons: '#000000', color_button_text: '#ffffff' })
     brandingService.options.mockResolvedValue(OPCIONES)
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     const campoBotones = (await screen.findByLabelText('Botones (selector visual)')).closest('.mb-3')
     expect(within(campoBotones).queryByText(/contraste bajo/i)).not.toBeInTheDocument()

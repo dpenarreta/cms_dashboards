@@ -1,6 +1,25 @@
 import { DndContext, PointerSensor, KeyboardSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy, sortableKeyboardCoordinates, arrayMove } from '@dnd-kit/sortable'
 import ComponentWrapper from './ComponentWrapper'
+import { ZONAS_PLANTILLA } from '../../utils/plantillaSlots'
+
+const IDS_CON_ZONA = ZONAS_PLANTILLA.flatMap((zona) => zona.ids)
+
+// A qué zona pertenece cada `component_id` de la plantilla fija (los que no están en ninguna caen
+// en 'sin-zona', salvo que sean de la Zona Personal — ver `zonaDe` más abajo) — usado para
+// bloquear el arrastre entre zonas: KPIs, gráficos y tablas no se pueden mezclar.
+const ZONA_DE = Object.fromEntries(IDS_CON_ZONA.map((id) => [
+  id, ZONAS_PLANTILLA.find((zona) => zona.ids.includes(id)).id,
+]))
+
+/** A diferencia de `ZONA_DE` (estático, solo la plantilla fija), la Zona Personal es dinámica:
+ * cualquier componente con `config.zona === 'personal'` (agregado desde "Agregar a Zona
+ * Personal") — `personalIds` se recalcula en cada render, a partir de los componentes actuales,
+ * para bloquear el arrastre cruzado hacia/desde ella igual que entre las 6 zonas de plantilla. */
+function zonaDe(componentId, personalIds) {
+  if (personalIds.has(componentId)) return 'personal'
+  return ZONA_DE[componentId] ?? 'sin-zona'
+}
 
 /**
  * Un único contenedor flex-wrap: cada componente reserva `width/12` del ancho. No hay
@@ -21,10 +40,16 @@ export default function EditableGrid({
   const ordenados = [...componentes].sort((a, b) => a.order - b.order)
   const visibles = ordenados.filter((c) => c.is_visible)
   const ids = ordenados.map((c) => c.component_id)
+  const personalIds = new Set(componentes.filter((c) => c.config?.zona === 'personal').map((c) => c.component_id))
 
   const handleDragEnd = (event) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
+    // Bloqueado: no se permite soltar un componente en la zona de otro tipo (KPIs, gráfico
+    // principal, gráficos de apoyo, tabla principal, tablas de apoyo, Zona Personal son
+    // compartimentos estancos). Al no llamar a onReordenar, el componente vuelve visualmente a
+    // su posición.
+    if (zonaDe(active.id, personalIds) !== zonaDe(over.id, personalIds)) return
     const desde = ids.indexOf(active.id)
     const hasta = ids.indexOf(over.id)
     onReordenar(arrayMove(ids, desde, hasta))
@@ -38,7 +63,7 @@ export default function EditableGrid({
           if (!definicion) return null
           const anchoPorcentaje = `${(c.width / 12) * 100}%`
           return (
-            <div key={c.component_id} style={{ flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, padding: 8, boxSizing: 'border-box' }}>
+            <div key={c.component_id} style={{ flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, minWidth: 0, padding: 8, boxSizing: 'border-box' }}>
               {definicion.render(c)}
             </div>
           )
@@ -47,32 +72,77 @@ export default function EditableGrid({
     )
   }
 
+  // Agrupados por zona (sección 9) para que, en modo edición, se vea de un vistazo dónde va
+  // cada bloque — cada componente cae siempre en su zona por `component_id`, sin importar el
+  // orden dentro de ella, así que el recuadro punteado nunca "pierde" un componente al
+  // reordenar. Los que no pertenecen a ninguna zona conocida (posiciones ad-hoc) se listan
+  // aparte, sin recuadro, para no ocultar nada.
+  const grupos = ZONAS_PLANTILLA
+    .map((zona) => ({ ...zona, items: ordenados.filter((c) => zona.ids.includes(c.component_id)) }))
+    .filter((zona) => zona.items.length > 0)
+  // La Zona Personal (`config.zona === 'personal'`) es dinámica y siempre va AL FINAL de todas
+  // las zonas de la plantilla fija, y solo aparece si tiene 1+ componentes — sin ella, ni
+  // siquiera queda un recuadro vacío (sección "Zona Personal").
+  const personales = ordenados.filter((c) => personalIds.has(c.component_id))
+  const gruposFinal = personales.length > 0
+    ? [...grupos, { id: 'personal', etiqueta: 'Zona personal', items: personales }]
+    : grupos
+  const sinZona = ordenados.filter((c) => !IDS_CON_ZONA.includes(c.component_id) && !personalIds.has(c.component_id))
+
+  const renderGrupo = (items) => items.map((c, i) => {
+    const definicion = registro[c.component_id]
+    if (!definicion) return null
+    return (
+      <ComponentWrapper
+        key={c.component_id}
+        componente={{ ...c, render: () => definicion.render(c) }}
+        esPrimero={i === 0}
+        esUltimo={i === items.length - 1}
+        seleccionado={seleccionado === c.component_id}
+        onSeleccionar={onSeleccionar}
+        onMover={onMover}
+        onOcultar={onOcultar}
+        onMostrar={onMostrar}
+        onEliminar={onEliminar}
+        permiteEstilo={permiteEstilo}
+        permiteEliminar={permiteEliminar}
+      />
+    )
+  })
+
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={ids} strategy={rectSortingStrategy}>
-        <div className="d-flex flex-wrap" role="list" aria-label="Componentes del dashboard (editable)">
-          {ordenados.map((c, i) => {
-            const definicion = registro[c.component_id]
-            if (!definicion) return null
-            return (
-              <ComponentWrapper
-                key={c.component_id}
-                componente={{ ...c, render: () => definicion.render(c) }}
-                esPrimero={i === 0}
-                esUltimo={i === ordenados.length - 1}
-                seleccionado={seleccionado === c.component_id}
-                onSeleccionar={onSeleccionar}
-                onMover={onMover}
-                onOcultar={onOcultar}
-                onMostrar={onMostrar}
-                onEliminar={onEliminar}
-                permiteEstilo={permiteEstilo}
-                permiteEliminar={permiteEliminar}
-              />
-            )
-          })}
+      {gruposFinal.map((zona) => (
+        <div key={zona.id} className="mb-3">
+          <div
+            className="fw-semibold text-uppercase text-secondary mb-2"
+            style={{ fontSize: '0.75rem', letterSpacing: '0.04em' }}
+          >
+            {zona.etiqueta}
+          </div>
+          {/* SortableContext por zona (no uno global): así el reacomodo animado durante el
+              arrastre solo involucra a los componentes de la misma zona, nunca sugiere que se
+              pueda soltar uno en la zona vecina. */}
+          <SortableContext items={zona.items.map((c) => c.component_id)} strategy={rectSortingStrategy}>
+            <div
+              className="border-secondary d-flex flex-wrap"
+              style={{ border: '2px dashed', borderRadius: 10, padding: 8 }}
+              role="list"
+              aria-label={zona.etiqueta}
+            >
+              {renderGrupo(zona.items)}
+            </div>
+          </SortableContext>
         </div>
-      </SortableContext>
+      ))}
+
+      {sinZona.length > 0 && (
+        <SortableContext items={sinZona.map((c) => c.component_id)} strategy={rectSortingStrategy}>
+          <div className="d-flex flex-wrap" role="list" aria-label="Otros componentes">
+            {renderGrupo(sinZona)}
+          </div>
+        </SortableContext>
+      )}
     </DndContext>
   )
 }

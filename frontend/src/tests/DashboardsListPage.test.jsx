@@ -4,18 +4,25 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import DashboardsListPage from '../pages/dashboards/DashboardsListPage'
 import * as dashboardLayoutService from '../services/dashboardLayoutService'
+import * as rolesService from '../services/rolesService'
+import * as usersService from '../services/usersService'
 import { useAuth } from '../context/AuthContext'
 
 vi.mock('../services/dashboardLayoutService')
+vi.mock('../services/rolesService')
+vi.mock('../services/usersService')
 vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
-function renderPagina(permissions = []) {
-  useAuth.mockReturnValue({ user: { permissions } })
+function renderPagina(permissions = [], overridesUsuario = {}) {
+  useAuth.mockReturnValue({ user: { permissions, ...overridesUsuario } })
   return render(<MemoryRouter><DashboardsListPage /></MemoryRouter>)
 }
 
 describe('DashboardsListPage', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    rolesService.list.mockResolvedValue({ results: [{ id: 1, name: 'Analista' }, { id: 2, name: 'Supervisor' }] })
+  })
 
   it('muestra un spinner mientras carga', () => {
     dashboardLayoutService.obtenerDashboardsAutorizados.mockReturnValue(new Promise(() => {}))
@@ -146,6 +153,165 @@ describe('DashboardsListPage', () => {
 
     expect(dashboardLayoutService.eliminarDashboard).toHaveBeenCalledWith('finanzas', 'Finanzas')
     expect(await screen.findByText(/no tiene ningún dashboard autorizado/i)).toBeInTheDocument()
+  })
+
+  it('el botón "Editar" también aparece sin el permiso dashboard.editar cuando puede_administrar_acceso es true', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: '', puede_administrar_acceso: true },
+      { dashboard_id: 'ventas', name: 'Ventas', area: '', puede_administrar_acceso: false },
+    ])
+    renderPagina([])
+
+    const tarjetaConAcceso = await screen.findByTestId('dashboard-card-finanzas')
+    expect(within(tarjetaConAcceso).getByRole('button', { name: 'Editar' })).toBeInTheDocument()
+
+    const tarjetaSinAcceso = screen.getByTestId('dashboard-card-ventas')
+    expect(within(tarjetaSinAcceso).queryByRole('button', { name: 'Editar' })).not.toBeInTheDocument()
+  })
+
+  it('sin permiso dashboard.editar pero con puede_administrar_acceso, el modal solo muestra la sección de acceso, no nombre/área', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: null, roles_editores: [], roles_lectores: [],
+    })
+    renderPagina([])
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    expect(await screen.findByText('Ver y editar')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Área')).not.toBeInTheDocument()
+  })
+
+  it('marcar roles y guardar llama a actualizarAcceso con los ids correctos', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: '', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: null, roles_editores: [], roles_lectores: [],
+    })
+    dashboardLayoutService.actualizarAcceso.mockResolvedValue({})
+    renderPagina([])
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    await userEvent.click(await screen.findByLabelText('Analista', { selector: '#acceso-editor-1' }))
+    await userEvent.click(screen.getByLabelText('Supervisor', { selector: '#acceso-lector-2' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(dashboardLayoutService.actualizarAcceso).toHaveBeenCalledWith('finanzas', { rolesEditores: [1], rolesLectores: [2] })
+  })
+
+  it('sin superusuario, el modal de edición no muestra el selector de dueño', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: '', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: { id: 5, username: 'ana' }, roles_editores: [], roles_lectores: [],
+    })
+    renderPagina([], { is_superuser: false })
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    await screen.findByText('Ver y editar')
+    expect(screen.queryByLabelText('Dueño')).not.toBeInTheDocument()
+    expect(screen.getByText(/Solo un superusuario puede reasignar/)).toBeInTheDocument()
+  })
+
+  it('con superusuario, cambiar el dueño y guardar llama a reasignarDueno', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: '', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: { id: 5, username: 'ana' }, roles_editores: [], roles_lectores: [],
+    })
+    usersService.list.mockResolvedValue({ results: [{ id: 5, username: 'ana' }, { id: 7, username: 'luis' }] })
+    dashboardLayoutService.actualizarAcceso.mockResolvedValue({})
+    dashboardLayoutService.reasignarDueno.mockResolvedValue({})
+    renderPagina([], { is_superuser: true })
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    const selectorDueno = await screen.findByLabelText('Dueño')
+    await userEvent.selectOptions(selectorDueno, '7')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(dashboardLayoutService.reasignarDueno).toHaveBeenCalledWith('finanzas', '7')
+  })
+
+  it('con dashboard.editar y puede_administrar_acceso a la vez, el modal muestra ambas secciones y guarda ambas', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValueOnce([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', puede_administrar_acceso: true },
+    ]).mockResolvedValueOnce([
+      { dashboard_id: 'finanzas', name: 'Finanzas Nacionales', area: 'Finanzas', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: null, roles_editores: [], roles_lectores: [],
+    })
+    dashboardLayoutService.actualizarDashboard.mockResolvedValue({ dashboard_id: 'finanzas', name: 'Finanzas Nacionales', area: 'Finanzas' })
+    dashboardLayoutService.actualizarAcceso.mockResolvedValue({})
+    renderPagina(['dashboard.editar'])
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    expect(await screen.findByLabelText('Nombre')).toBeInTheDocument()
+    expect(screen.getByText('Ver y editar')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText('Analista', { selector: '#acceso-editor-1' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', { name: 'Finanzas', area: 'Finanzas y Contabilidad' })
+    expect(dashboardLayoutService.actualizarAcceso).toHaveBeenCalledWith('finanzas', { rolesEditores: [1], rolesLectores: [] })
+    expect(await screen.findByText('Finanzas Nacionales')).toBeInTheDocument()
+  })
+
+  it('el modal de edición organiza cada área en una sección con encabezado propio, contraíble por separado', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', puede_administrar_acceso: true },
+    ])
+    dashboardLayoutService.obtenerAcceso.mockResolvedValue({
+      dashboard_id: 'finanzas', owner: { id: 5, username: 'ana' }, roles_editores: [], roles_lectores: [],
+    })
+    renderPagina(['dashboard.editar'], { is_superuser: true })
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    const encabezadoGenerales = await screen.findByRole('button', { name: 'Ajustes generales' })
+    const encabezadoPermisos = screen.getByRole('button', { name: 'Permisos de visualización y edición' })
+    const encabezadoDueno = screen.getByRole('button', { name: 'Dueño del tablero' })
+
+    // Las 3 secciones empiezan expandidas.
+    expect(encabezadoGenerales).toHaveAttribute('aria-expanded', 'true')
+    expect(encabezadoPermisos).toHaveAttribute('aria-expanded', 'true')
+    expect(encabezadoDueno).toHaveAttribute('aria-expanded', 'true')
+
+    // Cada una se contrae de forma independiente al pulsar su propio encabezado, sin afectar a
+    // las demás (el Accordion es `alwaysOpen`, no exclusivo).
+    await userEvent.click(encabezadoGenerales)
+    expect(encabezadoGenerales).toHaveAttribute('aria-expanded', 'false')
+    expect(encabezadoPermisos).toHaveAttribute('aria-expanded', 'true')
+    expect(encabezadoDueno).toHaveAttribute('aria-expanded', 'true')
+
+    await userEvent.click(encabezadoPermisos)
+    expect(encabezadoPermisos).toHaveAttribute('aria-expanded', 'false')
+    expect(encabezadoDueno).toHaveAttribute('aria-expanded', 'true')
+
+    await userEvent.click(encabezadoDueno)
+    expect(encabezadoDueno).toHaveAttribute('aria-expanded', 'false')
+
+    // Reabrir una no afecta a las otras, que siguen contraídas.
+    await userEvent.click(encabezadoGenerales)
+    expect(encabezadoGenerales).toHaveAttribute('aria-expanded', 'true')
+    expect(encabezadoPermisos).toHaveAttribute('aria-expanded', 'false')
+    expect(encabezadoDueno).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('si la eliminación falla, muestra el mensaje de error del backend', async () => {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../../../context/AuthContext'
 import * as permissionsService from '../../../services/permissionsService'
 import * as rolesService from '../../../services/rolesService'
 import * as usersService from '../../../services/usersService'
@@ -11,8 +12,14 @@ export default function UserFormPage() {
   const { id } = useParams()
   const esEdicion = Boolean(id)
   const navigate = useNavigate()
+  const { user: actor } = useAuth()
+  // Solo otro superusuario puede otorgar/quitar superusuario (`apps.permissions.permissions.
+  // IsSuperuser`, en el backend) — un permiso del catálogo de negocio no alcanza porque
+  // `is_superuser=True` bypassa por completo ese catálogo.
+  const puedeAsignarSuperusuario = Boolean(actor?.is_superuser)
 
   const [campos, setCampos] = useState(CAMPOS_INICIALES)
+  const [esSuperusuario, setEsSuperusuario] = useState(false)
   const [rolesDisponibles, setRolesDisponibles] = useState([])
   const [rolesSeleccionados, setRolesSeleccionados] = useState([])
   const [catalogoModulos, setCatalogoModulos] = useState({})
@@ -37,6 +44,7 @@ export default function UserFormPage() {
           })
           setPermisosSeleccionados(usuario.direct_permissions)
           setRolesSeleccionados(rolesData.results.filter((r) => usuario.roles.includes(r.name)).map((r) => r.id))
+          setEsSuperusuario(usuario.is_superuser)
         })
         .catch(() => setError('No se pudo cargar el usuario.'))
         .finally(() => setCargando(false))
@@ -66,6 +74,7 @@ export default function UserFormPage() {
         await usersService.update(id, { email: campos.email, first_name: campos.first_name, last_name: campos.last_name })
         await usersService.assignRoles(id, rolesSeleccionados)
         await usersService.assignPermissions(id, permisosSeleccionados)
+        if (puedeAsignarSuperusuario) await usersService.setSuperuser(id, esSuperusuario)
         setExito('Cambios guardados.')
       } else {
         await usersService.create({
@@ -126,6 +135,23 @@ export default function UserFormPage() {
             </>
           )}
         </Card>
+
+        {esEdicion && puedeAsignarSuperusuario && (
+          <Card className="chart-panel mb-3">
+            <h6>Superusuario</h6>
+            <div className="chart-panel__subtitle">
+              Un superusuario tiene acceso completo a todo el sistema, sin importar sus roles o
+              permisos, y puede otorgar este mismo estado a otras cuentas.
+            </div>
+            <Form.Check
+              type="checkbox"
+              id="user-is-superuser"
+              label="Superusuario"
+              checked={esSuperusuario}
+              onChange={(e) => setEsSuperusuario(e.target.checked)}
+            />
+          </Card>
+        )}
 
         {esEdicion && (
           <>

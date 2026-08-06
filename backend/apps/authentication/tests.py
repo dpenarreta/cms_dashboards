@@ -1,15 +1,30 @@
+import io
+import os
+import tempfile
+
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from PIL import Image
+from rest_framework import serializers as drf_serializers
 from rest_framework.test import APIClient
 
 from apps.audit.models import AuditEvent
 
 from .models import LoginAttempt, PasswordResetToken, Session
+from .serializers import AvatarUploadSerializer
 from .services import MENSAJE_GENERICO_RECUPERACION, PasswordResetService, _hash_token
 
 User = get_user_model()
+
+
+def _imagen_de_prueba(nombre='avatar.png', color=(255, 0, 0)):
+    buffer = io.BytesIO()
+    Image.new('RGB', (10, 10), color).save(buffer, format='PNG')
+    buffer.seek(0)
+    return SimpleUploadedFile(nombre, buffer.read(), content_type='image/png')
 
 
 class LoginViewTests(TestCase):
@@ -119,6 +134,75 @@ class ChangeOwnPasswordViewTests(TestCase):
     def test_contrasena_actual_incorrecta_es_rechazada(self):
         resp = self.client.post('/api/auth/password/change', {'old_password': 'incorrecta', 'new_password': 'Clave-Nueva-456'}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
+class MyProfileTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
+        login = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json').json()
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {login["access"]}')
+
+    def test_me_incluye_area_y_avatar_url_vacios_por_defecto(self):
+        resp = self.client.get('/api/auth/me')
+        self.assertEqual(resp.json()['area'], '')
+        self.assertIsNone(resp.json()['avatar_url'])
+
+    def test_actualizar_area_propia(self):
+        resp = self.client.patch('/api/auth/me', {'area': 'Cobranzas'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['area'], 'Cobranzas')
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.area, 'Cobranzas')
+
+    def test_actualizar_area_registra_auditoria(self):
+        self.client.patch('/api/auth/me', {'area': 'Cobranzas'}, format='json')
+        self.assertTrue(AuditEvent.objects.filter(
+            domain=AuditEvent.Domain.USER_MANAGEMENT, action='USER_PROFILE_UPDATED',
+            actor=self.usuario, entity_id=str(self.usuario.id),
+        ).exists())
+
+    def test_subir_avatar_exitoso(self):
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(resp.json()['avatar_url'])
+        self.usuario.refresh_from_db()
+        self.assertTrue(bool(self.usuario.avatar))
+
+    def test_subir_avatar_registra_auditoria(self):
+        self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
+        self.assertTrue(AuditEvent.objects.filter(
+            domain=AuditEvent.Domain.USER_MANAGEMENT, action='USER_AVATAR_UPDATED', actor=self.usuario,
+        ).exists())
+
+    def test_subir_avatar_rechaza_archivo_que_no_es_imagen(self):
+        archivo = SimpleUploadedFile('documento.txt', b'no es una imagen', content_type='text/plain')
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_subir_un_avatar_nuevo_borra_el_anterior_del_disco(self):
+        self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
+        self.usuario.refresh_from_db()
+        ruta_anterior = self.usuario.avatar.path
+        self.assertTrue(os.path.exists(ruta_anterior))
+
+        self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba(color=(0, 255, 0))}, format='multipart')
+        self.assertFalse(os.path.exists(ruta_anterior))
+
+    def test_avatar_requiere_autenticacion(self):
+        self.client.credentials()
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
+        self.assertEqual(resp.status_code, 401)
+
+
+class AvatarUploadSerializerTests(TestCase):
+    def test_rechaza_archivo_mayor_a_2mb(self):
+        archivo = _imagen_de_prueba()
+        archivo.size = 3 * 1024 * 1024
+        serializer = AvatarUploadSerializer()
+        with self.assertRaises(drf_serializers.ValidationError):
+            serializer.validate_avatar(archivo)
 
 
 class PasswordResetServiceTests(TestCase):

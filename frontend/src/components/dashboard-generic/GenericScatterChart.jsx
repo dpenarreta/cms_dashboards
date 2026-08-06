@@ -1,5 +1,6 @@
 import { CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatNumber } from '../../utils/format'
+import HallazgosClaveCard from './HallazgosClaveCard'
 
 /**
  * Renderiza un componente type=chart de dispersión (`{titulo, puntos: [{x, y}]}`, ver
@@ -21,14 +22,15 @@ export default function GenericScatterChart({ data, override }) {
         <div className="chart-panel__subtitle">{override?.descripcion || data.descripcion}</div>
       )}
       <ResponsiveContainer width="100%" height={340}>
-        <ScatterChart margin={{ left: 8, right: 24, bottom: 8 }}>
+        <ScatterChart margin={{ left: 12, right: 24, top: 8, bottom: 8 }}>
           <CartesianGrid stroke="var(--gridline)" />
-          <XAxis type="number" dataKey="x" name="X" tickFormatter={(v) => formatNumber(v)} />
-          <YAxis type="number" dataKey="y" name="Y" tickFormatter={(v) => formatNumber(v)} />
+          <XAxis type="number" dataKey="x" name="X" tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
+          <YAxis type="number" dataKey="y" name="Y" width={96} tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
           <Tooltip formatter={(value) => formatNumber(value)} cursor={{ strokeDasharray: '3 3' }} />
           <Scatter data={data.puntos} fill={colorPrincipal} />
         </ScatterChart>
       </ResponsiveContainer>
+      <HallazgosClaveCard variante="dispersion" datos={data} />
     </div>
   )
 }

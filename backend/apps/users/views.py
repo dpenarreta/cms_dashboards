@@ -2,13 +2,14 @@ from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.permissions.permissions import require_permission
+from apps.permissions.permissions import IsSuperuser, require_permission
 
 from .filters import filter_users
 from .models import User
 from .serializers import (
     PermissionAssignmentSerializer,
     RoleAssignmentSerializer,
+    SuperuserAssignmentSerializer,
     UserAdminCreateSerializer,
     UserAdminDetailSerializer,
     UserAdminListSerializer,
@@ -28,6 +29,9 @@ ACTION_PERMISSION_CLASSES = {
     'unblock': [require_permission('usuarios.deshabilitar')],
     'roles': [require_permission('usuarios.editar')],
     'permissions': [require_permission('usuarios.editar')],
+    'reset_password': [require_permission('usuarios.restablecer_password')],
+    # Solo otro superusuario puede otorgar/quitar superusuario — ver IsSuperuser.
+    'superuser': [IsSuperuser],
 }
 
 
@@ -94,5 +98,19 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         usuario = UserAdminService.assign_permissions(
             usuario=self.get_object(), codenames=serializer.validated_data['codenames'], actor=request.user,
+        )
+        return Response(UserAdminDetailSerializer(usuario).data)
+
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        usuario, password_temporal = UserAdminService.reset_password(usuario=self.get_object(), actor=request.user)
+        return Response({**UserAdminDetailSerializer(usuario).data, 'temporary_password': password_temporal})
+
+    @action(detail=True, methods=['post'])
+    def superuser(self, request, pk=None):
+        serializer = SuperuserAssignmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        usuario = UserAdminService.set_superuser(
+            usuario=self.get_object(), es_superusuario=serializer.validated_data['is_superuser'], actor=request.user,
         )
         return Response(UserAdminDetailSerializer(usuario).data)

@@ -1,5 +1,6 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatNumber } from '../../utils/format'
+import HallazgosClaveCard from './HallazgosClaveCard'
 
 function acortar(texto, max = 22) {
   if (!texto) return ''
@@ -26,14 +27,15 @@ export default function GenericLineChart({ data, override }) {
         <div className="chart-panel__subtitle">{override?.descripcion || data.descripcion}</div>
       )}
       <ResponsiveContainer width="100%" height={320}>
-        <LineChart data={datosGrafico} margin={{ left: 8, right: 24, bottom: 32 }}>
+        <LineChart data={datosGrafico} margin={{ left: 12, right: 24, top: 8, bottom: 32 }}>
           <CartesianGrid stroke="var(--gridline)" />
           <XAxis dataKey="etiqueta" angle={-30} textAnchor="end" interval={0} height={50} />
-          <YAxis tickFormatter={(v) => formatNumber(v)} />
+          <YAxis width={96} tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
           <Tooltip formatter={(value) => formatNumber(value)} labelFormatter={(_, payload) => payload?.[0]?.payload?.categoria} />
           <Line type="monotone" dataKey="valor" stroke={colorPrincipal} strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
+      <HallazgosClaveCard variante="categorico" datos={data} />
     </div>
   )
 }

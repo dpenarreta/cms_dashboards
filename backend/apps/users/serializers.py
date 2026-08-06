@@ -63,3 +63,7 @@ class RoleAssignmentSerializer(serializers.Serializer):
 
 class PermissionAssignmentSerializer(serializers.Serializer):
     codenames = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+
+
+class SuperuserAssignmentSerializer(serializers.Serializer):
+    is_superuser = serializers.BooleanField()

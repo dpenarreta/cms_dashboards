@@ -7,7 +7,8 @@ from rest_framework.test import APIClient
 
 from apps.audit.models import AuditEvent
 from cartera.exceptions import CarteraError
-from cartera.models import Dashboard
+from cartera.models import Dashboard, DashboardComponent
+from cartera.services import plantilla
 from cartera.services.dashboards import crear_dashboard
 
 User = get_user_model()
@@ -28,6 +29,16 @@ class CrearDashboardServiceTests(TestCase):
         with self.assertRaises(CarteraError) as ctx:
             crear_dashboard(nombre='   ')
         self.assertEqual(ctx.exception.codigo, 'NOMBRE_REQUERIDO')
+
+    def test_crea_las_13_posiciones_de_la_plantilla_con_datos_ficticios(self):
+        dashboard = crear_dashboard(nombre='Marketing')
+        componentes = DashboardComponent.objects.filter(layout__dashboard_id=dashboard.dashboard_id)
+        self.assertEqual(componentes.count(), len(plantilla.PLANTILLA_SLOTS))
+        ids_esperados = {slot['id'] for slot in plantilla.PLANTILLA_SLOTS}
+        self.assertEqual({c.component_id for c in componentes}, ids_esperados)
+        kpi_1 = componentes.get(component_id='kpi-1')
+        self.assertEqual(kpi_1.type, DashboardComponent.Tipo.KPI)
+        self.assertEqual(kpi_1.content['valor'], plantilla.datos_ficticios()['kpi-1']['valor'])
 
     def test_registra_auditoria(self):
         usuario = User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')

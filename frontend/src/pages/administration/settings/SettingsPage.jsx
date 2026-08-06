@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap'
+import { Link } from 'react-router-dom'
 import * as brandingService from '../../../services/brandingService'
 import { useTheme } from '../../../context/ThemeContext'
 import { cumpleContrasteAA } from '../../../utils/colorContrast'
@@ -124,7 +125,12 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h1 className="h4 mb-3">Configuración institucional</h1>
+      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <h1 className="h4 mb-0">Configuración institucional</h1>
+        <Button as={Link} to="/admin/settings/plantilla-base" variant="outline-secondary" size="sm">
+          Editar la plantilla base de dashboards
+        </Button>
+      </div>
       {error && <Alert variant="danger">{error}</Alert>}
       {exito && <Alert variant="success">{exito}</Alert>}
 

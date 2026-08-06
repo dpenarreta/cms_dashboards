@@ -6,10 +6,12 @@ import UserFormPage from '../pages/administration/users/UserFormPage'
 import * as permissionsService from '../services/permissionsService'
 import * as rolesService from '../services/rolesService'
 import * as usersService from '../services/usersService'
+import { useAuth } from '../context/AuthContext'
 
 vi.mock('../services/usersService')
 vi.mock('../services/rolesService')
 vi.mock('../services/permissionsService')
+vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 const CATALOGO = { modules: { usuarios: [{ codename: 'usuarios.ver', name: 'Ver usuarios' }] } }
 const ROLES = { results: [{ id: 1, name: 'Cobranzas', permission_codenames: [] }], count: 1, next: null, previous: null }
@@ -31,7 +33,10 @@ function renderEditar() {
 }
 
 describe('UserFormPage — creación', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useAuth.mockReturnValue({ user: { is_superuser: false } })
+  })
 
   it('envía los datos del nuevo usuario', async () => {
     permissionsService.catalog.mockResolvedValue(CATALOGO)
@@ -59,12 +64,15 @@ describe('UserFormPage — creación', () => {
 })
 
 describe('UserFormPage — edición', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useAuth.mockReturnValue({ user: { is_superuser: false } })
+  })
 
   const usuarioDetalle = {
     id: 7, username: 'ana', email: 'ana@example.com', first_name: 'Ana', last_name: 'Pérez',
     status: 'active', roles: ['Cobranzas'], permissions: ['dashboard.view'], direct_permissions: ['dashboard.view'],
-    must_change_password: false,
+    must_change_password: false, is_superuser: false,
   }
 
   it('precarga los datos, roles y permisos del usuario', async () => {
@@ -94,5 +102,44 @@ describe('UserFormPage — edición', () => {
       expect(usersService.assignRoles).toHaveBeenCalledWith('7', [1])
       expect(usersService.assignPermissions).toHaveBeenCalledWith('7', ['dashboard.view'])
     })
+  })
+
+  it('un actor sin superusuario no ve el control "Superusuario"', async () => {
+    permissionsService.catalog.mockResolvedValue(CATALOGO)
+    rolesService.list.mockResolvedValue(ROLES)
+    usersService.get.mockResolvedValue(usuarioDetalle)
+    renderEditar()
+
+    await screen.findByDisplayValue('ana@example.com')
+    expect(screen.queryByLabelText('Superusuario')).not.toBeInTheDocument()
+  })
+
+  it('un actor superusuario ve el control, precargado con el valor del usuario editado', async () => {
+    useAuth.mockReturnValue({ user: { is_superuser: true } })
+    permissionsService.catalog.mockResolvedValue(CATALOGO)
+    rolesService.list.mockResolvedValue(ROLES)
+    usersService.get.mockResolvedValue({ ...usuarioDetalle, is_superuser: true })
+    renderEditar()
+
+    await screen.findByDisplayValue('ana@example.com')
+    expect(screen.getByLabelText('Superusuario')).toBeChecked()
+  })
+
+  it('un actor superusuario puede otorgar superusuario al guardar', async () => {
+    useAuth.mockReturnValue({ user: { is_superuser: true } })
+    permissionsService.catalog.mockResolvedValue(CATALOGO)
+    rolesService.list.mockResolvedValue(ROLES)
+    usersService.get.mockResolvedValue(usuarioDetalle)
+    usersService.update.mockResolvedValue({})
+    usersService.assignRoles.mockResolvedValue({})
+    usersService.assignPermissions.mockResolvedValue({})
+    usersService.setSuperuser.mockResolvedValue({})
+    renderEditar()
+
+    await screen.findByDisplayValue('ana@example.com')
+    await userEvent.click(screen.getByLabelText('Superusuario'))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(usersService.setSuperuser).toHaveBeenCalledWith('7', true))
   })
 })

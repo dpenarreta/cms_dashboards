@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Alert, Badge, Button, Form, Spinner, Table } from 'react-bootstrap'
+import { Alert, Badge, Button, Form, Modal, Spinner, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
+import ConfirmModal from '../../../components/dashboard-editor/ConfirmModal'
+import { useAuth } from '../../../context/AuthContext'
 import * as usersService from '../../../services/usersService'
 
 const ESTADOS = [
@@ -13,12 +15,19 @@ const ESTADOS = [
 const ETIQUETA_ESTADO = { active: 'Activo', disabled: 'Deshabilitado', blocked: 'Bloqueado' }
 
 export default function UsersListPage() {
+  const { user } = useAuth()
+  const puedeRestablecerPassword = Boolean(user?.permissions?.includes('usuarios.restablecer_password'))
+
   const [datos, setDatos] = useState({ results: [], count: 0, next: null, previous: null })
   const [pagina, setPagina] = useState(1)
   const [busqueda, setBusqueda] = useState('')
   const [estado, setEstado] = useState('')
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
+
+  const [usuarioARestablecer, setUsuarioARestablecer] = useState(null)
+  const [restableciendo, setRestableciendo] = useState(false)
+  const [passwordGenerada, setPasswordGenerada] = useState(null)
 
   const cargar = () => {
     setCargando(true)
@@ -38,6 +47,22 @@ export default function UsersListPage() {
       cargar()
     } catch {
       setError(`No se pudo ${accion === 'enable' ? 'habilitar' : 'deshabilitar'} el usuario.`)
+    }
+  }
+
+  const confirmarRestablecerPassword = async () => {
+    setRestableciendo(true)
+    setError('')
+    try {
+      const resultado = await usersService.resetPassword(usuarioARestablecer.id)
+      setPasswordGenerada({ username: usuarioARestablecer.username, password: resultado.temporary_password })
+      setUsuarioARestablecer(null)
+      cargar()
+    } catch {
+      setError('No se pudo restablecer la contraseña del usuario.')
+      setUsuarioARestablecer(null)
+    } finally {
+      setRestableciendo(false)
     }
   }
 
@@ -89,11 +114,16 @@ export default function UsersListPage() {
                   <td>{ETIQUETA_ESTADO[u.status] || u.status}</td>
                   <td>{u.roles.join(', ') || '—'}</td>
                   <td>
-                    {u.status === 'active' ? (
-                      <Button size="sm" variant="outline-secondary" onClick={() => cambiarEstado(u, 'disable')}>Deshabilitar</Button>
-                    ) : (
-                      <Button size="sm" variant="outline-secondary" onClick={() => cambiarEstado(u, 'enable')}>Habilitar</Button>
-                    )}
+                    <div className="d-flex gap-2 flex-wrap">
+                      {u.status === 'active' ? (
+                        <Button size="sm" variant="outline-secondary" onClick={() => cambiarEstado(u, 'disable')}>Deshabilitar</Button>
+                      ) : (
+                        <Button size="sm" variant="outline-secondary" onClick={() => cambiarEstado(u, 'enable')}>Habilitar</Button>
+                      )}
+                      {puedeRestablecerPassword && (
+                        <Button size="sm" variant="outline-warning" onClick={() => setUsuarioARestablecer(u)}>Restablecer contraseña</Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -112,6 +142,51 @@ export default function UsersListPage() {
           <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
         </div>
       </div>
+
+      <ConfirmModal
+        show={Boolean(usuarioARestablecer)}
+        title="Restablecer contraseña"
+        onCancel={() => setUsuarioARestablecer(null)}
+        onConfirm={confirmarRestablecerPassword}
+        confirmLabel={restableciendo ? 'Restableciendo...' : 'Restablecer'}
+        confirmVariant="warning"
+      >
+        {usuarioARestablecer && (
+          <>
+            Se generará una nueva contraseña temporal para <strong>{usuarioARestablecer.username}</strong>,
+            se cerrarán todas sus sesiones activas y deberá cambiarla en su próximo inicio de sesión.
+            ¿Deseas continuar?
+          </>
+        )}
+      </ConfirmModal>
+
+      <Modal show={Boolean(passwordGenerada)} onHide={() => setPasswordGenerada(null)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Contraseña restablecida</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {passwordGenerada && (
+            <>
+              <p>
+                Contraseña temporal para <strong>{passwordGenerada.username}</strong> — compártela
+                de forma segura, no se mostrará de nuevo:
+              </p>
+              <div className="d-flex gap-2">
+                <Form.Control readOnly value={passwordGenerada.password} onFocus={(e) => e.target.select()} />
+                <Button
+                  variant="outline-secondary"
+                  onClick={() => navigator.clipboard?.writeText(passwordGenerada.password)}
+                >
+                  Copiar
+                </Button>
+              </div>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setPasswordGenerada(null)}>Cerrar</Button>
+        </Modal.Footer>
+      </Modal>
     </div>
   )
 }

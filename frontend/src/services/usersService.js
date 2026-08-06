@@ -39,3 +39,11 @@ export function assignRoles(id, roleIds) {
 export function assignPermissions(id, codenames) {
   return authApi.post(`/users/${id}/permissions/`, { codenames }).then((r) => r.data)
 }
+
+export function setSuperuser(id, isSuperuser) {
+  return authApi.post(`/users/${id}/superuser/`, { is_superuser: isSuperuser }).then((r) => r.data)
+}
+
+export function resetPassword(id) {
+  return authApi.post(`/users/${id}/reset_password/`).then((r) => r.data)
+}

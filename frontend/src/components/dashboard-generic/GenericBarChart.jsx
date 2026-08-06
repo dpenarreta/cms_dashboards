@@ -1,6 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatNumber } from '../../utils/format'
 import { PALETA_CATEGORICA } from '../../utils/colors'
+import HallazgosClaveCard from './HallazgosClaveCard'
 
 function acortar(texto, max = 22) {
   if (!texto) return ''
@@ -35,7 +36,7 @@ export default function GenericBarChart({ data, override, orientacion = 'horizon
         <BarChart
           data={datosGrafico}
           layout={esHorizontal ? 'vertical' : 'horizontal'}
-          margin={esHorizontal ? { left: 8, right: 24 } : { left: 8, right: 24, bottom: 32 }}
+          margin={esHorizontal ? { left: 12, right: 24, top: 8 } : { left: 12, right: 24, top: 8, bottom: 32 }}
         >
           <CartesianGrid horizontal={!esHorizontal} stroke="var(--gridline)" />
           {esHorizontal ? (
@@ -46,7 +47,7 @@ export default function GenericBarChart({ data, override, orientacion = 'horizon
           ) : (
             <>
               <XAxis type="category" dataKey="etiqueta" angle={-30} textAnchor="end" interval={0} height={50} />
-              <YAxis type="number" tickFormatter={(v) => formatNumber(v)} />
+              <YAxis type="number" width={96} tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
             </>
           )}
           <Tooltip formatter={(value) => formatNumber(value)} labelFormatter={(_, payload) => payload?.[0]?.payload?.categoria} />
@@ -61,6 +62,7 @@ export default function GenericBarChart({ data, override, orientacion = 'horizon
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      <HallazgosClaveCard variante="categorico" datos={data} />
     </div>
   )
 }

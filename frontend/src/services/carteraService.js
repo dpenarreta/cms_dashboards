@@ -10,31 +10,36 @@ export function validarArchivo(archivo, hoja, dashboardId) {
   }).then((r) => r.data)
 }
 
-export function analizarColumnas(cargaId) {
-  return api.post('/analizar-columnas', { carga_id: cargaId }).then((r) => r.data)
+export function sugerirMapeoPlantilla(cargaId, aliases, valoresBlancos) {
+  return api.post('/plantilla/sugerir', { carga_id: cargaId, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
 }
 
-export function recomendarGraficas(cargaId, columnasUtilizables) {
-  return api.post('/recomendar-graficas', {
-    carga_id: cargaId,
-    columnas_utilizables: columnasUtilizables,
+export function previsualizarMapeoPlantilla(cargaId, mapeo, aliases, valoresBlancos) {
+  return api.post('/plantilla/previsualizar', { carga_id: cargaId, mapeo, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
+}
+
+export function aplicarMapeoPlantilla(cargaId, mapeo, aliases, valoresBlancos, columnasHistoricas) {
+  return api.post('/plantilla/aplicar', {
+    carga_id: cargaId, mapeo, aliases, valores_blancos: valoresBlancos, columnas_historicas: columnasHistoricas,
   }).then((r) => r.data)
 }
 
-export function agregarGrafica(cargaId, {
-  titulo, descripcion, columnaValor, columnaCategoria, columnaSerie, columnaValorY, tipoVisualizacion, reemplazarExistentes,
-}) {
-  return api.post('/agregar-grafica', {
-    carga_id: cargaId,
-    titulo,
-    descripcion: descripcion || undefined,
-    columna_valor: columnaValor,
-    columna_categoria: columnaCategoria || undefined,
-    columna_serie: columnaSerie || undefined,
-    columna_valor_y: columnaValorY || undefined,
-    tipo_visualizacion: tipoVisualizacion || undefined,
-    reemplazar_existentes: Boolean(reemplazarExistentes),
-  }).then((r) => r.data)
+export function obtenerValoresColumnaPlantilla(cargaId, columna, aliases, valoresBlancos) {
+  return api.post('/plantilla/valores-columna', { carga_id: cargaId, columna, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
+}
+
+export function obtenerArchivoActualDashboard(dashboardId) {
+  return api.post('/plantilla/archivo-actual', { dashboard_id: dashboardId }).then((r) => r.data)
+}
+
+/** Agrega UN componente nuevo a la "Zona Personal" del dashboard — reutiliza el endpoint legado
+ * `POST /agregar-grafica` (`services/dashboard_layout.py::agregar_componente_generado`), fijando
+ * siempre `zona: 'personal'` para que quede marcado y agrupado aparte (`config.zona`, ver
+ * `EditableGrid.jsx`). A diferencia del resto del editor de dashboard, esto persiste de inmediato
+ * (no pasa por el borrador ni "Guardar cambios") — el llamador debe refrescar el layout después
+ * (`useDashboardLayout().recargar()`). */
+export function agregarComponentePersonal(payload) {
+  return api.post('/agregar-grafica', { ...payload, zona: 'personal' }).then((r) => r.data)
 }
 
 export function procesarArchivo({ cargaId, mapeo, fechaCorte, hoja }) {

@@ -2,7 +2,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.audit.models import AuditEvent
-from apps.permissions.permissions import require_permission
+from apps.permissions.permissions import IsSuperuser, require_permission
 
 from . import dashboard_registry, permisos
 from .exceptions import CarteraError
@@ -16,14 +16,14 @@ def _permisos_respuesta(request):
 
 class DashboardLayoutView(APIView):
     def get(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_VIEW):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
             return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
 
         layout = dl.obtener_o_crear_layout(dashboard_id)
         return Response({**dl.serializar_layout(layout), 'permisos': _permisos_respuesta(request)})
 
     def put(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_LAYOUT_EDIT):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_LAYOUT_EDIT, requiere_edicion=True):
             return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para editar el layout.'}, status=403)
 
         version_recibida = request.data.get('version')
@@ -45,9 +45,28 @@ class DashboardLayoutView(APIView):
         return Response(dl.serializar_layout(layout))
 
 
+class DashboardComponentePresentacionalView(APIView):
+    """`POST /api/dashboards/<dashboard_id>/componentes-presentacionales` — agrega un componente
+    de solo presentación (título o separador, panel lateral de componentes del editor de
+    dashboard, sección "Zona Personal") sin necesitar ningún archivo cargado — a diferencia de
+    `AgregarGraficaView` (`cartera/views.py`), que sí lo requiere para calcular datos."""
+
+    def post(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_LAYOUT_EDIT, requiere_edicion=True):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para editar el layout.'}, status=403)
+
+        tipo = request.data.get('tipo')
+        ancho_columnas = request.data.get('ancho_columnas') or None
+        zona = request.data.get('zona') or None
+        layout = dl.agregar_componente_presentacional(
+            dashboard_id, tipo, ancho_columnas=ancho_columnas, zona=zona, actor=request.user, request=request,
+        )
+        return Response(dl.serializar_layout(layout), status=201)
+
+
 class DashboardLayoutResetView(APIView):
     def post(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_CONFIGURATION_RESET):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_CONFIGURATION_RESET, requiere_edicion=True):
             return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para restablecer el diseño.'}, status=403)
 
         changed_by = (request.data.get('changed_by') or 'Anónimo')[:150]
@@ -109,9 +128,74 @@ class DashboardDetailView(APIView):
         return Response(status=204)
 
 
+class DashboardTabsView(APIView):
+    """`GET`/`POST /api/dashboards/<dashboard_id>/pestanas` — las pestañas del dashboard indicado
+    (siempre incluye al menos la raíz misma, aunque no tenga ninguna pestaña adicional) y la
+    creación de una pestaña nueva. Cada pestaña es un `Dashboard` independiente (su propia
+    plantilla de 13 posiciones, su propio archivo) — ver `services/dashboards.py::crear_pestana`/
+    `listar_pestanas`."""
+
+    def get(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+        # La familia completa puede incluir pestañas con su propia ACL más restrictiva que la de
+        # esta — no tendría sentido que la barra de pestañas enlace a una a la que el usuario no
+        # tiene acceso.
+        familia = dashboards_service.listar_pestanas(dashboard_id)
+        visibles = [
+            p for p in familia
+            if permisos.tiene_acceso_dashboard(request, p['dashboard_id'], permiso_global=permisos.DASHBOARD_VIEW)
+        ]
+        return Response(visibles)
+
+    def post(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_CREAR, requiere_edicion=True):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para crear dashboards.'}, status=403)
+        dashboard = dashboards_service.crear_pestana(
+            dashboard_id, nombre=request.data.get('name'), actor=request.user, request=request,
+        )
+        return Response({'dashboard_id': dashboard.dashboard_id, 'name': dashboard.name, 'orden': dashboard.orden}, status=201)
+
+
+class DashboardAccesoView(APIView):
+    """`GET`/`PUT /api/dashboards/<dashboard_id>/acceso` — control de acceso por dashboard: los 2
+    grupos de roles (`roles_editores` puede ver y editar, `roles_lectores` solo puede ver) y quién
+    es el dueño actual. Editar esta configuración está reservado al dueño o al superusuario
+    (`permisos.puede_administrar_acceso`) — a propósito no cae a ningún permiso global del
+    catálogo, ni siquiera `dashboard.editar`."""
+
+    def get(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+        return Response(dashboards_service.obtener_acceso(dashboard_id))
+
+    def put(self, request, dashboard_id):
+        if not permisos.puede_administrar_acceso(request, dashboard_id):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'Solo el dueño o un superusuario pueden editar el acceso de este dashboard.'}, status=403)
+        return Response(dashboards_service.actualizar_acceso(
+            dashboard_id, roles_editores_ids=request.data.get('roles_editores') or [],
+            roles_lectores_ids=request.data.get('roles_lectores') or [],
+            actor=request.user, request=request,
+        ))
+
+
+class DashboardDuenoView(APIView):
+    """`PATCH /api/dashboards/<dashboard_id>/dueno` — reasigna el dueño de un dashboard. Reservado
+    al superusuario, ni siquiera el dueño actual puede reasignarse a otra persona (mismo criterio
+    que conceder superusuario, ver `apps/permissions/permissions.py::IsSuperuser`)."""
+
+    permission_classes = [IsSuperuser]
+
+    def patch(self, request, dashboard_id):
+        dashboards_service.reasignar_dueno(
+            dashboard_id, nuevo_dueno_id=request.data.get('owner_id'), actor=request.user, request=request,
+        )
+        return Response(dashboards_service.obtener_acceso(dashboard_id))
+
+
 class DashboardVersionsView(APIView):
     def get(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_VIEW):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
             return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
 
         entradas = AuditEvent.objects.filter(

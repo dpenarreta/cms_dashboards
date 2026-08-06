@@ -20,6 +20,16 @@ export function me() {
   return authApi.get('/auth/me').then((r) => r.data)
 }
 
+export function updateProfile({ area }) {
+  return authApi.patch('/auth/me', { area }).then((r) => r.data)
+}
+
+export function uploadAvatar(archivo) {
+  const formData = new FormData()
+  formData.append('avatar', archivo)
+  return authApi.post('/auth/me/avatar', formData).then((r) => r.data)
+}
+
 export function changePassword({ oldPassword, newPassword }) {
   return authApi.post('/auth/password/change', { old_password: oldPassword, new_password: newPassword }).then((r) => r.data)
 }

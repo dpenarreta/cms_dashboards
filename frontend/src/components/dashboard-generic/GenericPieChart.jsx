@@ -2,21 +2,46 @@ import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recha
 import { formatNumber } from '../../utils/format'
 import { propsLeyendaPara } from '../../utils/legendPosition'
 import { PALETA_CATEGORICA } from '../../utils/colors'
+import HallazgosClaveCard from './HallazgosClaveCard'
+
+/** Arma las porciones del gráfico a partir de `{categorias, valores}` — separado del componente
+ * para poder probar la sustitución de nombre sin depender de que recharts realmente dibuje nada
+ * (bajo jsdom, sin un layout real, `ResponsiveContainer` mide ancho 0 y no renderiza ni el `Pie`
+ * ni la `Legend`). `id` (la categoría real, sin renombrar) es la clave estable para el color y
+ * `key` de React; `nombre` es lo que de verdad ve el usuario en la leyenda/tooltip
+ * (`etiquetasPorCategoria[categoria]` si el usuario le puso un título propio, si no la categoría
+ * tal cual) — separarlos evita que renombrar la leyenda rompa la búsqueda de color por categoría. */
+export function datosCircularConEtiquetas(data, etiquetasPorCategoria = {}) {
+  return (data?.categorias || []).map((categoria, i) => ({
+    id: categoria, nombre: etiquetasPorCategoria[categoria] || categoria, valor: data?.valores?.[i] ?? 0,
+  }))
+}
 
 /**
  * Renderiza un componente type=chart de una sola serie (`{titulo, categorias, valores}`) como
  * pastel o dona (`dona=true`, con un agujero central) — cada categoría es una porción, con su
- * propio color editable individualmente (`override.colores.coloresPorCategoria`).
+ * propio color editable individualmente (`override.colores.coloresPorCategoria`) y su propio
+ * título de leyenda editable individualmente (`override.colores.etiquetasPorCategoria`) — el dato
+ * real (la categoría original) sigue usándose para buscar el color y como identidad de la porción
+ * (`datosCircularConEtiquetas`), así renombrar la leyenda nunca rompe esa relación ni el resto del
+ * gráfico (ejes, hallazgos clave), que siguen mostrando el nombre real de la categoría.
+ * `mostrarTotal` (solo tiene efecto junto con `dona`) dibuja la suma de todos los valores
+ * centrada dentro del agujero.
  */
-export default function GenericPieChart({ data, override, dona = false, leyendaPosicion }) {
+export default function GenericPieChart({ data, override, dona = false, leyendaPosicion, mostrarTotal = false }) {
   if (!data) return null
-  const datosGrafico = (data.categorias || []).map((categoria, i) => ({
-    nombre: categoria, valor: data.valores?.[i] ?? 0,
-  }))
   const coloresPorCategoria = override?.colores?.coloresPorCategoria || {}
+  const datosGrafico = datosCircularConEtiquetas(data, override?.colores?.etiquetasPorCategoria)
+  const total = (data.valores || []).reduce((suma, v) => suma + (v || 0), 0)
 
   return (
-    <div className="chart-panel" style={override?.colores?.colorFondo ? { background: override.colores.colorFondo } : undefined}>
+    <div
+      className="chart-panel"
+      style={{
+        position: 'relative',
+        ...(override?.colores?.colorFondo ? { background: override.colores.colorFondo } : undefined),
+      }}
+    >
       <div className="chart-panel__title" style={override?.colores?.colorTexto ? { color: override.colores.colorTexto } : undefined}>
         {override?.titulo || data.titulo}
       </div>
@@ -34,13 +59,23 @@ export default function GenericPieChart({ data, override, dona = false, leyendaP
             paddingAngle={dona ? 2 : 0}
           >
             {datosGrafico.map((entrada, i) => (
-              <Cell key={entrada.nombre} fill={coloresPorCategoria[entrada.nombre] || PALETA_CATEGORICA[i % PALETA_CATEGORICA.length]} />
+              <Cell key={entrada.id} fill={coloresPorCategoria[entrada.id] || PALETA_CATEGORICA[i % PALETA_CATEGORICA.length]} />
             ))}
           </Pie>
           <Tooltip formatter={(value) => formatNumber(value)} />
           <Legend {...propsLeyendaPara(leyendaPosicion)} />
         </PieChart>
       </ResponsiveContainer>
+      {dona && mostrarTotal && (
+        <div
+          className="pie-chart__total text-center"
+          style={{ position: 'absolute', top: '46%', left: '50%', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}
+        >
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Total</div>
+          <div style={{ fontWeight: 600 }}>{formatNumber(total)}</div>
+        </div>
+      )}
+      <HallazgosClaveCard variante="categorico" datos={data} />
     </div>
   )
 }

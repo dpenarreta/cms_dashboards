@@ -6,6 +6,10 @@ import ConfirmModal from './ConfirmModal'
 export default function EditModeToolbar({
   modoEdicion, vistaPrevia, cargando, hayCambiosSinGuardar,
   onActivarEdicion, onGuardar, onCancelar, onAlternarVistaPrevia, onRestablecer,
+  activarBoton = 'Editar dashboard',
+  restablecerBoton = 'Restablecer diseño',
+  restablecerTitulo = 'Restablecer visibilidad de componentes',
+  restablecerDescripcion = 'Esta acción vuelve a mostrar cualquier componente que hayas ocultado, para todos los usuarios. No se puede deshacer (aunque queda registrada en el historial).',
 }) {
   const permisos = usePermisos()
   const [nombreEditor, setNombreEditor] = useState('Anónimo')
@@ -17,7 +21,7 @@ export default function EditModeToolbar({
     if (!permisos.tiene(PERMISOS.DASHBOARD_EDIT)) return null
     return (
       <Button variant="outline-primary" size="sm" onClick={onActivarEdicion}>
-        Editar dashboard
+        {activarBoton}
       </Button>
     )
   }
@@ -42,7 +46,7 @@ export default function EditModeToolbar({
       </Button>
       {permisos.tiene(PERMISOS.DASHBOARD_CONFIGURATION_RESET) && (
         <Button size="sm" variant="outline-danger" onClick={() => setConfirmando('restablecer')} disabled={cargando}>
-          Restablecer diseño
+          {restablecerBoton}
         </Button>
       )}
       <Button size="sm" variant="outline-secondary" onClick={pedirCancelar} disabled={cargando}>
@@ -64,14 +68,13 @@ export default function EditModeToolbar({
 
       <ConfirmModal
         show={confirmando === 'restablecer'}
-        title="Restablecer visibilidad de componentes"
+        title={restablecerTitulo}
         confirmLabel="Restablecer"
         onConfirm={() => { setConfirmando(null); onRestablecer(nombreEditor) }}
         onCancel={() => setConfirmando(null)}
       >
         <Alert variant="warning" className="mb-0">
-          Esta acción vuelve a mostrar cualquier componente que hayas ocultado, para todos los
-          usuarios. No se puede deshacer (aunque queda registrada en el historial).
+          {restablecerDescripcion}
         </Alert>
       </ConfirmModal>
     </div>

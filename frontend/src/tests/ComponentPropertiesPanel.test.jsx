@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ComponentPropertiesPanel from '../components/dashboard-editor/ComponentPropertiesPanel'
+import * as carteraService from '../services/carteraService'
+
+vi.mock('../services/carteraService')
 
 function componenteDePrueba(extra = {}) {
   return {
@@ -9,6 +12,7 @@ function componenteDePrueba(extra = {}) {
     type: 'kpi',
     content: { titulo: 'Cartera vencida', descripcion: '' },
     styles: {},
+    mapeo: {},
     width: 2,
     height: 180,
     ...extra,
@@ -18,18 +22,28 @@ function componenteDePrueba(extra = {}) {
 function renderPanel(overrides = {}) {
   const props = {
     componente: componenteDePrueba(),
+    dashboardId: 'finanzas',
     onCerrar: vi.fn(),
     onActualizarContenido: vi.fn(),
     onActualizarEstilos: vi.fn(),
     onCambiarAncho: vi.fn(),
     onCambiarAlto: vi.fn(),
     onActualizarConfig: vi.fn(),
+    onActualizarComponente: vi.fn(),
     ...overrides,
   }
   return { props, ...render(<ComponentPropertiesPanel {...props} />) }
 }
 
 describe('ComponentPropertiesPanel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // La sección "Datos" (component_id que no es de la plantilla fija en la mayoría de estos
+    // componentes de prueba) no depende de esto, pero cuando sí lo es (`kpi-cartera-vencida` no
+    // lo es, así que ni siquiera llama al servicio) igual conviene un mock resuelto por defecto.
+    carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+  })
+
   it('no renderiza nada cuando no hay componente seleccionado', () => {
     const { container } = renderPanel({ componente: null })
     expect(container).toBeEmptyDOMElement()
@@ -194,6 +208,104 @@ describe('ComponentPropertiesPanel', () => {
         }),
       })
       expect(screen.getByLabelText('Color de los puntos (hexadecimal)')).toHaveValue('#2a78d6')
+    })
+  })
+
+  describe('títulos de leyenda editables (categoría en pastel/dona, serie en agrupada/apilada/área/líneas)', () => {
+    it('un tipo sin leyenda (barras_horizontales) no ofrece campos de título de leyenda', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+        }),
+      })
+      expect(screen.queryByText('Títulos de la leyenda')).not.toBeInTheDocument()
+    })
+
+    it('pastel/dona ofrecen un campo de título por cada categoría', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'dona',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+        }),
+      })
+      expect(screen.getByLabelText('Título de leyenda para "Quito"')).toHaveValue('')
+      expect(screen.getByLabelText('Título de leyenda para "Guayaquil"')).toHaveValue('')
+    })
+
+    it('un título de leyenda ya guardado para una categoría se precarga, sin afectar a las demás', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'pastel',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+          styles: { etiquetasPorCategoria: { Quito: 'Capital' } },
+        }),
+      })
+      expect(screen.getByLabelText('Título de leyenda para "Quito"')).toHaveValue('Capital')
+      expect(screen.getByLabelText('Título de leyenda para "Guayaquil"')).toHaveValue('')
+    })
+
+    it('escribir un título de leyenda invoca onActualizarEstilos con el mapa completo por categoría, sin perder el de las demás', () => {
+      const { props } = renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'pastel',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+          styles: { etiquetasPorCategoria: { Guayaquil: 'Puerto' } },
+        }),
+      })
+      const campo = screen.getByLabelText('Título de leyenda para "Quito"')
+      fireEvent.change(campo, { target: { value: 'Capital' } })
+
+      expect(props.onActualizarEstilos).toHaveBeenLastCalledWith('saldo-por-causal', {
+        etiquetasPorCategoria: { Guayaquil: 'Puerto', Quito: 'Capital' },
+      })
+    })
+
+    it('"Restablecer títulos" limpia solo el mapa de títulos, sin tocar los colores', async () => {
+      const { props } = renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-causal', type: 'chart', chart_type: 'pastel',
+          content: { titulo: 'Saldo por causal', categorias: ['Quito', 'Guayaquil'] },
+          styles: { etiquetasPorCategoria: { Quito: 'Capital' }, coloresPorCategoria: { Quito: '#112233' } },
+        }),
+      })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Restablecer títulos' }))
+
+      expect(props.onActualizarEstilos).toHaveBeenCalledWith('saldo-por-causal', { etiquetasPorCategoria: {} })
+    })
+
+    it('barras agrupadas/apiladas/área/líneas múltiples ofrecen un campo de título por cada serie, no por categoría', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-ciudad-y-causal', type: 'chart', chart_type: 'barras_agrupadas',
+          content: {
+            titulo: 'Saldo por ciudad y causal', categorias: ['Quito', 'Guayaquil'],
+            series: [{ nombre: 'Vencido', valores: [10, 20] }, { nombre: 'No vencido', valores: [5, 8] }],
+          },
+        }),
+      })
+      expect(screen.getByLabelText('Título de leyenda para "Vencido"')).toBeInTheDocument()
+      expect(screen.getByLabelText('Título de leyenda para "No vencido"')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Título de leyenda para "Quito"')).not.toBeInTheDocument()
+    })
+
+    it('escribir un título de leyenda para una serie invoca onActualizarEstilos con etiquetasPorSerie', () => {
+      const { props } = renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'saldo-por-ciudad-y-causal', type: 'chart', chart_type: 'lineas_multiples',
+          content: {
+            titulo: 'Saldo por ciudad y causal', categorias: ['Quito', 'Guayaquil'],
+            series: [{ nombre: 'Vencido', valores: [10, 20] }],
+          },
+        }),
+      })
+      const campo = screen.getByLabelText('Título de leyenda para "Vencido"')
+      fireEvent.change(campo, { target: { value: 'Cartera vencida' } })
+
+      expect(props.onActualizarEstilos).toHaveBeenLastCalledWith('saldo-por-ciudad-y-causal', {
+        etiquetasPorSerie: { Vencido: 'Cartera vencida' },
+      })
     })
   })
 

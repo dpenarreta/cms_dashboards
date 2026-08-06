@@ -2,6 +2,7 @@ import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, X
 import { formatNumber } from '../../utils/format'
 import { propsLeyendaPara } from '../../utils/legendPosition'
 import { PALETA_CATEGORICA } from '../../utils/colors'
+import HallazgosClaveCard from './HallazgosClaveCard'
 
 function acortar(texto, max = 22) {
   if (!texto) return ''
@@ -14,12 +15,15 @@ function acortar(texto, max = 22) {
  * `services/generic_charts.py::generar_datos_multiserie`) como un área apilada: cada serie es una
  * capa de color sobre la anterior, siempre apiladas (a diferencia de las barras, un área agrupada
  * sin apilar no se distingue visualmente). Cada serie tiene su propio color, editable
- * individualmente (`override.colores.coloresPorSerie`).
+ * individualmente (`override.colores.coloresPorSerie`), y su propio título de leyenda, editable
+ * individualmente (`override.colores.etiquetasPorSerie` — `dataKey` sigue siendo el nombre real de
+ * la serie, solo cambia el texto que muestran la leyenda y el tooltip vía el prop `name`).
  */
 export default function GenericStackedAreaChart({ data, override, leyendaPosicion }) {
   if (!data?.series?.length) return null
 
   const coloresPorSerie = override?.colores?.coloresPorSerie || {}
+  const etiquetasPorSerie = override?.colores?.etiquetasPorSerie || {}
   const datosGrafico = (data.categorias || []).map((categoria, i) => {
     const fila = { categoria, etiqueta: acortar(categoria) }
     for (const serie of data.series) fila[serie.nombre] = serie.valores?.[i] ?? 0
@@ -34,11 +38,11 @@ export default function GenericStackedAreaChart({ data, override, leyendaPosicio
       {(override?.descripcion || data.descripcion) && (
         <div className="chart-panel__subtitle">{override?.descripcion || data.descripcion}</div>
       )}
-      <ResponsiveContainer width="100%" height={340}>
-        <AreaChart data={datosGrafico} margin={{ left: 8, right: 24, bottom: 32 }}>
+      <ResponsiveContainer width="100%" height={370}>
+        <AreaChart data={datosGrafico} margin={{ left: 12, right: 24, top: 8, bottom: 40 }}>
           <CartesianGrid stroke="var(--gridline)" />
-          <XAxis dataKey="etiqueta" angle={-30} textAnchor="end" interval={0} height={50} />
-          <YAxis tickFormatter={(v) => formatNumber(v)} />
+          <XAxis dataKey="etiqueta" angle={-30} textAnchor="end" interval={0} height={70} />
+          <YAxis width={96} tick={{ fontSize: 11 }} tickFormatter={(v) => formatNumber(v)} />
           <Tooltip formatter={(value) => formatNumber(value)} />
           <Legend {...propsLeyendaPara(leyendaPosicion)} />
           {data.series.map((serie, i) => {
@@ -48,6 +52,7 @@ export default function GenericStackedAreaChart({ data, override, leyendaPosicio
                 key={serie.nombre}
                 type="monotone"
                 dataKey={serie.nombre}
+                name={etiquetasPorSerie[serie.nombre] || serie.nombre}
                 stackId="a"
                 stroke={color}
                 fill={color}
@@ -57,6 +62,7 @@ export default function GenericStackedAreaChart({ data, override, leyendaPosicio
           })}
         </AreaChart>
       </ResponsiveContainer>
+      <HallazgosClaveCard variante="multiserie" datosMultiserie={data} />
     </div>
   )
 }

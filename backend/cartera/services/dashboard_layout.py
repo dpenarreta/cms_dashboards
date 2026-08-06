@@ -20,6 +20,9 @@ from apps.audit.services import log_event
 from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
 from ..models import DashboardComponent, DashboardLayout
+from .generic_charts import TIPOS_VISUALIZACION
+
+_CHART_TYPES_VALIDOS = {t['id'] for t in TIPOS_VISUALIZACION} | {''}
 
 # Vocabulario de tipos de cambio (antes `DashboardAuditLog.TipoCambio`, hoy valores de `action`
 # en `AuditEvent` — Módulo A de "trabajo futuro post-integración": auditoría unificada). Se
@@ -42,6 +45,7 @@ LONGITUD_MAXIMA_DESCRIPCION = 500
 
 KPI_ANCHO, KPI_ALTO = 3, 180
 CHART_ANCHO, CHART_ALTO = 6, 420
+TABLA_ALTO = 380
 
 _HEX_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 _RGBA_RE = re.compile(
@@ -66,6 +70,7 @@ def componentes_validos(dashboard_id):
             'content': c.content,
             'styles': c.styles,
             'config': c.config,
+            'mapeo': c.mapeo,
         }
         for c in existentes
     }
@@ -92,6 +97,7 @@ def _escribir_componentes(layout, componentes):
             content=c.get('content') or {},
             styles=c.get('styles') or {},
             config=c.get('config') or {},
+            mapeo=c.get('mapeo') or {},
         )
         for c in componentes
     ]
@@ -117,6 +123,7 @@ def serializar_layout(layout):
                 'content': c.content,
                 'styles': c.styles,
                 'config': c.config,
+                'mapeo': c.mapeo,
             }
             for c in layout.components.all()
         ],
@@ -229,10 +236,22 @@ def validar_componentes(dashboard_id, componentes):
         if definicion['type'] == DashboardComponent.Tipo.TABLE:
             config = _sanitizar_config_paginacion(config)
 
+        # A diferencia del resto de campos (siempre se puede editar libremente desde el editor),
+        # `chart_type` sí se valida contra el catálogo — un valor arbitrario rompería
+        # `GenericChartRenderer` en el frontend (cae al tipo ya guardado, en vez de fallar, si el
+        # valor entrante no es uno de los reconocidos).
+        chart_type = comp.get('chart_type', definicion.get('chart_type', ''))
+        if chart_type not in _CHART_TYPES_VALIDOS:
+            chart_type = definicion.get('chart_type', '')
+
+        mapeo = comp.get('mapeo') if comp.get('mapeo') is not None else definicion.get('mapeo', {})
+        if not isinstance(mapeo, dict):
+            raise CarteraError(f'El campo "mapeo" de "{component_id}" debe ser un objeto.', codigo='MAPEO_INVALIDO')
+
         resultado.append({
             'component_id': component_id,
             'type': definicion['type'],
-            'chart_type': definicion.get('chart_type', ''),
+            'chart_type': chart_type,
             'row': int(comp.get('row', definicion['row'])),
             'order': int(comp.get('order', definicion['order'])),
             'width': width,
@@ -241,6 +260,7 @@ def validar_componentes(dashboard_id, componentes):
             'content': content,
             'styles': styles,
             'config': config,
+            'mapeo': mapeo,
         })
 
     return resultado
@@ -259,6 +279,8 @@ def _clasificar_cambio(anterior, nuevo):
     if anterior['content'] != nuevo['content']:
         cambios.append(CambioLayout.TEXTO)
     if anterior.get('config') != nuevo.get('config'):
+        cambios.append(CambioLayout.CONFIG)
+    if anterior.get('chart_type') != nuevo.get('chart_type') or anterior.get('mapeo') != nuevo.get('mapeo'):
         cambios.append(CambioLayout.CONFIG)
     if anterior['is_visible'] and not nuevo['is_visible']:
         cambios.append(CambioLayout.OCULTADO)
@@ -326,7 +348,7 @@ def restablecer_layout(dashboard_id, changed_by, actor=None, request=None):
 # Tipos de visualización que dibujan una leyenda (varias series o porciones) — los únicos donde
 # tiene sentido ofrecer "posición de la leyenda" en el panel de propiedades. Las gráficas de una
 # sola serie (barras simples, líneas) no tienen nada que distinguir en una leyenda.
-TIPOS_CON_LEYENDA = {'barras_agrupadas', 'barras_apiladas', 'area_apilada', 'pastel', 'dona'}
+TIPOS_CON_LEYENDA = {'barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples', 'pastel', 'dona'}
 LEYENDA_POSICION_POR_DEFECTO = 'abajo'
 
 
@@ -342,25 +364,32 @@ def _generar_component_id_unico(titulo, usados):
 
 
 def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existentes=False, actor=None, request=None):
-    """Agrega UNA gráfica/KPI generado a partir de una recomendación confirmada por el usuario
-    (`generic_charts.py::generar_recomendaciones` + `generar_datos_grafica`) — único punto que
-    puede introducir componentes nuevos (su `component_id` se deriva del título, no de un catálogo
-    fijo). Por defecto se suma al resto de componentes ya existentes (el usuario va agregando
-    gráficas de a una desde la lista de recomendaciones); `reemplazar_existentes=True` empieza de
-    cero primero (se usa en la primera gráfica que se agrega tras cargar un archivo nuevo, para no
-    mezclar datos de dos archivos distintos en el mismo dashboard).
+    """Agrega UNA gráfica/KPI/tabla generado a partir de una recomendación confirmada por el
+    usuario (`generic_charts.py::generar_recomendaciones` + `generar_datos_grafica`) o de un
+    componente armado a mano para la Zona Personal (`views.py::AgregarGraficaView`) — único punto
+    que puede introducir componentes nuevos (su `component_id` se deriva del título, no de un
+    catálogo fijo). Por defecto se suma al resto de componentes ya existentes (el usuario va
+    agregando gráficas de a una desde la lista de recomendaciones); `reemplazar_existentes=True`
+    empieza de cero primero (se usa en la primera gráfica que se agrega tras cargar un archivo
+    nuevo, para no mezclar datos de dos archivos distintos en el mismo dashboard).
 
     `especificacion` es `{'titulo', 'descripcion', 'columna_valor', 'columna_categoria',
-    'columna_serie', 'columna_valor_y', 'tipo_visualizacion', 'datos'}`, donde `datos` ya viene
-    calculado por
-    `generic_charts.generar_datos_grafica`/`generar_datos_multiserie`/`generar_datos_dispersion` — su forma (`datos['tipo']`
-    = 'kpi'/'chart'/'multiserie') decide qué se guarda en `content`; `tipo_visualizacion` (una de
-    `generic_charts.TIPOS_VISUALIZACION`, p. ej. 'barras_verticales', 'lineas', 'pastel', 'dona',
-    'tabla', 'barras_agrupadas', 'barras_apiladas') solo decide CÓMO se dibuja esa misma
-    información — el frontend la usa para elegir el componente de renderizado. Todo componente
-    generado trae una descripción de partida (editable después desde el panel de propiedades,
-    igual que el título) y, si su tipo dibuja una leyenda, una posición por defecto también
-    editable ahí."""
+    'columna_serie', 'columna_valor_y', 'columna_id', 'columnas_valor', 'tipo_visualizacion',
+    'ancho_columnas', 'zona', 'datos'}`, donde `datos` ya viene calculado por
+    `generic_charts.generar_datos_grafica`/`generar_datos_multiserie`/`generar_datos_multivalor`/
+    `generar_datos_dispersion`/`generar_datos_tabla` — su forma (`datos['tipo']` =
+    'kpi'/'chart'/'multiserie'/'dispersion'/'tabla_multi') decide qué se guarda en `content`;
+    `tipo_visualizacion` (una de `generic_charts.TIPOS_VISUALIZACION`, p. ej. 'barras_verticales',
+    'lineas', 'pastel', 'dona', 'barras_agrupadas', 'barras_apiladas') solo decide CÓMO se dibuja
+    esa misma información — el frontend la usa para elegir el componente de renderizado.
+    `ancho_columnas` (1, 2 o 4 — cantidad de columnas del grid de 12 que ocupa cada componente, no
+    de `columnas_valor`) traduce a `width = 12 // ancho_columnas`; si no viene, se mantiene el
+    ancho por defecto histórico (`KPI_ANCHO`/`CHART_ANCHO`), usado por el flujo legado de
+    recomendaciones automáticas. `zona`, si viene, se guarda en `config['zona']` — así lo
+    reconocen `EditableGrid.jsx` (agrupación visual en modo edición) y `plantilla._escribir_plantilla`
+    (preservación al reaplicar el mapeo de las 15 posiciones fijas). Todo componente generado trae
+    una descripción de partida (editable después desde el panel de propiedades, igual que el
+    título) y, si su tipo dibuja una leyenda, una posición por defecto también editable ahí."""
     layout = obtener_o_crear_layout(dashboard_id)
 
     existentes = [] if reemplazar_existentes else list(componentes_validos(dashboard_id).values())
@@ -371,34 +400,54 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
     datos = especificacion['datos']
     component_id = _generar_component_id_unico(titulo, usados)
     orden = len(existentes) + 1
+    ancho_elegido = especificacion.get('ancho_columnas')
+    kpi_ancho = (12 // ancho_elegido) if ancho_elegido else KPI_ANCHO
+    chart_ancho = (12 // ancho_elegido) if ancho_elegido else CHART_ANCHO
     config = {
-        'columna_valor': especificacion['columna_valor'],
+        'columna_valor': especificacion.get('columna_valor'),
         'columna_categoria': especificacion.get('columna_categoria') or None,
         'columna_serie': especificacion.get('columna_serie') or None,
     }
+    zona = especificacion.get('zona')
+    if zona:
+        config['zona'] = zona
 
     if datos['tipo'] == 'dispersion':
         config['columna_valor_y'] = especificacion.get('columna_valor_y')
         nuevo = {
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': 'dispersion',
-            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'puntos': datos['puntos']},
             'styles': {}, 'config': config,
         }
     elif datos['tipo'] == 'kpi':
         nuevo = {
             'component_id': component_id, 'type': DashboardComponent.Tipo.KPI, 'chart_type': '',
-            'row': orden, 'order': orden, 'width': KPI_ANCHO, 'height': KPI_ALTO, 'is_visible': True,
+            'row': orden, 'order': orden, 'width': kpi_ancho, 'height': KPI_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'valor': datos['valor']},
             'styles': {}, 'config': config,
         }
+    elif datos['tipo'] == 'tabla_multi':
+        config['columna_id'] = especificacion.get('columna_id')
+        config['columnas_valor'] = especificacion.get('columnas_valor')
+        nuevo = {
+            'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': 'tabla',
+            'row': orden, 'order': orden, 'width': chart_ancho, 'height': TABLA_ALTO, 'is_visible': True,
+            'content': {
+                'titulo': titulo, 'descripcion': descripcion,
+                'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
+            },
+            'styles': {}, 'config': config,
+        }
     elif datos['tipo'] == 'multiserie':
+        if especificacion.get('columnas_valor'):
+            config['columnas_valor'] = especificacion['columnas_valor']
         chart_type = especificacion.get('tipo_visualizacion') or 'barras_agrupadas'
         if chart_type in TIPOS_CON_LEYENDA:
             config['leyenda_posicion'] = LEYENDA_POSICION_POR_DEFECTO
         nuevo = {
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
-            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'series': datos['series']},
             'styles': {}, 'config': config,
         }
@@ -408,7 +457,7 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
             config['leyenda_posicion'] = LEYENDA_POSICION_POR_DEFECTO
         nuevo = {
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
-            'row': orden, 'order': orden, 'width': CHART_ANCHO, 'height': CHART_ALTO, 'is_visible': True,
+            'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'valores': datos['valores']},
             'styles': {}, 'config': config,
         }
@@ -422,5 +471,50 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
         dashboard_id=dashboard_id, component_id=component_id, new_values=nuevo,
         metadata={'version': layout.version, 'reemplazo_existentes': reemplazar_existentes},
         request=request,
+    )
+    return layout
+
+
+PRESENTACIONAL_ALTO = {DashboardComponent.Tipo.TITLE: 70, DashboardComponent.Tipo.TEXT: 40}
+PRESENTACIONAL_ANCHO_DEFECTO = 12
+_TITULOS_BASE_PRESENTACIONAL = {DashboardComponent.Tipo.TITLE: 'Nuevo título', DashboardComponent.Tipo.TEXT: 'Separador'}
+
+
+def agregar_componente_presentacional(dashboard_id, tipo, ancho_columnas=None, zona=None, actor=None, request=None):
+    """Agrega un componente puramente presentacional (título o separador, panel lateral de
+    componentes del editor de dashboard) — a diferencia de `agregar_componente_generado`, no
+    depende de ningún archivo/carga ni calcula nada a partir de columnas: nace con un valor por
+    defecto en `content.titulo` (vacío para el separador, un texto de partida para el título),
+    editable después desde el panel de propiedades — ya genérico para cualquier componente
+    (`content.titulo`/`descripcion`), sin necesitar ningún caso especial ahí. `zona`, si viene, se
+    guarda en `config['zona']` (p. ej. `'personal'`, para que `EditableGrid.jsx` lo agrupe junto
+    al resto de la Zona Personal, igual que ya hace `agregar_componente_generado`)."""
+    if tipo not in PRESENTACIONAL_ALTO:
+        raise CarteraError(f'Tipo de componente presentacional inválido: "{tipo}".', codigo='TIPO_INVALIDO')
+
+    layout = obtener_o_crear_layout(dashboard_id)
+    existentes = list(componentes_validos(dashboard_id).values())
+    usados = {c['component_id'] for c in existentes}
+
+    titulo_base = _TITULOS_BASE_PRESENTACIONAL[tipo]
+    component_id = _generar_component_id_unico(titulo_base, usados)
+    orden = len(existentes) + 1
+    ancho = (12 // ancho_columnas) if ancho_columnas else PRESENTACIONAL_ANCHO_DEFECTO
+    config = {'zona': zona} if zona else {}
+    nuevo = {
+        'component_id': component_id, 'type': tipo, 'chart_type': '',
+        'row': orden, 'order': orden, 'width': ancho, 'height': PRESENTACIONAL_ALTO[tipo], 'is_visible': True,
+        'content': {'titulo': titulo_base if tipo == DashboardComponent.Tipo.TITLE else ''},
+        'styles': {}, 'config': config,
+    }
+
+    _escribir_componentes(layout, existentes + [nuevo])
+    layout.version += 1
+    layout.save(update_fields=['version', 'actualizado_en'])
+
+    log_event(
+        domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_CHART_ADDED', actor=actor,
+        dashboard_id=dashboard_id, component_id=component_id, new_values=nuevo,
+        metadata={'version': layout.version}, request=request,
     )
     return layout

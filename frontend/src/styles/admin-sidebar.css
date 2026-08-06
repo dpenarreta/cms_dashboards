@@ -1,7 +1,7 @@
 /* Layout de pantalla completa de /admin/* (AdminLayout) + barra lateral (AdminSidebar) — fondo
    oscuro fijo (independiente del tema institucional, igual que el navbar de la landing), avatar
-   de iniciales (nunca una foto de stock: se genera con la inicial real del usuario), navegación
-   con íconos, y colapso opcional (se recuerda entre sesiones vía localStorage). */
+   (foto subida por el usuario en /admin/profile, o la inicial de su nombre si no subió ninguna),
+   navegación con íconos, y colapso opcional (se recuerda entre sesiones vía localStorage). */
 
 :root {
   --admin-navy: #16213a;
@@ -97,6 +97,16 @@
   padding: 8px 4px 20px;
   margin-bottom: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-decoration: none;
+}
+
+.admin-sidebar__perfil:hover .admin-sidebar__avatar {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.admin-sidebar__perfil:hover .admin-sidebar__nombre {
+  color: #fff;
+  text-decoration: underline;
 }
 
 .admin-sidebar__avatar {
@@ -112,6 +122,14 @@
   justify-content: center;
   border: 3px solid rgba(255, 255, 255, 0.15);
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.admin-sidebar__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 
 .admin-sidebar--colapsado .admin-sidebar__avatar { width: 40px; height: 40px; font-size: 1.05rem; }

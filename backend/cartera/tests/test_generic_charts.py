@@ -10,7 +10,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from cartera.models import CargaArchivo, Dashboard
-from cartera.services import generic_charts
+from cartera.services import dashboard_layout, generic_charts
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
 User = get_user_model()
@@ -60,6 +60,63 @@ class AnalizarColumnasServiceTests(TestCase):
         resultado = generic_charts.analizar_columnas(df)
         columna_fecha = next(c for c in resultado['columnas'] if c['nombre'] == 'fecha')
         self.assertEqual(columna_fecha['tipo'], 'fecha')
+
+
+class ColumnasConBlancosRecurrentesServiceTests(TestCase):
+    def test_columna_con_menos_de_3_blancos_no_se_reporta(self):
+        df = pd.DataFrame({
+            'ciudad': ['Quito', None, 'Guayaquil', None, 'Quito'],  # 2 blancos: no llega al umbral
+            'saldo': [100, 200, 300, 400, 500],
+        })
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df)
+        self.assertEqual(resultado, [])
+
+    def test_columna_con_3_o_mas_blancos_se_reporta_con_la_cantidad_correcta(self):
+        df = pd.DataFrame({
+            'ciudad': ['Quito', None, 'Guayaquil', None, None],  # 3 blancos: llega al umbral
+            'saldo': [100, 200, 300, 400, 500],
+        })
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df)
+        self.assertEqual(len(resultado), 1)
+        self.assertEqual(resultado[0]['columna'], 'ciudad')
+        self.assertEqual(resultado[0]['cantidad_en_blanco'], 3)
+
+    def test_incluye_hasta_3_filas_de_ejemplo_con_numero_de_fila_y_referencia(self):
+        df = pd.DataFrame({
+            'sucursal': ['A', 'B', 'C', 'D', 'E'],
+            'ciudad': ['Quito', None, None, None, None],  # 4 blancos, pide 3 ejemplos
+        })
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df, cantidad_ejemplos=3)
+        columna_ciudad = resultado[0]
+        self.assertEqual(columna_ciudad['cantidad_en_blanco'], 4)
+        self.assertEqual(len(columna_ciudad['filas_ejemplo']), 3)
+        primera = columna_ciudad['filas_ejemplo'][0]
+        # Fila 0 de "ciudad" en blanco es 'B' (índice 1) -> fila 3 de Excel (índice 0-based +1, +1 encabezado).
+        self.assertEqual(primera['numero_fila'], 3)
+        self.assertEqual(primera['referencia'], {'sucursal': 'B'})
+
+    def test_columna_totalmente_vacia_tambien_se_reporta(self):
+        df = pd.DataFrame({'vacia': [None, None, None, None], 'saldo': [1, 2, 3, 4]})
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df)
+        columna_vacia = next(c for c in resultado if c['columna'] == 'vacia')
+        self.assertEqual(columna_vacia['cantidad_en_blanco'], 4)
+
+    def test_no_reporta_columnas_sin_ningun_blanco(self):
+        df = pd.DataFrame({'ciudad': ['Quito', 'Guayaquil', 'Quito'], 'saldo': [1, 2, 3]})
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df)
+        self.assertEqual(resultado, [])
+
+    def test_la_columna_de_referencia_no_incluye_a_si_misma(self):
+        # "sucursal" es una de las 2 primeras columnas del archivo Y la que tiene blancos: no debe
+        # aparecer como su propia referencia.
+        df = pd.DataFrame({
+            'sucursal': [None, None, None, 'D', 'E'],
+            'ciudad': ['Quito', 'Guayaquil', 'Cuenca', 'Quito', 'Quito'],
+        })
+        resultado = generic_charts.columnas_con_blancos_recurrentes(df)
+        primera = resultado[0]['filas_ejemplo'][0]
+        self.assertNotIn('sucursal', primera['referencia'])
+        self.assertEqual(primera['referencia'], {'ciudad': 'Quito'})
 
 
 class GenerarRecomendacionesServiceTests(TestCase):
@@ -192,6 +249,39 @@ class GenerarDatosGraficaServiceTests(TestCase):
         self.assertIn('Otras', resultado['categorias'])
 
 
+class GenerarConteoValoresUnicosServiceTests(TestCase):
+    def test_cuenta_valores_distintos_no_nulos(self):
+        df = pd.DataFrame({'cliente': ['Ana', 'Ana', 'Luis', 'Carlos', None]})
+        resultado = generic_charts.generar_conteo_valores_unicos(df, 'cliente')
+        self.assertEqual(resultado, {'tipo': 'kpi', 'valor': 3})
+
+    def test_funciona_con_columnas_no_numericas(self):
+        df = pd.DataFrame({'documento': ['A-001', 'A-002', 'A-001']})
+        resultado = generic_charts.generar_conteo_valores_unicos(df, 'documento')
+        self.assertEqual(resultado['valor'], 2)
+
+    def test_columna_inexistente_devuelve_none(self):
+        df = pd.DataFrame({'cliente': ['Ana']})
+        self.assertIsNone(generic_charts.generar_conteo_valores_unicos(df, 'no_existe'))
+
+
+class ValoresUnicosDeColumnaServiceTests(TestCase):
+    def test_devuelve_valores_distintos_ordenados_alfabeticamente(self):
+        df = pd.DataFrame({'causal': ['GESTIONANDO', 'PAGADO', 'GESTIONANDO', None]})
+        resultado = generic_charts.valores_unicos_de_columna(df, 'causal')
+        self.assertEqual(resultado, {'valores': ['GESTIONANDO', 'PAGADO'], 'total': 2})
+
+    def test_columna_inexistente_devuelve_none(self):
+        df = pd.DataFrame({'causal': ['GESTIONANDO']})
+        self.assertIsNone(generic_charts.valores_unicos_de_columna(df, 'no_existe'))
+
+    def test_respeta_el_limite_pero_informa_el_total_real(self):
+        df = pd.DataFrame({'id': [f'v{i}' for i in range(10)]})
+        resultado = generic_charts.valores_unicos_de_columna(df, 'id', limite=3)
+        self.assertEqual(len(resultado['valores']), 3)
+        self.assertEqual(resultado['total'], 10)
+
+
 class ColumnaSerieSugeridaServiceTests(TestCase):
     """Cada recomendación con categoría propone una segunda columna de agrupación (para barras
     agrupadas/apiladas) cuando hay otra columna categórica disponible."""
@@ -303,6 +393,121 @@ class GenerarDatosDispersionServiceTests(TestCase):
         df = pd.DataFrame({'x': list(range(filas)), 'y': list(range(filas))})
         resultado = generic_charts.generar_datos_dispersion(df, 'x', 'y')
         self.assertEqual(len(resultado['puntos']), generic_charts.LIMITE_PUNTOS_DISPERSION)
+
+
+class GenerarDatosTablaServiceTests(TestCase):
+    def _df(self):
+        return pd.DataFrame({
+            'producto': ['A', 'A', 'B', 'C'],
+            'ventas': [100, 50, 80, 60],
+            'cliente': ['x', 'y', 'x', 'z'],
+        })
+
+    def test_por_defecto_cada_columna_de_valor_se_suma(self):
+        columnas_valor = [{'columna': 'ventas', 'tipo_agregacion': 'suma'}]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        self.assertEqual(fila_a[1], 150.0)
+        self.assertEqual(resultado['total'][1], 290.0)
+
+    def test_acepta_columnas_valor_como_strings_planos_tratados_como_suma(self):
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', ['ventas'])
+        self.assertEqual(resultado['total'][1], 290.0)
+
+    def test_tipo_promedio_calcula_la_media_por_grupo(self):
+        columnas_valor = [{'columna': 'ventas', 'tipo_agregacion': 'promedio'}]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        self.assertEqual(fila_a[1], 75.0)  # (100 + 50) / 2
+
+    def test_tipo_conteo_unicos_cuenta_valores_distintos_por_grupo(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'columna': 'cliente', 'tipo_agregacion': 'conteo_unicos'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        self.assertEqual(fila_a[2], 2.0)  # 'A' tiene clientes 'x' e 'y' -> 2 distintos
+
+    def test_cada_columna_puede_tener_un_tipo_de_agregacion_distinto(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'columna': 'ventas', 'tipo_agregacion': 'promedio'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        self.assertEqual(fila_a[1], 150.0)
+        self.assertEqual(fila_a[2], 75.0)
+
+    def test_columna_de_valor_inexistente_devuelve_none(self):
+        columnas_valor = [{'columna': 'no_existe', 'tipo_agregacion': 'suma'}]
+        self.assertIsNone(generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor))
+
+    def test_tipo_valor_celda_muestra_el_valor_cuando_es_igual_en_todo_el_grupo(self):
+        df = pd.DataFrame({
+            'producto': ['A', 'A', 'B'],
+            'ventas': [100, 50, 80],
+            'zona': ['Norte', 'Norte', 'Sur'],
+        })
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'columna': 'zona', 'tipo_agregacion': 'valor_celda'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor)
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        fila_b = next(f for f in resultado['filas'] if f[0] == 'B')
+        self.assertEqual(fila_a[2], 'Norte')
+        self.assertEqual(fila_b[2], 'Sur')
+
+    def test_tipo_valor_celda_muestra_varios_cuando_el_grupo_tiene_valores_distintos(self):
+        df = pd.DataFrame({
+            'producto': ['A', 'A'],
+            'zona': ['Norte', 'Sur'],
+        })
+        columnas_valor = [{'columna': 'zona', 'tipo_agregacion': 'valor_celda'}]
+        resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor)
+        self.assertEqual(resultado['filas'][0][1], 'Varios')
+
+    def test_tipo_valor_celda_en_una_columna_no_primaria_queda_vacio_en_el_total(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'columna': 'cliente', 'tipo_agregacion': 'valor_celda'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual(resultado['total'][1], 290.0)
+        self.assertIsNone(resultado['total'][2])
+
+    def test_tipo_valor_celda_como_columna_primaria_ordena_alfabetico_y_porcentaje_en_cero(self):
+        df = pd.DataFrame({
+            'producto': ['A', 'B', 'C'],
+            'zona': ['Sur', 'Norte', 'Este'],
+        })
+        columnas_valor = [{'columna': 'zona', 'tipo_agregacion': 'valor_celda'}]
+        resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor)
+        # sort_values(ascending=False) por VALOR de "zona": Sur > Norte > Este alfabéticamente,
+        # así que las filas quedan en ese orden (A=Sur, B=Norte, C=Este) — no hay nada que rankear
+        # por magnitud porque "valor_celda" no es una cantidad.
+        self.assertEqual([f[0] for f in resultado['filas']], ['A', 'B', 'C'])
+        self.assertTrue(all(f[-1] == 0 for f in resultado['filas']))
+        self.assertEqual(resultado['total'][-1], 0)
+
+    def test_por_defecto_ya_no_trunca_a_5_filas_el_frontend_pagina_lo_que_llegue(self):
+        df = pd.DataFrame({
+            'producto': [f'P{i}' for i in range(12)],
+            'ventas': list(range(12)),
+        })
+        columnas_valor = [{'columna': 'ventas', 'tipo_agregacion': 'suma'}]
+        resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor)
+        self.assertEqual(len(resultado['filas']), 12)
+
+    def test_el_parametro_limite_sigue_funcionando_como_tope_de_seguridad(self):
+        df = pd.DataFrame({
+            'producto': [f'P{i}' for i in range(12)],
+            'ventas': list(range(12)),
+        })
+        columnas_valor = [{'columna': 'ventas', 'tipo_agregacion': 'suma'}]
+        resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor, limite=5)
+        self.assertEqual(len(resultado['filas']), 5)
 
 
 class RecomendacionDeDispersionServiceTests(TestCase):
@@ -593,3 +798,110 @@ class FlujoApiAnalizarRecomendarYAgregarTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         titulos = [c['content']['titulo'] for c in resp.json()['components']]
         self.assertEqual(titulos, ['Segunda'])
+
+    # --- Zona Personal: `calculo` explícito, `ancho_columnas`, `zona` (sección "Zona Personal") ---
+
+    def test_agregar_con_calculo_tabla_calcula_una_tabla_multicolumna(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Detalle por causal', 'calculo': 'tabla',
+            'columna_id': 'Causal', 'columnas_valor': [{'columna': 'Saldo', 'tipo_agregacion': 'suma'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['chart_type'], 'tabla')
+        self.assertIn('columnas', componente['content'])
+        self.assertIn('filas', componente['content'])
+        self.assertIn('total', componente['content'])
+
+    def test_agregar_con_calculo_tabla_sin_columna_id_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Detalle', 'calculo': 'tabla',
+            'columnas_valor': [{'columna': 'Saldo', 'tipo_agregacion': 'suma'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_VALOR_REQUERIDA')
+
+    def test_agregar_con_calculo_multivalor_calcula_series_por_columna(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Comparación', 'calculo': 'multivalor',
+            'columna_categoria': 'Causal', 'columnas_valor': ['Saldo', 'Dias credito'],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertIn('series', componente['content'])
+        self.assertEqual(len(componente['content']['series']), 2)
+
+    def test_agregar_con_calculo_multivalor_con_una_sola_columna_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Comparación', 'calculo': 'multivalor',
+            'columna_categoria': 'Causal', 'columnas_valor': ['Saldo'],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNAS_VALOR_REQUERIDAS')
+
+    def test_agregar_con_calculo_kpi_y_tipo_agregacion_promedio(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo promedio', 'calculo': 'kpi',
+            'columna_valor': 'Saldo', 'tipo_agregacion': 'promedio',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['type'], 'kpi')
+
+    def test_agregar_con_calculo_kpi_y_tipo_agregacion_conteo_unicos(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Clientes distintos', 'calculo': 'kpi',
+            'columna_valor': 'Ruc Cliente', 'tipo_agregacion': 'conteo_unicos',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['type'], 'kpi')
+
+    def test_ancho_columnas_1_2_4_traduce_a_width_12_6_3(self):
+        carga_id = self._subir_archivo()
+        for ancho_columnas, width_esperado in ((1, 12), (2, 6), (4, 3)):
+            resp = self.client.post('/api/cartera/agregar-grafica', {
+                'carga_id': carga_id, 'titulo': f'KPI ancho {ancho_columnas}', 'columna_valor': 'Saldo',
+                'ancho_columnas': ancho_columnas, 'reemplazar_existentes': True,
+            }, format='json')
+            self.assertEqual(resp.status_code, 201)
+            componente = resp.json()['components'][0]
+            self.assertEqual(componente['width'], width_esperado)
+
+    def test_sin_ancho_columnas_mantiene_el_ancho_legado(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'KPI legado', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['width'], dashboard_layout.KPI_ANCHO)
+
+    def test_ancho_columnas_invalido_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'X', 'columna_valor': 'Saldo', 'ancho_columnas': 3,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'ANCHO_COLUMNAS_INVALIDO')
+
+    def test_zona_personal_queda_en_config(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'KPI personal', 'columna_valor': 'Saldo', 'zona': 'personal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['config']['zona'], 'personal')
+
+    def test_sin_zona_no_queda_marcado_en_config(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'KPI sin zona', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertNotIn('zona', resp.json()['components'][0]['config'])

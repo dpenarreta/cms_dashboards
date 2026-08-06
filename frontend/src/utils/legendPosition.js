@@ -10,7 +10,10 @@ export const POSICIONES_LEYENDA = [
 ]
 
 const PROPS_RECHARTS_POR_POSICION = {
-  abajo: { verticalAlign: 'bottom', align: 'center', layout: 'horizontal' },
+  // `paddingTop`: separa la leyenda de las etiquetas del eje X, que en varias gráficas van
+  // rotadas (`angle=-30`) y pueden extenderse más abajo de lo que reserva su `height` — sin este
+  // espacio, la leyenda se monta encima de esas etiquetas.
+  abajo: { verticalAlign: 'bottom', align: 'center', layout: 'horizontal', wrapperStyle: { paddingTop: 16 } },
   arriba: { verticalAlign: 'top', align: 'center', layout: 'horizontal' },
   izquierda: { verticalAlign: 'middle', align: 'left', layout: 'vertical', wrapperStyle: { paddingRight: 16 } },
   derecha: { verticalAlign: 'middle', align: 'right', layout: 'vertical', wrapperStyle: { paddingLeft: 16 } },

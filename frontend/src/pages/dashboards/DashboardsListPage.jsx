@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Form, Modal, Spinner } from 'react-bootstrap'
+import { Accordion, Alert, Button, Card, Form, Modal, Spinner } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import * as dashboardLayoutService from '../../services/dashboardLayoutService'
+import * as rolesService from '../../services/rolesService'
+import * as usersService from '../../services/usersService'
 
 function rutaDashboard(dashboardId) {
   return `/app/dashboards/${dashboardId}`
@@ -67,11 +69,32 @@ function ModalCrearDashboard({ show, onHide, onCreado }) {
   )
 }
 
+/**
+ * "Editar dashboard" reúne, en un único modal, tanto el nombre/área (gateado por el permiso
+ * global `dashboard.editar`) como el control de acceso por dashboard (gateado por
+ * `d.puede_administrar_acceso` — dueño o superusuario, ver `cartera/permisos.py`). No son la misma
+ * autorización, así que cada sección solo se muestra si el usuario tiene el permiso
+ * correspondiente: un dueño sin `dashboard.editar` global igual puede abrir este modal para
+ * gestionar el acceso, solo que sin ver los campos de nombre/área.
+ */
 function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
+  const { user } = useAuth()
+  const puedeEditarNombre = user?.permissions?.includes('dashboard.editar')
+  const esSuperusuario = Boolean(user?.is_superuser)
+  const puedeAdministrarAcceso = Boolean(dashboard?.puede_administrar_acceso)
+
   const [name, setName] = useState('')
   const [area, setArea] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
+
+  const [cargandoAcceso, setCargandoAcceso] = useState(false)
+  const [rolesDisponibles, setRolesDisponibles] = useState([])
+  const [usuariosDisponibles, setUsuariosDisponibles] = useState([])
+  const [editores, setEditores] = useState([])
+  const [lectores, setLectores] = useState([])
+  const [duenoId, setDuenoId] = useState('')
+  const [duenoOriginalId, setDuenoOriginalId] = useState('')
 
   useEffect(() => {
     if (dashboard) {
@@ -81,6 +104,36 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
     }
   }, [dashboard])
 
+  useEffect(() => {
+    if (!show || !dashboard || !dashboard.puede_administrar_acceso) return
+    setCargandoAcceso(true)
+    const solicitudes = [rolesService.list(), dashboardLayoutService.obtenerAcceso(dashboard.dashboard_id)]
+    if (esSuperusuario) solicitudes.push(usersService.list({ page_size: 200 }))
+
+    Promise.all(solicitudes)
+      .then(([rolesData, acceso, usuariosData]) => {
+        setRolesDisponibles(rolesData.results || [])
+        setEditores(acceso.roles_editores.map((r) => r.id))
+        setLectores(acceso.roles_lectores.map((r) => r.id))
+        const ownerId = acceso.owner?.id || ''
+        setDuenoId(ownerId)
+        setDuenoOriginalId(ownerId)
+        if (usuariosData) setUsuariosDisponibles(usuariosData.results || [])
+      })
+      .catch(() => setError('No se pudo cargar el acceso de este dashboard.'))
+      .finally(() => setCargandoAcceso(false))
+  }, [show, dashboard, esSuperusuario])
+
+  const marcarEditor = (rolId, marcado) => {
+    setEditores((actual) => (marcado ? [...actual, rolId] : actual.filter((id) => id !== rolId)))
+    if (marcado) setLectores((actual) => actual.filter((id) => id !== rolId))
+  }
+
+  const marcarLector = (rolId, marcado) => {
+    setLectores((actual) => (marcado ? [...actual, rolId] : actual.filter((id) => id !== rolId)))
+    if (marcado) setEditores((actual) => actual.filter((id) => id !== rolId))
+  }
+
   const cerrar = () => { setError(''); onHide() }
 
   const enviar = async (e) => {
@@ -88,7 +141,16 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
     setGuardando(true)
     setError('')
     try {
-      const actualizado = await dashboardLayoutService.actualizarDashboard(dashboard.dashboard_id, { name, area })
+      let actualizado = dashboard
+      if (puedeEditarNombre) {
+        actualizado = await dashboardLayoutService.actualizarDashboard(dashboard.dashboard_id, { name, area })
+      }
+      if (puedeAdministrarAcceso) {
+        await dashboardLayoutService.actualizarAcceso(dashboard.dashboard_id, { rolesEditores: editores, rolesLectores: lectores })
+        if (esSuperusuario && duenoId !== duenoOriginalId) {
+          await dashboardLayoutService.reasignarDueno(dashboard.dashboard_id, duenoId || null)
+        }
+      }
       onEditado(actualizado)
       cerrar()
     } catch (err) {
@@ -98,26 +160,114 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
     }
   }
 
+  const secciones = [
+    puedeEditarNombre && 'general',
+    puedeAdministrarAcceso && 'permisos',
+    puedeAdministrarAcceso && 'dueno',
+  ].filter(Boolean)
+
   return (
-    <Modal show={show} onHide={cerrar}>
+    <Modal show={show} onHide={cerrar} size={puedeAdministrarAcceso ? 'lg' : undefined}>
       <Modal.Header closeButton>
         <Modal.Title>Editar dashboard</Modal.Title>
       </Modal.Header>
       <Form onSubmit={enviar}>
         <Modal.Body>
           {error && <Alert variant="danger">{error}</Alert>}
-          <Form.Group className="mb-3" controlId="editar-dashboard-name">
-            <Form.Label>Nombre</Form.Label>
-            <Form.Control value={name} onChange={(e) => setName(e.target.value)} required autoFocus disabled={guardando} />
-          </Form.Group>
-          <Form.Group controlId="editar-dashboard-area">
-            <Form.Label>Área</Form.Label>
-            <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
-          </Form.Group>
+
+          <Accordion defaultActiveKey={secciones} alwaysOpen>
+            {puedeEditarNombre && (
+              <Accordion.Item eventKey="general">
+                <Accordion.Header>Ajustes generales</Accordion.Header>
+                <Accordion.Body>
+                  <Form.Group className="mb-3" controlId="editar-dashboard-name">
+                    <Form.Label>Nombre</Form.Label>
+                    <Form.Control value={name} onChange={(e) => setName(e.target.value)} required autoFocus disabled={guardando} />
+                  </Form.Group>
+                  <Form.Group controlId="editar-dashboard-area">
+                    <Form.Label>Área</Form.Label>
+                    <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
+                  </Form.Group>
+                </Accordion.Body>
+              </Accordion.Item>
+            )}
+
+            {puedeAdministrarAcceso && (
+              <Accordion.Item eventKey="permisos">
+                <Accordion.Header>Permisos de visualización y edición</Accordion.Header>
+                <Accordion.Body>
+                  <p className="chart-panel__subtitle">
+                    Roles con acceso a este dashboard. Un dashboard sin ningún rol asignado sigue
+                    siendo visible para cualquiera con el permiso general de ver dashboards.
+                  </p>
+
+                  {cargandoAcceso ? (
+                    <div className="text-center" role="status" aria-live="polite"><Spinner animation="border" /></div>
+                  ) : (
+                    <div className="d-flex gap-4 flex-wrap">
+                      <div style={{ minWidth: 220 }}>
+                        <Form.Label className="fw-bold">Ver y editar</Form.Label>
+                        {rolesDisponibles.map((rol) => (
+                          <Form.Check
+                            key={`editor-${rol.id}`}
+                            type="checkbox"
+                            id={`acceso-editor-${rol.id}`}
+                            label={rol.name}
+                            checked={editores.includes(rol.id)}
+                            onChange={(e) => marcarEditor(rol.id, e.target.checked)}
+                            disabled={guardando}
+                          />
+                        ))}
+                      </div>
+                      <div style={{ minWidth: 220 }}>
+                        <Form.Label className="fw-bold">Solo ver</Form.Label>
+                        {rolesDisponibles.map((rol) => (
+                          <Form.Check
+                            key={`lector-${rol.id}`}
+                            type="checkbox"
+                            id={`acceso-lector-${rol.id}`}
+                            label={rol.name}
+                            checked={lectores.includes(rol.id)}
+                            onChange={(e) => marcarLector(rol.id, e.target.checked)}
+                            disabled={guardando}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Accordion.Body>
+              </Accordion.Item>
+            )}
+
+            {puedeAdministrarAcceso && (
+              <Accordion.Item eventKey="dueno">
+                <Accordion.Header>Dueño del tablero</Accordion.Header>
+                <Accordion.Body>
+                  {cargandoAcceso ? (
+                    <div className="text-center" role="status" aria-live="polite"><Spinner animation="border" /></div>
+                  ) : esSuperusuario ? (
+                    <Form.Group controlId="acceso-dueno">
+                      <Form.Label className="fw-bold">Dueño</Form.Label>
+                      <Form.Select value={duenoId} onChange={(e) => setDuenoId(e.target.value)} disabled={guardando}>
+                        <option value="">Sin dueño</option>
+                        {usuariosDisponibles.map((u) => (
+                          <option key={u.id} value={u.id}>{u.username}</option>
+                        ))}
+                      </Form.Select>
+                    </Form.Group>
+                  ) : (
+                    <p className="chart-panel__subtitle mb-0">
+                      Solo un superusuario puede reasignar el dueño de un dashboard.
+                    </p>
+                  )}
+                </Accordion.Body>
+              </Accordion.Item>
+            )}
+          </Accordion>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="outline-secondary" onClick={cerrar} disabled={guardando} type="button">Cancelar</Button>
-          <Button variant="primary" type="submit" disabled={guardando}>
+          <Button variant="primary" type="submit" disabled={guardando || cargandoAcceso}>
             {guardando ? <Spinner size="sm" animation="border" /> : 'Guardar cambios'}
           </Button>
         </Modal.Footer>
@@ -222,12 +372,15 @@ export default function DashboardsListPage() {
               </Card.Body>
             </Card>
 
-            {/* Los 3 botones de acción solo se revelan al pasar el cursor (o con foco de
-                teclado, ver :focus-within en dashboard.css) — siempre están en el DOM para que
-                sean accesibles/testeables, la revelación es puramente visual. */}
+            {/* Los botones de acción solo se revelan al pasar el cursor (o con foco de teclado,
+                ver :focus-within en dashboard.css) — siempre están en el DOM para que sean
+                accesibles/testeables, la revelación es puramente visual. "Editar" también se
+                muestra sin el permiso global cuando el usuario es dueño/superusuario de este
+                dashboard puntual (`puede_administrar_acceso`), aunque solo vea dentro la sección
+                de control de acceso, no los campos de nombre/área. */}
             <div className="dashboard-card__actions">
               <Button as={Link} to={rutaDashboard(d.dashboard_id)} size="sm" variant="primary">Entrar</Button>
-              {puedeEditar && (
+              {(puedeEditar || d.puede_administrar_acceso) && (
                 <Button size="sm" variant="light" onClick={() => setDashboardAEditar(d)}>Editar</Button>
               )}
               {puedeEliminar && (

@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Form, Offcanvas } from 'react-bootstrap'
+import { Accordion, Alert, Button, Form, Offcanvas } from 'react-bootstrap'
 import WidthHeightControls from './WidthHeightControls'
 import FilterFieldReorderList from './FilterFieldReorderList'
+import ComponentDataSection from './ComponentDataSection'
+import { SelectorTipoGrafico } from '../dashboard-generic/SlotFields'
 import { POSICIONES_LEYENDA } from '../../utils/legendPosition'
+import { PLANTILLA_SLOTS, TIPOS_COMPATIBLES } from '../../utils/plantillaSlots'
+
+// Tipos de `calculo` con tipo de gráfico intercambiable — único criterio que decide si, en modo
+// plantilla base, la sección "Datos" muestra el selector de tipo de gráfico o no aparece (mismo
+// criterio que ya usa `SlotFields.jsx::SelectorTipoGrafico`/`TIPOS_COMPATIBLES`).
+const _CALCULO_POR_COMPONENT_ID = Object.fromEntries(PLANTILLA_SLOTS.map((s) => [s.id, s.calculo]))
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
 const PAGE_SIZES_FIJOS = [5, 10, 25, 50, 100]
 // Espejo de `TIPOS_CON_LEYENDA` en `cartera/services/dashboard_layout.py`: los únicos tipos de
 // gráfica que dibujan una leyenda, y por lo tanto los únicos donde tiene sentido reposicionarla.
-const TIPOS_CON_LEYENDA = new Set(['barras_agrupadas', 'barras_apiladas', 'area_apilada', 'pastel', 'dona'])
-// Tipos de gráfica de varias series (barras agrupadas/apiladas, área apilada): reparten un color
-// por serie (`content.series`), no por categoría.
-const TIPOS_MULTISERIE = new Set(['barras_agrupadas', 'barras_apiladas', 'area_apilada'])
+const TIPOS_CON_LEYENDA = new Set(['barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples', 'pastel', 'dona'])
+// Tipos de gráfica de varias series (barras agrupadas/apiladas, área apilada, líneas múltiples):
+// reparten un color por serie (`content.series`), no por categoría.
+const TIPOS_MULTISERIE = new Set(['barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples'])
 
 // Colores realmente pintados hoy cuando no hay override (`styles/dashboard.css`, variables
 // `--series-1`.."--series-8"/`--text-primary`/`--surface-1`) — a diferencia de los colores
@@ -75,6 +83,26 @@ function filasColorPara(componente) {
   return []
 }
 
+/** Nombres reales (sin renombrar) de los ítems que dibuja la leyenda de esta posición — categorías
+ * (pastel/dona) o series (barras agrupadas/apiladas, área apilada, líneas múltiples), el mismo
+ * criterio que ya separa `coloresPorCategoria`/`coloresPorSerie` en `filasColorPara`. Solo tiene
+ * sentido para los tipos que de verdad dibujan una leyenda (`TIPOS_CON_LEYENDA`): el resto no
+ * tiene nada que renombrar ahí (p. ej. una barra de una sola columna no dibuja leyenda, aunque sí
+ * tenga colores por categoría). */
+function nombresLeyendaPara(componente) {
+  if (!TIPOS_CON_LEYENDA.has(componente.chart_type)) return []
+  if (TIPOS_MULTISERIE.has(componente.chart_type)) return (componente.content?.series || []).map((s) => s.nombre)
+  return componente.content?.categorias || []
+}
+
+/** Bajo qué clave de `styles` viven los títulos de leyenda personalizados de esta posición — mismo
+ * criterio categoría/serie que `nombresLeyendaPara`, consumido por `GenericPieChart` (`.../
+ * etiquetasPorCategoria`) o por `GenericMultiSeriesBarChart`/`GenericStackedAreaChart`/
+ * `GenericMultiLineChart` (`.../etiquetasPorSerie`). */
+function campoEtiquetasPara(componente) {
+  return TIPOS_MULTISERIE.has(componente.chart_type) ? 'etiquetasPorSerie' : 'etiquetasPorCategoria'
+}
+
 /** Qué escribir en `styles` cuando se pulsa "Restablecer colores": limpia el/los campo(s) de
  * datos (el mapa completo por categoría/serie, no solo la última fila tocada) más título/fondo. */
 function estilosDeRestablecerPara(componente) {
@@ -136,12 +164,26 @@ function CampoColor({ etiqueta, valor, porDefecto, onCambiar }) {
 }
 
 export default function ComponentPropertiesPanel({
-  componente, onCerrar, onActualizarContenido, onActualizarEstilos, onCambiarAncho, onCambiarAlto, onActualizarConfig,
+  componente, dashboardId, onCerrar, onActualizarContenido, onActualizarEstilos, onCambiarAncho, onCambiarAlto,
+  onActualizarConfig, onActualizarComponente, modoPlantillaBase = false,
 }) {
   if (!componente) return null
 
   const filasColor = filasColorPara(componente)
   const restablecerColores = () => onActualizarEstilos(componente.component_id, estilosDeRestablecerPara(componente))
+
+  const nombresLeyenda = nombresLeyendaPara(componente)
+  const campoEtiquetas = campoEtiquetasPara(componente)
+  const etiquetasLeyenda = componente.styles?.[campoEtiquetas] || {}
+  const restablecerEtiquetasLeyenda = () => onActualizarEstilos(componente.component_id, { [campoEtiquetas]: {} })
+
+  // En modo plantilla base no hay archivo real que mapear (`ComponentDataSection` asume uno) —
+  // la sección "Datos" se reemplaza por un selector de tipo de gráfico cuando aplica (mismo
+  // criterio que el resto de la app: solo los `calculo` con tipos intercambiables), y no aparece
+  // en absoluto para KPI/dispersión/tabla.
+  const calculoPlantillaBase = _CALCULO_POR_COMPONENT_ID[componente.component_id]
+  const tipoIntercambiablePlantillaBase = Boolean(TIPOS_COMPATIBLES[calculoPlantillaBase])
+  const mostrarSeccionDatos = !modoPlantillaBase || tipoIntercambiablePlantillaBase
 
   return (
     <Offcanvas show={Boolean(componente)} onHide={onCerrar} placement="end" style={{ width: 380 }}>
@@ -153,107 +195,161 @@ export default function ComponentPropertiesPanel({
           {componente.component_id}
         </Alert>
 
-        <h6>Información general</h6>
-        <Form.Group className="mb-2" controlId={`titulo-${componente.component_id}`}>
-          <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Título</Form.Label>
-          <Form.Control
-            size="sm"
-            value={componente.content?.titulo || ''}
-            onChange={(e) => onActualizarContenido(componente.component_id, { titulo: e.target.value })}
-            maxLength={200}
-          />
-        </Form.Group>
-        <Form.Group className="mb-3" controlId={`descripcion-${componente.component_id}`}>
-          <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Descripción</Form.Label>
-          <Form.Control
-            as="textarea"
-            rows={2}
-            size="sm"
-            value={componente.content?.descripcion || ''}
-            onChange={(e) => onActualizarContenido(componente.component_id, { descripcion: e.target.value })}
-            maxLength={500}
-          />
-        </Form.Group>
+        <Accordion defaultActiveKey={['general', 'datos', 'personalizacion']} alwaysOpen className="mb-3">
+          <Accordion.Item eventKey="general">
+            <Accordion.Header>Información general</Accordion.Header>
+            <Accordion.Body>
+              <Form.Group className="mb-2" controlId={`titulo-${componente.component_id}`}>
+                <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Título</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={componente.content?.titulo || ''}
+                  onChange={(e) => onActualizarContenido(componente.component_id, { titulo: e.target.value })}
+                  maxLength={200}
+                />
+              </Form.Group>
+              <Form.Group controlId={`descripcion-${componente.component_id}`}>
+                <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Descripción</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  size="sm"
+                  value={componente.content?.descripcion || ''}
+                  onChange={(e) => onActualizarContenido(componente.component_id, { descripcion: e.target.value })}
+                  maxLength={500}
+                />
+              </Form.Group>
+            </Accordion.Body>
+          </Accordion.Item>
 
-        <h6>Tamaño</h6>
-        <div className="mb-3">
-          <WidthHeightControls
-            width={componente.width}
-            height={componente.height}
-            onCambiarAncho={(w) => onCambiarAncho(componente.component_id, w)}
-            onCambiarAlto={(h) => onCambiarAlto(componente.component_id, h)}
-          />
-        </div>
+          {mostrarSeccionDatos && (
+            <Accordion.Item eventKey="datos">
+              <Accordion.Header>Datos</Accordion.Header>
+              <Accordion.Body>
+                {modoPlantillaBase ? (
+                  <SelectorTipoGrafico
+                    contexto={componente.content?.titulo || componente.component_id}
+                    calculo={calculoPlantillaBase}
+                    valor={componente.chart_type}
+                    valorDefecto={componente.chart_type}
+                    onCambiar={(chartType) => onActualizarComponente(componente.component_id, { chart_type: chartType })}
+                  />
+                ) : (
+                  <ComponentDataSection componente={componente} dashboardId={dashboardId} onActualizarComponente={onActualizarComponente} />
+                )}
+              </Accordion.Body>
+            </Accordion.Item>
+          )}
 
-        {filasColor.length > 0 && (
-          <>
-            <div className="d-flex justify-content-between align-items-center mb-2">
-              <h6 className="mb-0">Colores</h6>
-              <Button size="sm" variant="link" onClick={restablecerColores}>Restablecer colores</Button>
-            </div>
-            {filasColor.map((f) => (
-              <CampoColor
-                key={f.id}
-                etiqueta={f.etiqueta}
-                valor={f.valor}
-                porDefecto={f.porDefecto}
-                onCambiar={(valor) => onActualizarEstilos(componente.component_id, f.onCambiar(valor))}
-              />
-            ))}
-          </>
-        )}
+          <Accordion.Item eventKey="personalizacion">
+            <Accordion.Header>Personalización</Accordion.Header>
+            <Accordion.Body>
+              <h6>Tamaño</h6>
+              <div className="mb-3">
+                <WidthHeightControls
+                  width={componente.width}
+                  height={componente.height}
+                  onCambiarAncho={(w) => onCambiarAncho(componente.component_id, w)}
+                  onCambiarAlto={(h) => onCambiarAlto(componente.component_id, h)}
+                />
+              </div>
 
-        {TIPOS_CON_LEYENDA.has(componente.chart_type) && (
-          <>
-            <h6>Leyenda</h6>
-            <Form.Group className="mb-3" controlId={`leyenda-posicion-${componente.component_id}`}>
-              <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Posición de la leyenda</Form.Label>
-              <Form.Select
-                size="sm"
-                value={componente.config?.leyenda_posicion || 'abajo'}
-                onChange={(e) => onActualizarConfig(componente.component_id, {
-                  ...componente.config,
-                  leyenda_posicion: e.target.value,
-                })}
-              >
-                {POSICIONES_LEYENDA.map((p) => (
-                  <option key={p.id} value={p.id}>{p.etiqueta}</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </>
-        )}
+              {filasColor.length > 0 && (
+                <>
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <h6 className="mb-0">Colores</h6>
+                    <Button size="sm" variant="link" onClick={restablecerColores}>Restablecer colores</Button>
+                  </div>
+                  {filasColor.map((f) => (
+                    <CampoColor
+                      key={f.id}
+                      etiqueta={f.etiqueta}
+                      valor={f.valor}
+                      porDefecto={f.porDefecto}
+                      onCambiar={(valor) => onActualizarEstilos(componente.component_id, f.onCambiar(valor))}
+                    />
+                  ))}
+                </>
+              )}
 
-        {componente.type === 'table' && (
-          <>
-            <h6>Paginación</h6>
-            <Form.Group className="mb-3" controlId={`page-size-${componente.component_id}`}>
-              <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Registros visibles por defecto</Form.Label>
-              <Form.Select
-                size="sm"
-                value={componente.config?.defaultPageSize || 10}
-                onChange={(e) => onActualizarConfig(componente.component_id, {
-                  ...componente.config,
-                  defaultPageSize: Number(e.target.value),
-                })}
-              >
-                {(componente.config?.allowedPageSizes || PAGE_SIZES_FIJOS).map((n) => (
-                  <option key={n} value={n}>{n} registros</option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-          </>
-        )}
+              {TIPOS_CON_LEYENDA.has(componente.chart_type) && (
+                <>
+                  <h6>Leyenda</h6>
+                  <Form.Group className="mb-3" controlId={`leyenda-posicion-${componente.component_id}`}>
+                    <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Posición de la leyenda</Form.Label>
+                    <Form.Select
+                      size="sm"
+                      value={componente.config?.leyenda_posicion || 'abajo'}
+                      onChange={(e) => onActualizarConfig(componente.component_id, {
+                        ...componente.config,
+                        leyenda_posicion: e.target.value,
+                      })}
+                    >
+                      {POSICIONES_LEYENDA.map((p) => (
+                        <option key={p.id} value={p.id}>{p.etiqueta}</option>
+                      ))}
+                    </Form.Select>
+                  </Form.Group>
 
-        {componente.type === 'filters_panel' && componente.config?.filtros && (
-          <>
-            <h6>Orden de los filtros</h6>
-            <FilterFieldReorderList
-              filtros={componente.config.filtros}
-              onCambiar={(nuevosFiltros) => onActualizarConfig(componente.component_id, { ...componente.config, filtros: nuevosFiltros })}
-            />
-          </>
-        )}
+                  {nombresLeyenda.length > 0 && (
+                    <>
+                      <div className="d-flex justify-content-between align-items-center mb-2">
+                        <Form.Label className="mb-0" style={{ fontSize: '0.85rem' }}>Títulos de la leyenda</Form.Label>
+                        <Button size="sm" variant="link" onClick={restablecerEtiquetasLeyenda}>Restablecer títulos</Button>
+                      </div>
+                      {nombresLeyenda.map((nombre) => (
+                        <Form.Group key={nombre} className="mb-2">
+                          <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>{nombre}</Form.Label>
+                          <Form.Control
+                            size="sm"
+                            value={etiquetasLeyenda[nombre] || ''}
+                            placeholder={nombre}
+                            maxLength={60}
+                            onChange={(e) => onActualizarEstilos(componente.component_id, {
+                              [campoEtiquetas]: { ...etiquetasLeyenda, [nombre]: e.target.value },
+                            })}
+                            aria-label={`Título de leyenda para "${nombre}"`}
+                          />
+                        </Form.Group>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+
+              {componente.type === 'table' && (
+                <>
+                  <h6>Paginación</h6>
+                  <Form.Group className="mb-3" controlId={`page-size-${componente.component_id}`}>
+                    <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Registros visibles por defecto</Form.Label>
+                    <Form.Select
+                      size="sm"
+                      value={componente.config?.defaultPageSize || 10}
+                      onChange={(e) => onActualizarConfig(componente.component_id, {
+                        ...componente.config,
+                        defaultPageSize: Number(e.target.value),
+                      })}
+                    >
+                      {(componente.config?.allowedPageSizes || PAGE_SIZES_FIJOS).map((n) => (
+                        <option key={n} value={n}>{n} registros</option>
+                      ))}
+                    </Form.Select>
+                  </Form.Group>
+                </>
+              )}
+
+              {componente.type === 'filters_panel' && componente.config?.filtros && (
+                <>
+                  <h6>Orden de los filtros</h6>
+                  <FilterFieldReorderList
+                    filtros={componente.config.filtros}
+                    onCambiar={(nuevosFiltros) => onActualizarConfig(componente.component_id, { ...componente.config, filtros: nuevosFiltros })}
+                  />
+                </>
+              )}
+            </Accordion.Body>
+          </Accordion.Item>
+        </Accordion>
 
         <Button variant="outline-secondary" size="sm" className="mt-2" onClick={onCerrar}>Cerrar</Button>
       </Offcanvas.Body>

@@ -207,6 +207,11 @@ CARTERA_TEMP_UPLOADS_DIR = MEDIA_ROOT / 'uploads_temp'
 CARTERA_TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 CARTERA_EXPORTS_DIR = MEDIA_ROOT / 'exports_temp'
 CARTERA_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+# A diferencia de CARTERA_TEMP_UPLOADS_DIR (se limpia a las 24h, `clean_temp_uploads`), el archivo
+# que queda aplicado a un dashboard se copia acá para que su mapeo de columnas se pueda seguir
+# ajustando después desde "Configurar componente" sin tener que volver a cargarlo.
+CARTERA_ARCHIVOS_DIR = MEDIA_ROOT / 'archivos_dashboard'
+CARTERA_ARCHIVOS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Fila máxima insertada por lote hacia SQL Server (sección 16 - rendimiento).
 CARTERA_BULK_BATCH_SIZE = 2000

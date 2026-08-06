@@ -26,6 +26,9 @@ frontend/coverage/
 Thumbs.db
 .DS_Store
 
+# Contexto local de Claude Code (config particular de cada máquina, no compartir)
+CLAUDE.local.md
+
 # Archivos de datos reales del usuario (nunca commitear)
 *.xlsx
 *.xls

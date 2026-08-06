@@ -23,6 +23,9 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
 
+  --hallazgos-bg: #eaf2fc;
+  --hallazgos-border: #c7ddf7;
+
   /* Identidad institucional (apps.branding) — valores "de arranque en frío" antes de que
      ThemeProvider aplique el tema real desde el backend (GET /api/branding/current). Coinciden
      a propósito con la paleta de arriba, para que activar el theming no cambie nada visualmente
@@ -40,6 +43,45 @@
   --font-secondary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-size-base: 16px;
   --border-radius: 10px;
+}
+
+/**
+ * Tema oscuro (sección "toda la página" — toggle en `AdminSidebar`, ver `useColorMode.js`):
+ * redefine las variables de superficie/texto/serie que NO están bajo control de la identidad
+ * institucional (`apps.branding`, ver `ThemeContext.jsx`) — esas (`--color-*`) se dejan intactas
+ * acá a propósito, salvo `--color-background`: es la única que también gobierna el fondo de
+ * `body` (línea de abajo) y, por eso, `useColorMode.js` la sobreescribe en línea sobre
+ * `documentElement` (un estilo en línea siempre gana sobre esta regla) — el valor de acá solo
+ * sirve de fondo correcto en el primer pintado, antes de que React/el hook terminen de montar.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface-1: #1b212c;
+  --page-plane: #10141b;
+  --color-background: #10141b;
+  --text-primary: #e8eaf0;
+  --text-secondary: #aab2c0;
+  --text-muted: #7b8496;
+  --gridline: #2b3342;
+  --baseline: #5a6478;
+  --border: #323a4a;
+
+  --series-1: #5b9bea;
+  --series-2: #ff9159;
+  --series-3: #2ecc8f;
+  --series-4: #ffbb42;
+  --series-5: #f093bd;
+  --series-6: #4caf50;
+  --series-7: #9083e0;
+  --series-8: #f07171;
+
+  --status-good: #3ecf6e;
+  --status-warning: #ffc94d;
+  --status-serious: #ff9466;
+  --status-critical: #ff6161;
+
+  --hallazgos-bg: #1a2c42;
+  --hallazgos-border: #2d4d70;
 }
 
 body {
@@ -61,6 +103,7 @@ body {
   border-radius: var(--border-radius);
   padding: 16px 18px;
   height: 100%;
+  min-width: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
   color: var(--text-primary);
 }
@@ -76,6 +119,7 @@ body {
   font-weight: 600;
   color: var(--text-primary);
   font-variant-numeric: proportional-nums;
+  overflow-wrap: anywhere;
 }
 
 .kpi-card__sub {
@@ -140,6 +184,41 @@ body {
   pointer-events: auto;
 }
 
+.hallazgos-clave {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--hallazgos-border);
+  border-radius: 8px;
+  background: var(--hallazgos-bg);
+}
+
+.hallazgos-clave__titulo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--series-1);
+  cursor: pointer;
+}
+
+.hallazgos-clave__titulo:hover {
+  text-decoration: underline;
+}
+
+.hallazgos-clave__texto {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 .recharts-cartesian-axis-tick text {
   fill: var(--text-primary);
   font-size: 12px;
@@ -148,6 +227,20 @@ body {
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line {
   stroke: var(--gridline);
+}
+
+/* Recharts fija el fondo/color de su tooltip por defecto con estilos en línea (blanco fijo) —
+   `!important` es lo único que gana contra un estilo en línea sin tener que pasarle `contentStyle`
+   a cada gráfico uno por uno. */
+:root[data-theme='dark'] .recharts-default-tooltip {
+  background-color: var(--surface-1) !important;
+  border-color: var(--border) !important;
+  color: var(--text-primary) !important;
+}
+
+:root[data-theme='dark'] .recharts-tooltip-item,
+:root[data-theme='dark'] .recharts-tooltip-label {
+  color: var(--text-primary) !important;
 }
 
 .upload-dropzone {

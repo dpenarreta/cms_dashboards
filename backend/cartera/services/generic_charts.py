@@ -9,6 +9,12 @@ import pandas as pd
 
 CARDINALIDAD_MAXIMA_CATEGORIA = 50
 LIMITE_CATEGORIAS_EN_GRAFICA = 15
+# Tope de seguridad de `generar_datos_tabla` (no una cantidad "a mostrar": el frontend pagina
+# sobre lo que llegue, con su propio selector de 5/10/20/25/50 filas por página, sección 24) —
+# protege el tamaño de la respuesta cuando la columna de identidad elegida tiene una cardinalidad
+# alta, sin impedir "ver toda la tabla" en el caso normal de una identidad de baja/media
+# cardinalidad (producto, región, vendedor...).
+LIMITE_FILAS_TABLA = 500
 # Datos reales de negocio traen valores sueltos inválidos ("no aplica", celdas mal tipeadas) — un
 # 80% de valores convertibles alcanza para clasificar la columna como numérica/fecha sin exigir
 # que el archivo esté perfectamente limpio.
@@ -80,6 +86,44 @@ def analizar_columnas(df):
     return {'total_filas': total_filas, 'columnas': columnas}
 
 
+# Umbral de la advertencia de "columnas con valores en blanco recurrentes" (frontend,
+# `TemplateMappingStep.jsx`) — una celda vacía suelta no amerita avisar; hacen falta al menos
+# esta cantidad de filas en blanco en la misma columna.
+UMBRAL_BLANCOS_RECURRENTES = 3
+
+
+def columnas_con_blancos_recurrentes(df, umbral=UMBRAL_BLANCOS_RECURRENTES, cantidad_ejemplos=3):
+    """Columnas cuyo valor viene en blanco (NaN) en `umbral` o más filas de `df` — no reporta
+    columnas con menos blancos que eso. El tratamiento real de esos blancos (agrupados como "Sin
+    dato" si la columna se usa como categoría, ignorados en la suma/promedio si se usa como valor)
+    ya lo decide `analizar_columnas`/`generar_datos_*`; esta función solo detecta DÓNDE están, para
+    que el frontend arme el aviso combinando ambas cosas.
+
+    Por cada columna con blancos recurrentes, hasta `cantidad_ejemplos` filas de muestra: el
+    número de fila tal como se vería en el archivo Excel original (contando la fila de
+    encabezado) y los valores de las 2 primeras columnas del archivo (una referencia rápida para
+    ubicar la fila sin tener que abrirlo)."""
+    columnas_referencia = list(df.columns[:2])
+    resultado = []
+    for columna in df.columns:
+        nulos = df[columna].isna()
+        cantidad = int(nulos.sum())
+        if cantidad < umbral:
+            continue
+
+        filas_ejemplo = []
+        for indice in df.index[nulos][:cantidad_ejemplos]:
+            fila = df.loc[indice]
+            filas_ejemplo.append({
+                'numero_fila': int(indice) + 2,  # +1 por índice 0-based, +1 por la fila de encabezado
+                'referencia': {c: (None if pd.isna(fila[c]) else fila[c]) for c in columnas_referencia if c != columna},
+            })
+
+        resultado.append({'columna': str(columna), 'cantidad_en_blanco': cantidad, 'filas_ejemplo': filas_ejemplo})
+
+    return resultado
+
+
 def aplicar_seleccion_usuario(columnas, nombres_utilizables):
     """El análisis automático (`analizar_columnas`) es solo una sugerencia — el usuario decide,
     columna por columna, cuáles marcar como utilizables (ninguna se oculta ni se excluye por sí
@@ -112,6 +156,10 @@ TIPOS_VISUALIZACION = [
     {'id': 'barras_apiladas', 'etiqueta': 'Barras apiladas', 'requiere_categoria': True, 'requiere_serie': True},
     {'id': 'area_apilada', 'etiqueta': 'Área apilada', 'requiere_categoria': True, 'requiere_serie': True},
     {'id': 'lineas', 'etiqueta': 'Líneas', 'requiere_categoria': True, 'requiere_serie': False},
+    # Varias columnas de valor sobre un mismo eje de categorías (`generar_datos_multivalor`), no
+    # una columna partida por una segunda categoría — usado por la plantilla fija de dashboard
+    # ("Gráfico 2": comparar dos métricas, p. ej. ingresos vs. gastos, mes a mes).
+    {'id': 'lineas_multiples', 'etiqueta': 'Líneas múltiples', 'requiere_categoria': True, 'requiere_serie': False},
     {'id': 'pastel', 'etiqueta': 'Pastel', 'requiere_categoria': True, 'requiere_serie': False},
     {'id': 'dona', 'etiqueta': 'Dona', 'requiere_categoria': True, 'requiere_serie': False},
     {'id': 'tabla', 'etiqueta': 'Tabla', 'requiere_categoria': True, 'requiere_serie': False},
@@ -233,6 +281,42 @@ def _agrupar_top_n(agrupado, limite=LIMITE_CATEGORIAS_EN_GRAFICA):
     return top
 
 
+def generar_conteo_valores_unicos(df, columna):
+    """Cantidad de valores distintos (no nulos) de una columna — para un KPI de "conteo" en vez
+    de "suma" (p. ej. cantidad de clientes o números de documento diferentes). A diferencia de
+    `generar_datos_grafica`, no hace falta que la columna sea numérica: cuenta valores únicos de
+    cualquier tipo (texto, ID, etc.)."""
+    if columna not in df.columns:
+        return None
+    return {'tipo': 'kpi', 'valor': int(df[columna].dropna().nunique())}
+
+
+def generar_promedio_columna(df, columna):
+    """Promedio (media aritmética) de una columna numérica — para un KPI de "promedio" en vez de
+    "suma" (p. ej. saldo promedio o días de crédito promedio). `None` si la columna no existe o no
+    tiene ningún valor numérico, igual que el resto de agregaciones de KPI."""
+    if columna not in df.columns:
+        return None
+    valores = pd.to_numeric(df[columna], errors='coerce').dropna()
+    if valores.empty:
+        return None
+    return {'tipo': 'kpi', 'valor': round(float(valores.mean()), 2)}
+
+
+LIMITE_VALORES_UNICOS_FILTRO = 500
+
+
+def valores_unicos_de_columna(df, columna, limite=LIMITE_VALORES_UNICOS_FILTRO):
+    """Valores distintos (no nulos, como texto, orden alfabético) de una columna — para poblar el
+    selector "valor" del filtro opcional de una posición de la plantilla (`columna_filtro`/
+    `valor_filtro`). `total` es la cantidad real de valores distintos, por si `limite` recortó la
+    lista (columnas de altísima cardinalidad, p. ej. un identificador)."""
+    if columna not in df.columns:
+        return None
+    valores = sorted(str(v) for v in df[columna].dropna().unique())
+    return {'valores': valores[:limite], 'total': len(valores)}
+
+
 def generar_datos_grafica(df, columna_valor, columna_categoria=None):
     """Agrega los datos de una gráfica a partir de una columna de valor (numérica, se suma) y,
     opcionalmente, una columna de categoría para agrupar. Sin categoría, el resultado es un único
@@ -323,4 +407,160 @@ def generar_datos_dispersion(df, columna_x, columna_y):
     return {
         'tipo': 'dispersion',
         'puntos': [{'x': round(float(fila.x), 2), 'y': round(float(fila.y), 2)} for fila in validos.itertuples()],
+    }
+
+
+def generar_datos_multivalor(df, columna_categoria, columnas_valor):
+    """Agrega los datos de una gráfica que compara varias métricas (columnas de valor distintas)
+    sobre un mismo eje de categorías — a diferencia de `generar_datos_multiserie` (una sola
+    columna de valor partida por una segunda columna de categoría), aquí cada serie es una
+    columna numérica distinta ya existente en el archivo (p. ej. "Ingresos" vs. "Gastos" por
+    mes). Mismo shape de salida (`{tipo: 'multiserie', categorias, series}`) que
+    `generar_datos_multiserie`, para reutilizar los mismos componentes de renderizado (líneas
+    múltiples, barras agrupadas/apiladas, área apilada)."""
+    if columna_categoria not in df.columns or not columnas_valor:
+        return None
+    if any(c not in df.columns for c in columnas_valor):
+        return None
+
+    categorias = df[columna_categoria].fillna('Sin dato').astype(str)
+    agrupados = {c: pd.to_numeric(df[c], errors='coerce').groupby(categorias).sum() for c in columnas_valor}
+
+    totales_categoria = agrupados[columnas_valor[0]].sort_values(ascending=False)
+    hay_resto = len(totales_categoria) > LIMITE_CATEGORIAS_EN_GRAFICA
+    categorias_incluidas = totales_categoria.index[:LIMITE_CATEGORIAS_EN_GRAFICA] if hay_resto else totales_categoria.index
+
+    series = []
+    for columna in columnas_valor:
+        agrupado = agrupados[columna]
+        incluidos = [round(float(v), 2) for v in agrupado.reindex(categorias_incluidas, fill_value=0.0).tolist()]
+        if hay_resto:
+            resto = float(agrupado.drop(index=categorias_incluidas, errors='ignore').sum())
+            incluidos.append(round(resto, 2))
+        series.append({'nombre': str(columna), 'valores': incluidos})
+
+    categorias_finales = [str(c) for c in categorias_incluidas.tolist()]
+    if hay_resto:
+        categorias_finales.append('Otras')
+
+    return {'tipo': 'multiserie', 'categorias': categorias_finales, 'series': series}
+
+
+TIPOS_AGREGACION_TABLA = ('suma', 'promedio', 'conteo_unicos', 'valor_celda')
+
+
+def normalizar_columna_valor_tabla(columna_valor):
+    """Cada entrada de `columnas_valor` es `{'columna': str, 'tipo_agregacion': 'suma'|'promedio'|
+    'conteo_unicos'|'valor_celda'}` (sección 23) — también acepta el string plano de antes de esa
+    sección (tratado como 'suma'), para que una tabla mapeada antes de este cambio se siga pudiendo
+    recalcular sin que el usuario tenga que rehacer el mapeo. Público (no `_`): también lo usa
+    `services/historico.py` para normalizar las columnas de una tabla histórica (sección 28)."""
+    if columna_valor is None:
+        return {'columna': None, 'tipo_agregacion': 'suma'}
+    if isinstance(columna_valor, str):
+        return {'columna': columna_valor, 'tipo_agregacion': 'suma'}
+    tipo = columna_valor.get('tipo_agregacion')
+    return {'columna': columna_valor.get('columna'), 'tipo_agregacion': tipo if tipo in TIPOS_AGREGACION_TABLA else 'suma'}
+
+
+def _valor_celda(serie):
+    """Para el tipo de agregación 'valor_celda': en vez de sumar/promediar, muestra el valor real
+    de la celda cuando todas las filas del grupo comparten el mismo (columnas que identifican algo
+    y no varían entre filas de un mismo grupo, p. ej. "Zona" o "Ciudad" de un cliente) — si
+    difieren, no hay un único valor que mostrar, así que devuelve 'Varios' en vez de elegir uno al
+    azar. `None` cuando el grupo no tiene ningún valor no nulo."""
+    valores = serie.dropna().unique()
+    if len(valores) == 0:
+        return None
+    if len(valores) == 1:
+        return valores[0]
+    return 'Varios'
+
+
+def valor_agregado(serie, tipo_agregacion):
+    """Aplica el tipo de agregación elegido a una columna de valor: 'suma' (agrega
+    montos/cantidades), 'promedio' (media aritmética), 'conteo_unicos' (cuenta valores distintos —
+    sirve para columnas no numéricas, p. ej. cuántos clientes o documentos distintos hay) o
+    'valor_celda' (el valor real de la celda si es el mismo en toda la serie, ver `_valor_celda`).
+    Público (no `_`): también lo usa `services/historico.py` para agregar una columna a través de
+    varias cargas (sección 28), no solo dentro de un mismo archivo."""
+    if tipo_agregacion == 'conteo_unicos':
+        return serie.nunique()
+    if tipo_agregacion == 'valor_celda':
+        return _valor_celda(serie)
+    numerica = pd.to_numeric(serie, errors='coerce')
+    return numerica.mean() if tipo_agregacion == 'promedio' else numerica.sum()
+
+
+def generar_datos_tabla(df, columna_id, columnas_valor, limite=LIMITE_FILAS_TABLA):
+    """Arma una tabla con una fila por cada valor de `columna_id` (las `limite` de mayor total en
+    la primera columna de valor — un tope de seguridad alto, no la cantidad a mostrar: eso lo
+    decide el frontend con su propio paginador, sección 24), una columna por cada entrada de
+    `columnas_valor` — cada una agregada con el tipo de cálculo que el usuario haya elegido para
+    esa columna (`suma`, `promedio`, `conteo_unicos` o `valor_celda`, sección 23) —, una columna
+    final de "% del total" (sobre la primera columna de valor, agregada del mismo modo) y una fila
+    de totales: siempre la suma de lo que se ve en cada columna, sin importar su tipo de agregación
+    (así "Total" significa lo mismo en toda la tabla: la suma de las filas mostradas). A diferencia
+    de una comparación "vs. mes anterior", el % del total siempre se puede calcular sin necesitar
+    una dimensión de tiempo en el archivo.
+
+    `valor_celda` es la excepción a "todo es una cantidad": es texto/categoría, no algo que se
+    pueda sumar ni rankear numéricamente. Si la PRIMERA columna de valor es `valor_celda`, el orden
+    de las filas queda alfabético (no por magnitud) y "% del total" queda en 0 para todas las filas
+    (no hay total numérico contra el cual repartir un porcentaje); si cualquier otra columna lo es,
+    su celda en la fila de "Total" queda vacía (`None`) en vez de intentar sumar texto."""
+    if columna_id not in df.columns or not columnas_valor:
+        return None
+    entradas = [normalizar_columna_valor_tabla(c) for c in columnas_valor]
+    if any(e['columna'] not in df.columns for e in entradas):
+        return None
+
+    identidad = df[columna_id].fillna('Sin dato').astype(str)
+
+    def agrupado(entrada):
+        nombre_columna, tipo = entrada['columna'], entrada['tipo_agregacion']
+        if tipo == 'conteo_unicos':
+            return df[nombre_columna].groupby(identidad).nunique()
+        if tipo == 'valor_celda':
+            return df[nombre_columna].groupby(identidad).agg(_valor_celda)
+        numerica = pd.to_numeric(df[nombre_columna], errors='coerce')
+        return numerica.groupby(identidad).mean() if tipo == 'promedio' else numerica.groupby(identidad).sum()
+
+    # Listas posicionales (no un dict por nombre de columna): la misma columna origen puede
+    # aparecer más de una vez con un tipo de agregación distinto en cada una (p. ej. "Ventas -
+    # Suma" y "Ventas - Promedio" como dos columnas separadas de la tabla) y cada aparición debe
+    # mantener su propio cálculo, no fundirse con las demás.
+    agrupados = [agrupado(e) for e in entradas]
+
+    primaria_numerica = entradas[0]['tipo_agregacion'] != 'valor_celda'
+    principal = agrupados[0]
+    top_ids = principal.sort_values(ascending=False).index[:limite]
+    total_general = float(valor_agregado(df[entradas[0]['columna']], entradas[0]['tipo_agregacion'])) if primaria_numerica else 0.0
+
+    filas = []
+    totales_por_columna = [(0.0 if e['tipo_agregacion'] != 'valor_celda' else None) for e in entradas]
+    for nombre_id in top_ids:
+        fila = [str(nombre_id)]
+        for i, (entrada, serie_agrupada) in enumerate(zip(entradas, agrupados)):
+            valor_bruto = serie_agrupada.get(nombre_id)
+            if entrada['tipo_agregacion'] == 'valor_celda':
+                fila.append(valor_bruto if pd.notna(valor_bruto) else None)
+            else:
+                valor = float(valor_bruto) if pd.notna(valor_bruto) else 0.0
+                fila.append(round(valor, 2))
+                totales_por_columna[i] += valor
+        valor_principal = float(principal.get(nombre_id, 0.0)) if primaria_numerica else 0.0
+        porcentaje = round((valor_principal / total_general * 100) if (primaria_numerica and total_general) else 0.0, 2)
+        fila.append(porcentaje)
+        filas.append(fila)
+
+    fila_total = ['Total'] + [(round(total, 2) if total is not None else None) for total in totales_por_columna]
+    porcentaje_total = round((totales_por_columna[0] / total_general * 100) if (primaria_numerica and total_general) else 0.0, 2)
+    fila_total.append(porcentaje_total)
+
+    return {
+        'tipo': 'tabla_multi',
+        'columnas': [str(columna_id)] + [str(e['columna']) for e in entradas] + ['% del total'],
+        'filas': filas,
+        'total': fila_total,
     }

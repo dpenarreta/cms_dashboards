@@ -33,3 +33,15 @@ class HasModulePermission(BasePermission):
 def require_permission(codename):
     """Fábrica: `permission_classes = [require_permission('usuarios.ver')]`."""
     return type(f'Require_{codename.replace(".", "_")}', (HasModulePermission,), {'required_permission': codename})
+
+
+class IsSuperuser(BasePermission):
+    """Exige que el usuario autenticado sea superusuario de Django (`is_superuser=True`) — para
+    acciones que ni siquiera un permiso del catálogo de negocio debe poder otorgar (conceder
+    superusuario a otra cuenta). Un permiso de catálogo no sirve acá porque `is_superuser=True`
+    bypassa por completo ese catálogo (`authorization.user_has_permission`); si `usuarios.editar`
+    alcanzara para esta acción, cualquiera con ese permiso podría fabricarse un superusuario
+    nuevo y escalar sus propios privilegios más allá de lo que se le otorgó."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.is_superuser)

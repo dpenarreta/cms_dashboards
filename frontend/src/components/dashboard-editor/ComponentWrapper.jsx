@@ -26,7 +26,7 @@ export default function ComponentWrapper({
   const anchoPorcentaje = `${(componente.width / 12) * 100}%`
 
   return (
-    <div style={{ ...style, flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, padding: 8, boxSizing: 'border-box' }} ref={setNodeRef}>
+    <div style={{ ...style, flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, minWidth: 0, padding: 8, boxSizing: 'border-box' }} ref={setNodeRef}>
       <div
         className={`h-100 ${seleccionado ? 'border-primary' : 'border-secondary'}`}
         style={{ border: '2px dashed', borderRadius: 10, padding: 6 }}

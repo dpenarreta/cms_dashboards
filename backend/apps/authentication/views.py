@@ -1,3 +1,4 @@
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -9,8 +10,9 @@ from apps.core.audit import request_meta
 from cartera.exceptions import CarteraError
 
 from .serializers import (
-    ChangeOwnPasswordSerializer, LoginSerializer, MeSerializer, PasswordResetConfirmSerializer,
-    PasswordResetRequestSerializer, PasswordResetValidateSerializer, RefreshSerializer,
+    AvatarUploadSerializer, ChangeOwnPasswordSerializer, LoginSerializer, MeSerializer,
+    PasswordResetConfirmSerializer, PasswordResetRequestSerializer, PasswordResetValidateSerializer,
+    RefreshSerializer, UpdateMyProfileSerializer,
 )
 from .services import AuthenticationService, PasswordResetService
 
@@ -62,7 +64,45 @@ class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(MeSerializer(request.user).data)
+        return Response(MeSerializer(request.user, context={'request': request}).data)
+
+    def patch(self, request):
+        serializer = UpdateMyProfileSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        usuario = request.user
+        anterior = {'area': usuario.area}
+        for campo, valor in serializer.validated_data.items():
+            setattr(usuario, campo, valor)
+        usuario.save(update_fields=list(serializer.validated_data.keys()) or None)
+        log_event(
+            domain=AuditEvent.Domain.USER_MANAGEMENT, action='USER_PROFILE_UPDATED', actor=usuario,
+            entity_type='user', entity_id=usuario.id, entity_name=usuario.username,
+            previous_values=anterior, new_values=serializer.validated_data, request=request,
+        )
+        return Response(MeSerializer(usuario, context={'request': request}).data)
+
+
+class MyAvatarView(APIView):
+    """`POST /api/auth/me/avatar` — reemplaza el avatar del usuario autenticado (multipart). Borra
+    el archivo anterior del disco tras guardar el nuevo, para no acumular huérfanos."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        serializer = AvatarUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        usuario = request.user
+        avatar_anterior = usuario.avatar if usuario.avatar else None
+        usuario.avatar = serializer.validated_data['avatar']
+        usuario.save(update_fields=['avatar'])
+        if avatar_anterior:
+            avatar_anterior.delete(save=False)
+        log_event(
+            domain=AuditEvent.Domain.USER_MANAGEMENT, action='USER_AVATAR_UPDATED', actor=usuario,
+            entity_type='user', entity_id=usuario.id, entity_name=usuario.username, request=request,
+        )
+        return Response(MeSerializer(usuario, context={'request': request}).data)
 
 
 class ChangeOwnPasswordView(APIView):

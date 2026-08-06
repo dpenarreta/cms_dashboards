@@ -14,9 +14,19 @@ from .models import Dashboard
 
 
 def dashboards_autorizados(request):
-    if not permisos.tiene_permiso(request, permisos.DASHBOARD_VIEW):
-        return []
+    # Las pestañas de un dashboard (`Dashboard.parent`) no son dashboards sueltos — se navega a
+    # ellas desde la barra de pestañas del dashboard raíz, no deben aparecer acá como una entrada
+    # aparte. Cada dashboard se filtra individualmente por `tiene_acceso_dashboard` (control de
+    # acceso por roles editores/lectores + dueño) en vez de un único chequeo global: un dashboard
+    # sin ACL propia se ve igual que siempre (basta `dashboard.view`), uno con ACL configurada solo
+    # lo ven su dueño/el superusuario/quien tenga uno de los roles asignados — aunque no tenga el
+    # permiso global. `puede_administrar_acceso` le indica al frontend si mostrar el botón para
+    # configurar esa ACL.
     return [
-        {'dashboard_id': d.dashboard_id, 'name': d.name, 'area': d.area}
-        for d in Dashboard.objects.all()
+        {
+            'dashboard_id': d.dashboard_id, 'name': d.name, 'area': d.area,
+            'puede_administrar_acceso': permisos.puede_administrar_acceso(request, d.dashboard_id),
+        }
+        for d in Dashboard.objects.filter(parent__isnull=True)
+        if permisos.tiene_acceso_dashboard(request, d.dashboard_id, permiso_global=permisos.DASHBOARD_VIEW)
     ]
