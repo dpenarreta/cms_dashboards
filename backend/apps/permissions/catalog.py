@@ -36,6 +36,10 @@ PERMISSION_CATALOG = [
     {'module': 'dashboard', 'codename': 'dashboard.component.create', 'name': 'Crear componentes del dashboard'},
     {'module': 'dashboard', 'codename': 'dashboard.component.delete', 'name': 'Eliminar componentes del dashboard'},
     {'module': 'dashboard', 'codename': 'dashboard.configuration.reset', 'name': 'Restablecer la configuración del dashboard'},
+    # --- Interpretación con IA (Gemini) — separados de dashboard.view para poder controlar el
+    # costo/uso del LLM sin depender de quién puede simplemente ver el dashboard -------------
+    {'module': 'dashboard', 'codename': 'dashboard.interpretar', 'name': 'Generar la interpretación completa del dashboard con IA'},
+    {'module': 'dashboard', 'codename': 'dashboard.hallazgos_ia', 'name': 'Generar hallazgos clave por componente con IA'},
 ]
 
 

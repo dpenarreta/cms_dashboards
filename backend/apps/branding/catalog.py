@@ -6,9 +6,29 @@ para que activar `apps.branding` no cambie la identidad visual existente el día
 docs/integracion/decisions.md.
 """
 
+# 17 opciones (una misma lista sirve para "fuente principal" y "fuente secundaria" — mismo
+# selector, `SettingsPage.jsx`), todas con pila de fuentes del sistema (sin cargar ningún web
+# font externo: ni `<link>` a Google Fonts ni `@font-face` en ningún lado del frontend — 'inter'
+# ya seguía este mismo criterio antes de esta lista, se deja igual). El slug es lo único que se
+# persiste (`SiteTheme.font_primary/font_secondary`, `max_length=20`) — mantenerlos cortos.
 FONT_FAMILIES = [
     {'slug': 'system', 'label': 'Sistema (por defecto)', 'css': "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"},
     {'slug': 'inter', 'label': 'Inter', 'css': "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"},
+    {'slug': 'arial', 'label': 'Arial', 'css': "Arial, Helvetica, sans-serif"},
+    {'slug': 'verdana', 'label': 'Verdana', 'css': "Verdana, Geneva, sans-serif"},
+    {'slug': 'tahoma', 'label': 'Tahoma', 'css': "Tahoma, Geneva, sans-serif"},
+    {'slug': 'trebuchet', 'label': 'Trebuchet MS', 'css': "'Trebuchet MS', Helvetica, sans-serif"},
+    {'slug': 'segoe', 'label': 'Segoe UI', 'css': "'Segoe UI', Tahoma, Geneva, sans-serif"},
+    {'slug': 'calibri', 'label': 'Calibri', 'css': "Calibri, Candara, Segoe, sans-serif"},
+    {'slug': 'century-gothic', 'label': 'Century Gothic', 'css': "'Century Gothic', CenturyGothic, AppleGothic, sans-serif"},
+    {'slug': 'gill-sans', 'label': 'Gill Sans', 'css': "'Gill Sans', 'Gill Sans MT', Calibri, sans-serif"},
+    {'slug': 'georgia', 'label': 'Georgia', 'css': "Georgia, 'Times New Roman', serif"},
+    {'slug': 'times', 'label': 'Times New Roman', 'css': "'Times New Roman', Times, serif"},
+    {'slug': 'garamond', 'label': 'Garamond', 'css': "Garamond, 'Palatino Linotype', serif"},
+    {'slug': 'palatino', 'label': 'Palatino', 'css': "'Palatino Linotype', 'Book Antiqua', Palatino, serif"},
+    {'slug': 'cambria', 'label': 'Cambria', 'css': "Cambria, Georgia, serif"},
+    {'slug': 'courier', 'label': 'Courier New', 'css': "'Courier New', Courier, monospace"},
+    {'slug': 'consolas', 'label': 'Consolas', 'css': "Consolas, 'Courier New', monospace"},
 ]
 
 ALLOWED_BORDER_RADII = [

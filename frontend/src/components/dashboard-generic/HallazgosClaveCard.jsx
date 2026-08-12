@@ -17,18 +17,25 @@ function renderConNegritas(texto) {
 
 /**
  * Recuadro "Hallazgos clave" (sección 25/26/27) al pie de cada KPI/gráfico/tabla del dashboard: un
- * párrafo con la interpretación de esa posición, recalculado en cada render a partir de los
- * mismos `datos`/`datosMultiserie` que el propio componente usa para dibujarse
- * (`generarHallazgos`) — así cambiar el tipo de gráfico, las columnas mapeadas o el archivo
- * cambia también la redacción, sin un paso aparte que la deje desactualizada. El encabezado es un
- * botón que expande/contrae el párrafo (tipo "collapse", empieza expandido) — cada posición del
- * dashboard tiene su propio estado, independiente del resto. Si no hay datos suficientes para
- * decir algo (posición vacía), no se muestra nada.
+ * párrafo con la interpretación de esa posición. Por defecto, recalculado en cada render con
+ * reglas fijas a partir de los mismos `datos`/`datosMultiserie` que el propio componente usa para
+ * dibujarse (`generarHallazgos`) — así cambiar el tipo de gráfico, las columnas mapeadas o el
+ * archivo cambia también la redacción, sin un paso aparte que la deje desactualizada.
+ *
+ * `textoIA`, si viene (`DashboardAreaPage.jsx`, un único llamado batch a Gemini para todo el
+ * dashboard vía `generarHallazgosIA`), reemplaza ese texto por reglas por uno generado por IA —
+ * el texto por reglas se sigue calculando igual y queda como fallback instantáneo mientras la
+ * llamada a IA resuelve (o si falla): nunca hay un estado de carga visible acá, solo un swap
+ * silencioso cuando `textoIA` llega.
+ *
+ * El encabezado es un botón que expande/contrae el párrafo (tipo "collapse", empieza expandido) —
+ * cada posición del dashboard tiene su propio estado, independiente del resto. Si no hay datos
+ * suficientes para decir algo (posición vacía) ni `textoIA`, no se muestra nada.
  */
-export default function HallazgosClaveCard({ variante, datos, datosMultiserie }) {
+export default function HallazgosClaveCard({ variante, datos, datosMultiserie, textoIA }) {
   const idContenido = useId()
   const [expandido, setExpandido] = useState(true)
-  const texto = generarHallazgos(variante, { datos, datosMultiserie })
+  const texto = textoIA || generarHallazgos(variante, { datos, datosMultiserie })
   if (!texto) return null
 
   return (

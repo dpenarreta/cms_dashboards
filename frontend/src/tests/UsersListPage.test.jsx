@@ -59,6 +59,42 @@ describe('UsersListPage', () => {
     renderPagina()
     expect(await screen.findByText(/no hay usuarios que coincidan/i)).toBeInTheDocument()
   })
+
+  it('con última conexión registrada, muestra la fecha y hora formateadas', async () => {
+    usersService.list.mockResolvedValue({
+      results: [{ ...USUARIO_ACTIVO, ultima_conexion: '2026-08-12T15:30:00Z' }], count: 1, next: null, previous: null,
+    })
+    renderPagina()
+    await screen.findByText('ana')
+
+    const esperado = new Date('2026-08-12T15:30:00Z').toLocaleString('es-EC')
+    expect(screen.getByText(esperado)).toBeInTheDocument()
+  })
+
+  it('con permiso para ver roles además de usuarios, muestra la pestaña "Roles" para moverse entre ambas listas', async () => {
+    useAuth.mockReturnValue({ user: { permissions: ['usuarios.ver', 'roles.ver'] } })
+    usersService.list.mockResolvedValue({ results: [], count: 0, next: null, previous: null })
+    renderPagina()
+    expect(await screen.findByRole('link', { name: 'Roles' })).toHaveAttribute('href', '/admin/roles')
+  })
+
+  it('sin permiso para ver roles, no muestra ninguna pestaña', async () => {
+    usersService.list.mockResolvedValue({ results: [], count: 0, next: null, previous: null })
+    renderPagina()
+    await waitFor(() => expect(usersService.list).toHaveBeenCalled())
+    expect(screen.queryByRole('link', { name: 'Roles' })).not.toBeInTheDocument()
+  })
+
+  it('sin última conexión (nunca inició sesión), muestra un guion', async () => {
+    usersService.list.mockResolvedValue({
+      results: [{ ...USUARIO_ACTIVO, ultima_conexion: null }], count: 1, next: null, previous: null,
+    })
+    renderPagina()
+    await screen.findByText('ana')
+
+    const fila = screen.getByText('ana').closest('tr')
+    expect(fila).toHaveTextContent('—')
+  })
 })
 
 describe('UsersListPage — restablecer contraseña', () => {

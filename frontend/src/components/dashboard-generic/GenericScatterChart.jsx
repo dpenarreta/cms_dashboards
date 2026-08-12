@@ -9,7 +9,7 @@ import HallazgosClaveCard from './HallazgosClaveCard'
  * numéricos (x, y). Un único color para todos los puntos (`override.colores.colorPrincipal`), ya
  * que no hay categorías que distinguir por color.
  */
-export default function GenericScatterChart({ data, override }) {
+export default function GenericScatterChart({ data, override, hallazgoIA }) {
   if (!data?.puntos?.length) return null
   const colorPrincipal = override?.colores?.colorPrincipal || 'var(--series-1)'
 
@@ -30,7 +30,7 @@ export default function GenericScatterChart({ data, override }) {
           <Scatter data={data.puntos} fill={colorPrincipal} />
         </ScatterChart>
       </ResponsiveContainer>
-      <HallazgosClaveCard variante="dispersion" datos={data} />
+      <HallazgosClaveCard variante="dispersion" datos={data} textoIA={hallazgoIA} />
     </div>
   )
 }

@@ -6,6 +6,7 @@ from apps.permissions.permissions import IsSuperuser, require_permission
 
 from . import dashboard_registry, permisos
 from .exceptions import CarteraError
+from .services import dashboard_interpretation
 from .services import dashboard_layout as dl
 from .services import dashboards as dashboards_service
 
@@ -191,6 +192,44 @@ class DashboardDuenoView(APIView):
             dashboard_id, nuevo_dueno_id=request.data.get('owner_id'), actor=request.user, request=request,
         )
         return Response(dashboards_service.obtener_acceso(dashboard_id))
+
+
+class DashboardInterpretacionView(APIView):
+    """`POST /api/dashboards/<dashboard_id>/interpretacion` — interpretación completa del
+    dashboard generada por IA (Gemini) a partir de los datos ya calculados de sus componentes
+    visibles. Operación de solo lectura (no muta el layout): exige primero poder ver el dashboard
+    (`tiene_acceso_dashboard`, respeta ACL por-dashboard) y además el permiso global dedicado
+    `dashboard.interpretar` — separado de `DASHBOARD_VIEW` a propósito, para poder otorgar/quitar
+    el uso de IA sin tocar quién puede ver el dashboard (control de costo del LLM). Ver
+    `services/dashboard_interpretation.py`."""
+
+    def post(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+        if not permisos.tiene_permiso(request, permisos.DASHBOARD_INTERPRETAR):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para generar interpretaciones con IA.'}, status=403)
+
+        texto = dashboard_interpretation.generar_interpretacion(dashboard_id)
+        return Response({'interpretacion': texto})
+
+
+class DashboardHallazgosIAView(APIView):
+    """`POST /api/dashboards/<dashboard_id>/hallazgos-ia` — hallazgo clave por componente
+    (KPI/gráfico/tabla) generado por IA en un único llamado batch a Gemini (no uno por
+    componente). Mismo patrón en dos pasos que `DashboardInterpretacionView`: acceso al dashboard
+    primero, y además el permiso dedicado `dashboard.hallazgos_ia` (distinto de
+    `dashboard.interpretar` — esta llamada se dispara automáticamente al abrir/guardar el
+    dashboard, no por una acción explícita, así que conviene poder controlarla aparte). Ver
+    `services/dashboard_interpretation.py::generar_hallazgos_ia`."""
+
+    def post(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+        if not permisos.tiene_permiso(request, permisos.DASHBOARD_HALLAZGOS_IA):
+            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para generar hallazgos con IA.'}, status=403)
+
+        hallazgos = dashboard_interpretation.generar_hallazgos_ia(dashboard_id)
+        return Response({'hallazgos': hallazgos})
 
 
 class DashboardVersionsView(APIView):

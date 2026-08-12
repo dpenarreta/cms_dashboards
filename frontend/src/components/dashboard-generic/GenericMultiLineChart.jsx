@@ -19,7 +19,7 @@ function acortar(texto, max = 22) {
  * (`override.colores.etiquetasPorSerie` — `dataKey` sigue siendo el nombre real de la serie, solo
  * cambia el texto que muestran la leyenda y el tooltip vía el prop `name`).
  */
-export default function GenericMultiLineChart({ data, override, leyendaPosicion }) {
+export default function GenericMultiLineChart({ data, override, leyendaPosicion, hallazgoIA }) {
   if (!data?.series?.length) return null
 
   const coloresPorSerie = override?.colores?.coloresPorSerie || {}
@@ -58,7 +58,7 @@ export default function GenericMultiLineChart({ data, override, leyendaPosicion 
           ))}
         </LineChart>
       </ResponsiveContainer>
-      <HallazgosClaveCard variante="multiserie" datosMultiserie={data} />
+      <HallazgosClaveCard variante="multiserie" datosMultiserie={data} textoIA={hallazgoIA} />
     </div>
   )
 }

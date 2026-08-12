@@ -122,6 +122,10 @@ describe('DashboardAreaPage', () => {
     // actual apenas se abre — sin este default, un test que active el modal rompería al llamar
     // `.then()` sobre un mock sin resolver.
     carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+    // Se pide apenas el layout guardado está disponible (ver efecto de `hallazgosIA` en
+    // `DashboardAreaPage.jsx`) — sin este default, cualquier test rompería al llamar `.then()`
+    // sobre un mock sin resolver.
+    dashboardLayoutService.generarHallazgosIA.mockResolvedValue({ hallazgos: {} })
   })
 
   it('muestra el nombre y el área del dashboard, resueltos por dashboard_id', async () => {
@@ -648,6 +652,87 @@ describe('DashboardAreaPage', () => {
       expect(screen.getByText('Histórica')).toBeInTheDocument()
       // No es el contenido normal (que solo tenía la fila "A"/100 de un único archivo).
       expect(screen.queryByText('A')).not.toBeInTheDocument()
+    })
+  })
+
+  describe('interpretación completa del dashboard', () => {
+    it('sin el permiso dashboard.interpretar, no muestra el botón', async () => {
+      useAuth.mockReturnValue({ user: { permissions: [] } })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      expect(screen.queryByRole('button', { name: 'Interpretación completa' })).not.toBeInTheDocument()
+      expect(dashboardLayoutService.generarInterpretacion).not.toHaveBeenCalled()
+    })
+
+    it('con el permiso dashboard.interpretar, "Interpretación completa" abre el modal y muestra el texto generado por IA', async () => {
+      useAuth.mockReturnValue({ user: { permissions: ['dashboard.interpretar'] } })
+      dashboardLayoutService.generarInterpretacion.mockResolvedValue({
+        interpretacion: 'El dashboard muestra una concentración alta en Quito.',
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Interpretación completa' }))
+      expect(dashboardLayoutService.generarInterpretacion).toHaveBeenCalledWith('finanzas')
+      expect(await screen.findByText('El dashboard muestra una concentración alta en Quito.')).toBeInTheDocument()
+    })
+
+    it('si el backend responde con un error de negocio, lo muestra en vez del texto', async () => {
+      useAuth.mockReturnValue({ user: { permissions: ['dashboard.interpretar'] } })
+      dashboardLayoutService.generarInterpretacion.mockRejectedValue({
+        response: { data: { mensaje: 'La interpretación con IA no está configurada en este entorno.' } },
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Interpretación completa' }))
+      expect(await screen.findByText('La interpretación con IA no está configurada en este entorno.')).toBeInTheDocument()
+    })
+  })
+
+  describe('hallazgos clave por componente generados por IA', () => {
+    it('sin el permiso dashboard.hallazgos_ia, ni siquiera pide los hallazgos con IA', async () => {
+      useAuth.mockReturnValue({ user: { permissions: [] } })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      expect(dashboardLayoutService.generarHallazgosIA).not.toHaveBeenCalled()
+      expect(await screen.findByText(/El valor actual es/)).toBeInTheDocument()
+    })
+
+    it('con hallazgo IA disponible para el componente, reemplaza el texto por reglas', async () => {
+      useAuth.mockReturnValue({ user: { permissions: ['dashboard.hallazgos_ia'] } })
+      dashboardLayoutService.generarHallazgosIA.mockResolvedValue({
+        hallazgos: { 'kpi-1': 'Según la IA, el total ventas es sobresaliente.' },
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      expect(dashboardLayoutService.generarHallazgosIA).toHaveBeenCalledWith('finanzas')
+      expect(await screen.findByText('Según la IA, el total ventas es sobresaliente.')).toBeInTheDocument()
+      expect(screen.queryByText(/El valor actual es/)).not.toBeInTheDocument()
+    })
+
+    it('sin hallazgo IA para el componente (todavía no resolvió o falló), muestra el texto por reglas', async () => {
+      useAuth.mockReturnValue({ user: { permissions: ['dashboard.hallazgos_ia'] } })
+      dashboardLayoutService.generarHallazgosIA.mockRejectedValue(new Error('falló'))
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      expect(await screen.findByText(/El valor actual es/)).toBeInTheDocument()
     })
   })
 })

@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .catalog import DEFAULT_THEME
+from .catalog import DEFAULT_THEME, FONT_FAMILIES
 from .models import SiteTheme
 from .validators import validate_hex_color
 
@@ -93,3 +93,15 @@ class ThemeApiTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(len(resp.json()['fonts']) > 0)
         self.assertTrue(len(resp.json()['border_radii']) > 0)
+
+    def test_catalogo_de_fuentes_tiene_al_menos_15_opciones(self):
+        # Una misma lista sirve para "fuente principal" y "fuente secundaria" en el frontend
+        # (`SettingsPage.jsx`) — 15+ acá ya alcanza para ambos selectores.
+        self.assertGreaterEqual(len(FONT_FAMILIES), 15)
+
+    def test_catalogo_de_fuentes_slugs_unicos_y_dentro_del_limite_del_modelo(self):
+        slugs = [f['slug'] for f in FONT_FAMILIES]
+        self.assertEqual(len(slugs), len(set(slugs)), 'Hay slugs de fuente duplicados.')
+        limite = SiteTheme._meta.get_field('font_primary').max_length
+        for slug in slugs:
+            self.assertLessEqual(len(slug), limite, f'Slug "{slug}" supera max_length={limite}.')

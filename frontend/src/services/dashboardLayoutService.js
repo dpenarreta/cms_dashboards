@@ -62,3 +62,24 @@ export function actualizarAcceso(dashboardId, { rolesEditores, rolesLectores }) 
 export function reasignarDueno(dashboardId, ownerId) {
   return api.patch(`/${dashboardId}/dueno`, { owner_id: ownerId }).then((r) => r.data)
 }
+
+// Timeout de las llamadas con IA: más largo que el resto porque incluyen una llamada a un LLM
+// externo (Gemini) — el backend le da a esa llamada hasta 45s (`dashboard_interpretation.py`,
+// `_TIMEOUT_SEGUNDOS`); acá se deja margen por encima de eso (60s), no el mismo valor, para que el
+// backend siempre tenga chance de responder con su propio error de timeout antes de que el
+// frontend aborte la request por su cuenta.
+const _TIMEOUT_IA_MS = 60000
+
+/** Interpretación completa del dashboard generada por IA (`services/dashboard_interpretation.py`). */
+export function generarInterpretacion(dashboardId) {
+  return api.post(`/${dashboardId}/interpretacion`, {}, { timeout: _TIMEOUT_IA_MS }).then((r) => r.data)
+}
+
+/** "Hallazgos clave" por componente generados por IA, un único llamado batch para todo el
+ * dashboard (`{hallazgos: {component_id: texto}}`) — mismo timeout que `generarInterpretacion` por
+ * la misma razón. Reemplaza progresivamente, componente por componente, el texto generado con
+ * reglas fijas (`utils/hallazgosClave.js`), que sigue siendo el fallback instantáneo mientras esta
+ * llamada resuelve o si falla (ver `HallazgosClaveCard.jsx`). */
+export function generarHallazgosIA(dashboardId) {
+  return api.post(`/${dashboardId}/hallazgos-ia`, {}, { timeout: _TIMEOUT_IA_MS }).then((r) => r.data)
+}

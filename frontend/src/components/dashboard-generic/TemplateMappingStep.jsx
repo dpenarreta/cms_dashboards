@@ -17,11 +17,17 @@ function filaEjemploTexto(fila) {
  * (`tratamientoColumnaEnBlanco`) y, si además es una de las columnas marcadas como históricas
  * (`columnasHistoricas`, casilla del paso "Renombrar columnas" — cualquiera de ellas alimenta por
  * igual a Tabla 4 y Tabla 5), una marca aparte — ahí el tratamiento importa más porque se arrastra
- * a la comparación histórica de esta carga. */
+ * a la comparación histórica de esta carga.
+ *
+ * A propósito NO es un `Alert variant="warning"` de Bootstrap (fondo amarillo fijo, muy
+ * llamativo, y reteñido por el color de marca sin garantía de buen contraste) — usa el mismo tono
+ * azul oscuro/texto claro que ya llevan los recuadros "Hallazgos clave" (`.aviso-columnas-blanco`,
+ * `styles/dashboard.css`) para que se vea como el resto de tarjetas del dashboard, no como una
+ * advertencia urgente: esta información es de referencia, no bloquea nada. */
 function AvisoColumnasEnBlanco({ columnasConBlancos, columnas, columnasHistoricas }) {
   if (columnasConBlancos.length === 0) return null
   return (
-    <Alert variant="warning">
+    <div className="aviso-columnas-blanco">
       <div className="fw-bold mb-2">Columnas con valores en blanco</div>
       <div className="d-flex flex-column gap-2">
         {columnasConBlancos.map((c) => {
@@ -37,13 +43,13 @@ function AvisoColumnasEnBlanco({ columnasConBlancos, columnas, columnasHistorica
               )}
               {tratamientoColumnaEnBlanco(columnaInfo)}
               {c.filas_ejemplo?.length > 0 && (
-                <span className="chart-panel__subtitle"> Ejemplos: {c.filas_ejemplo.map(filaEjemploTexto).join(', ')}.</span>
+                <span className="aviso-columnas-blanco__ejemplos"> Ejemplos: {c.filas_ejemplo.map(filaEjemploTexto).join(', ')}.</span>
               )}
             </div>
           )
         })}
       </div>
-    </Alert>
+    </div>
   )
 }
 

@@ -19,7 +19,11 @@ const TEMA = {
   font_primary: 'system', font_secondary: 'system', font_size_base: '16px', border_radius: 'medium',
 }
 const OPCIONES = {
-  fonts: [{ slug: 'system', label: 'Sistema (por defecto)' }, { slug: 'inter', label: 'Inter' }],
+  fonts: [
+    { slug: 'system', label: 'Sistema (por defecto)', css: "-apple-system, BlinkMacSystemFont, sans-serif" },
+    { slug: 'inter', label: 'Inter', css: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" },
+    { slug: 'georgia', label: 'Georgia', css: "Georgia, 'Times New Roman', serif" },
+  ],
   border_radii: [{ slug: 'small', label: 'Pequeño' }, { slug: 'medium', label: 'Mediano' }, { slug: 'large', label: 'Grande' }],
 }
 
@@ -81,6 +85,43 @@ describe('SettingsPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
 
     expect(brandingService.reset).not.toHaveBeenCalled()
+  })
+
+  it('la vista previa de cada fuente arranca con la fuente actualmente guardada', async () => {
+    brandingService.getAdmin.mockResolvedValue(TEMA)
+    brandingService.options.mockResolvedValue(OPCIONES)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+
+    const previaPrincipal = await screen.findByText(/Vista previa — fuente principal: Sistema \(por defecto\)/)
+    expect(previaPrincipal).toHaveStyle({ fontFamily: OPCIONES.fonts[0].css })
+    const previaSecundaria = screen.getByText(/Vista previa — fuente secundaria: Sistema \(por defecto\)/)
+    expect(previaSecundaria).toHaveStyle({ fontFamily: OPCIONES.fonts[0].css })
+  })
+
+  it('cambiar la fuente principal actualiza su vista previa al instante, sin guardar', async () => {
+    brandingService.getAdmin.mockResolvedValue(TEMA)
+    brandingService.options.mockResolvedValue(OPCIONES)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await screen.findByDisplayValue('Dashboard de Cartera')
+
+    await userEvent.selectOptions(screen.getByLabelText('Fuente principal'), 'georgia')
+
+    const previa = screen.getByText(/Vista previa — fuente principal: Georgia/)
+    expect(previa).toHaveStyle({ fontFamily: "Georgia, 'Times New Roman', serif" })
+    // No se guardó nada todavía — la vista previa es puramente local.
+    expect(brandingService.update).not.toHaveBeenCalled()
+  })
+
+  it('cambiar la fuente secundaria actualiza su propia vista previa, sin afectar la de la fuente principal', async () => {
+    brandingService.getAdmin.mockResolvedValue(TEMA)
+    brandingService.options.mockResolvedValue(OPCIONES)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
+    await screen.findByDisplayValue('Dashboard de Cartera')
+
+    await userEvent.selectOptions(screen.getByLabelText('Fuente secundaria'), 'inter')
+
+    expect(screen.getByText(/Vista previa — fuente secundaria: Inter/)).toBeInTheDocument()
+    expect(screen.getByText(/Vista previa — fuente principal: Sistema \(por defecto\)/)).toBeInTheDocument()
   })
 
   it('muestra los campos de colores semánticos precargados', async () => {

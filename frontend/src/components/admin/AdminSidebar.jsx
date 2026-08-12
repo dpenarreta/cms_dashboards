@@ -18,6 +18,10 @@ export default function AdminSidebar() {
   }, [colapsado])
 
   const inicial = (user?.username || '?').charAt(0).toUpperCase()
+  // Refleja de inmediato un nombre editado desde /admin/profile (`ProfilePage.jsx` llama
+  // `refreshUser()` al guardar, que actualiza este mismo `user` global) — sin nombre/apellido
+  // cargados, cae al username de siempre.
+  const nombreMostrado = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username
 
   return (
     <aside className={`admin-sidebar ${colapsado ? 'admin-sidebar--colapsado' : ''}`}>
@@ -37,7 +41,7 @@ export default function AdminSidebar() {
             <img src={user.avatar_url} alt="" className="admin-sidebar__avatar-img" />
           ) : inicial}
         </div>
-        <div className="admin-sidebar__nombre">{user?.username}</div>
+        <div className="admin-sidebar__nombre">{nombreMostrado}</div>
       </Link>
 
       <nav className="admin-sidebar__nav" aria-label="Menú administrativo">

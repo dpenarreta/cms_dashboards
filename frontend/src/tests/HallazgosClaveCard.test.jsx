@@ -43,4 +43,20 @@ describe('HallazgosClaveCard', () => {
     rerender(<HallazgosClaveCard variante="kpi" datos={{ valor: 500, formato: 'moneda' }} />)
     expect(container.querySelector('.hallazgos-clave__texto').textContent).toMatch(/El valor actual es \$\s*500,00\./)
   })
+
+  it('con textoIA, lo muestra en vez del texto generado por reglas', () => {
+    render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} textoIA="Hallazgo generado por IA." />)
+    expect(screen.getByText('Hallazgo generado por IA.')).toBeInTheDocument()
+    expect(screen.queryByText(/El valor actual es/)).not.toBeInTheDocument()
+  })
+
+  it('sin textoIA, cae al texto generado por reglas (fallback instantáneo)', () => {
+    render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} textoIA={undefined} />)
+    expect(screen.getByText(/El valor actual es/)).toBeInTheDocument()
+  })
+
+  it('con textoIA pero sin datos suficientes por reglas, igual muestra el textoIA', () => {
+    render(<HallazgosClaveCard variante="categorico" datos={{ categorias: [], valores: [] }} textoIA="Hallazgo IA sin datos locales." />)
+    expect(screen.getByText('Hallazgo IA sin datos locales.')).toBeInTheDocument()
+  })
 })

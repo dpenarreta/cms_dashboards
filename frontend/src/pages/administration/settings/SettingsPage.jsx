@@ -42,6 +42,25 @@ function AvisoContraste({ valor, contraValor }) {
   )
 }
 
+/**
+ * Vista previa en vivo de una fuente (principal o secundaria): texto de muestra renderizado con
+ * el `font-family` real de la opción elegida (`fuente.css`, del catálogo — `opciones.fonts`,
+ * `GET /api/branding/admin/options`). Se recalcula en cada render a partir del `<Form.Select>`
+ * correspondiente (mismo estado `campos`, sin `useEffect` ni llamada aparte) — cambiar la
+ * selección se ve reflejado al instante, sin necesidad de guardar. No toca `document.documentElement`
+ * ni `ThemeContext` (eso solo se aplica recién tras guardar, vía `reloadTheme()`): es una muestra
+ * aislada a este bloque, no una previsualización del resto de la página.
+ */
+function VistaPreviaFuente({ etiqueta, fuente }) {
+  if (!fuente) return null
+  return (
+    <div className="border rounded p-2 mt-1" style={{ fontFamily: fuente.css }}>
+      <div className="chart-panel__subtitle mb-1">Vista previa — {etiqueta}: {fuente.label}</div>
+      <div style={{ fontSize: '1.05rem' }}>Aa Bb Cc 123 — El veloz murciélago hindú comía feliz cardillo y kiwi.</div>
+    </div>
+  )
+}
+
 function CampoColor({ clave, etiqueta, valor, contraValor, onCambiar }) {
   const valido = HEX_RE.test(valor || '')
   return (
@@ -123,6 +142,9 @@ export default function SettingsPage() {
   if (cargando) return <div className="text-center py-4"><Spinner animation="border" /></div>
   if (!campos) return <Alert variant="danger">{error}</Alert>
 
+  const fuentePrimaria = opciones.fonts.find((f) => f.slug === campos.font_primary)
+  const fuenteSecundaria = opciones.fonts.find((f) => f.slug === campos.font_secondary)
+
   return (
     <div>
       <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
@@ -195,12 +217,14 @@ export default function SettingsPage() {
               <Form.Select value={campos.font_primary} onChange={(e) => actualizarCampo('font_primary', e.target.value)}>
                 {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
               </Form.Select>
+              <VistaPreviaFuente etiqueta="fuente principal" fuente={fuentePrimaria} />
             </Form.Group>
             <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-secondary">
               <Form.Label>Fuente secundaria</Form.Label>
               <Form.Select value={campos.font_secondary} onChange={(e) => actualizarCampo('font_secondary', e.target.value)}>
                 {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
               </Form.Select>
+              <VistaPreviaFuente etiqueta="fuente secundaria" fuente={fuenteSecundaria} />
             </Form.Group>
             <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-size">
               <Form.Label>Tamaño de fuente base</Form.Label>

@@ -5,6 +5,7 @@ import { DndContext, PointerSensor, useDroppable, useSensor, useSensors } from '
 import { useGenericDashboardBuilder } from '../../hooks/useGenericDashboardBuilder'
 import { useDashboardLayout } from '../../hooks/useDashboardLayout'
 import { PERMISOS, usePermisos } from '../../hooks/usePermisos'
+import { useAuth } from '../../context/AuthContext'
 import FileUploadZone from '../../components/upload/FileUploadZone'
 import RenameColumnsStep from '../../components/dashboard-generic/RenameColumnsStep'
 import ValoresEnBlancoStep from '../../components/dashboard-generic/ValoresEnBlancoStep'
@@ -20,6 +21,7 @@ import AgregarComponentePersonalModal from '../../components/dashboard-editor/Ag
 import ComponentPaletteSidebar from '../../components/dashboard-editor/ComponentPaletteSidebar'
 import ConfirmModal from '../../components/dashboard-editor/ConfirmModal'
 import DashboardTabsBar from '../../components/dashboards/DashboardTabsBar'
+import InterpretacionDashboardModal from '../../components/dashboards/InterpretacionDashboardModal'
 import * as dashboardLayoutService from '../../services/dashboardLayoutService'
 import * as historicoService from '../../services/historicoService'
 import { construirOverride, datosDesdeComponente } from '../../utils/datosDesdeComponente'
@@ -77,11 +79,17 @@ export default function DashboardAreaPage() {
   const [mostrarModalPersonal, setMostrarModalPersonal] = useState(false)
   const [tipoModalPersonal, setTipoModalPersonal] = useState(null)
   const [mostrarPaleta, setMostrarPaleta] = useState(false)
+  const [mostrarInterpretacion, setMostrarInterpretacion] = useState(false)
   const [confirmandoAgregarTipo, setConfirmandoAgregarTipo] = useState(null)
   const builder = useGenericDashboardBuilder(dashboardId)
   const layout = useDashboardLayout(dashboardId)
   const permisos = usePermisos()
   const sensoresPaleta = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+  // `usePermisos()` es un stub que concede todo el editor visual siempre (ver `hooks/CLAUDE.md`)
+  // — para gates reales de IA se usa `user.permissions` directo, igual que el resto de la app.
+  const { user } = useAuth()
+  const puedeInterpretar = Boolean(user?.permissions?.includes('dashboard.interpretar'))
+  const puedeHallazgosIA = Boolean(user?.permissions?.includes('dashboard.hallazgos_ia'))
 
   // Las columnas que el usuario ya marcó como "históricas" para este dashboard (`ColumnaHistorica`,
   // configuración persistente — no lo que aparece en los datos ya guardados). Alimenta Tabla 4/
@@ -135,6 +143,26 @@ export default function DashboardAreaPage() {
   useEffect(() => {
     if (layout.modoEdicion) setMostrarPaleta(true)
   }, [layout.modoEdicion])
+
+  // "Hallazgos clave" por componente generados por IA (`HallazgosClaveCard.jsx`) — un único
+  // llamado batch para todo el dashboard, no uno por componente (evitaría N llamadas externas en
+  // cada carga de página). Se pide una vez que el layout GUARDADO está disponible y se vuelve a
+  // pedir solo cuando su versión cambia (nuevo archivo cargado, componente agregado/editado) — no
+  // en cada movimiento sin guardar del borrador. Si falla o todavía no resolvió, cada
+  // `HallazgosClaveCard` sigue mostrando su texto por reglas (fallback instantáneo) — por eso acá
+  // no hay estado de error ni de carga, un `catch` silencioso alcanza. Sin `dashboard.hallazgos_ia`
+  // ni siquiera se dispara la llamada (evita un 403 esperado en cada carga de página para
+  // cualquier usuario sin ese permiso — la protección real de todos modos vive en el backend).
+  const [hallazgosIA, setHallazgosIA] = useState({})
+  useEffect(() => {
+    if (!layout.layoutGuardado || !puedeHallazgosIA) return undefined
+    let cancelado = false
+    dashboardLayoutService.generarHallazgosIA(dashboardId)
+      .then((resultado) => { if (!cancelado) setHallazgosIA(resultado.hallazgos || {}) })
+      .catch(() => {})
+    return () => { cancelado = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- solo debe repetirse cuando cambia la versión guardada, no en cada referencia nueva de layoutGuardado
+  }, [dashboardId, layout.layoutGuardado?.version, puedeHallazgosIA])
 
   const cancelarConstructor = () => {
     builder.limpiar()
@@ -208,6 +236,7 @@ export default function DashboardAreaPage() {
             override={override}
             config={componente.config}
             esHistorica={esTablaHistorica}
+            hallazgoIA={hallazgosIA[componente.component_id]}
           />
         )
         // Tabla 4 y Tabla 5 son las únicas posiciones que, en vez de mostrar el detalle del
@@ -237,6 +266,11 @@ export default function DashboardAreaPage() {
           {dashboardInfo?.area && <p className="chart-panel__subtitle mb-0">Área: {dashboardInfo.area}</p>}
         </div>
         <div className="d-flex gap-2">
+          {puedeInterpretar && (
+            <Button variant="outline-secondary" size="sm" onClick={() => setMostrarInterpretacion(true)}>
+              Interpretación completa
+            </Button>
+          )}
           <OverlayTrigger placement="top" overlay={<Tooltip>Disponible en una fase futura.</Tooltip>}>
             <span>
               <Button variant="outline-secondary" size="sm" disabled>Conectar vista de base de datos</Button>
@@ -422,6 +456,12 @@ export default function DashboardAreaPage() {
           </ConfirmModal>
         </>
       )}
+
+      <InterpretacionDashboardModal
+        show={mostrarInterpretacion}
+        onHide={() => setMostrarInterpretacion(false)}
+        dashboardId={dashboardId}
+      />
     </div>
   )
 }

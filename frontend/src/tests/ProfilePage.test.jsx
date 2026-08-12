@@ -27,10 +27,14 @@ describe('ProfilePage', () => {
 
   it('muestra la información básica del usuario y sus roles', () => {
     renderPagina()
-    expect(screen.getByText('ana')).toBeInTheDocument()
+    expect(screen.getByText('Ana Pérez')).toBeInTheDocument()
     expect(screen.getByText('ana@example.com')).toBeInTheDocument()
     expect(screen.getByText('Cobranzas')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Ana Pérez')).toBeInTheDocument()
+  })
+
+  it('sin nombre/apellido cargados, el encabezado cae al username', () => {
+    renderPagina({ ...USUARIO, first_name: '', last_name: '' })
+    expect(screen.getByText('ana')).toBeInTheDocument()
   })
 
   it('sin avatar_url, muestra la inicial del usuario', () => {
@@ -38,29 +42,56 @@ describe('ProfilePage', () => {
     expect(screen.getByText('A')).toBeInTheDocument()
   })
 
-  it('el campo de área se precarga con el área actual', () => {
+  it('los campos de nombre, apellido, usuario y área se precargan con los datos actuales', () => {
     renderPagina()
+    expect(screen.getByLabelText('Nombre')).toHaveValue('Ana')
+    expect(screen.getByLabelText('Apellido')).toHaveValue('Pérez')
+    expect(screen.getByLabelText('Nombre de usuario')).toHaveValue('ana')
     expect(screen.getByLabelText('Área')).toHaveValue('Cobranzas')
   })
 
-  it('guardar el área llama al servicio y refresca la sesión', async () => {
+  it('guardar los datos generales llama al servicio con nombre/apellido/usuario/área y refresca la sesión', async () => {
     const { refreshUser } = renderPagina()
-    authService.updateProfile.mockResolvedValue({ ...USUARIO, area: 'Ventas' })
+    authService.updateProfile.mockResolvedValue({ ...USUARIO, first_name: 'Anita', area: 'Ventas' })
 
+    await userEvent.clear(screen.getByLabelText('Nombre'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Anita')
     await userEvent.clear(screen.getByLabelText('Área'))
     await userEvent.type(screen.getByLabelText('Área'), 'Ventas')
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar área' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
 
-    expect(authService.updateProfile).toHaveBeenCalledWith({ area: 'Ventas' })
+    expect(authService.updateProfile).toHaveBeenCalledWith({ area: 'Ventas', firstName: 'Anita', lastName: 'Pérez', username: 'ana' })
     await waitFor(() => expect(refreshUser).toHaveBeenCalled())
-    expect(await screen.findByText('Área actualizada.')).toBeInTheDocument()
+    expect(await screen.findByText('Datos actualizados.')).toBeInTheDocument()
   })
 
-  it('si falla guardar el área, muestra el mensaje de error del backend', async () => {
+  it('cambiar el nombre de usuario y guardar lo incluye en el pedido', async () => {
+    renderPagina()
+    authService.updateProfile.mockResolvedValue({ ...USUARIO, username: 'ana2' })
+
+    await userEvent.clear(screen.getByLabelText('Nombre de usuario'))
+    await userEvent.type(screen.getByLabelText('Nombre de usuario'), 'ana2')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(authService.updateProfile).toHaveBeenCalledWith({ area: 'Cobranzas', firstName: 'Ana', lastName: 'Pérez', username: 'ana2' })
+  })
+
+  it('si el nombre de usuario ya está en uso, muestra el mensaje de error del backend', async () => {
+    renderPagina()
+    authService.updateProfile.mockRejectedValue({ response: { data: { mensaje: 'Ya existe un usuario con ese nombre de usuario.' } } })
+
+    await userEvent.clear(screen.getByLabelText('Nombre de usuario'))
+    await userEvent.type(screen.getByLabelText('Nombre de usuario'), 'beto')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(await screen.findByText('Ya existe un usuario con ese nombre de usuario.')).toBeInTheDocument()
+  })
+
+  it('si falla guardar los datos generales, muestra el mensaje de error del backend', async () => {
     renderPagina()
     authService.updateProfile.mockRejectedValue({ response: { data: { mensaje: 'No se pudo.' } } })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Guardar área' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
 
     expect(await screen.findByText('No se pudo.')).toBeInTheDocument()
   })

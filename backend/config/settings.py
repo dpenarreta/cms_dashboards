@@ -148,6 +148,12 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@cms-dashboards.lo
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 PASSWORD_RESET_TOKEN_LIFETIME_MINUTES = int(os.getenv('PASSWORD_RESET_TOKEN_LIFETIME_MINUTES', 30))
 
+# --- Interpretación completa del dashboard (IA, Gemini) ----------------------
+# Sin GEMINI_API_KEY configurada, `dashboard_interpretation.generar_interpretacion` lanza
+# CarteraError (codigo='IA_NO_CONFIGURADA') en vez de fallar con un error genérico de red.
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-flash-latest')
+
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(os.getenv('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', 15))),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_LIFETIME_DAYS', 7))),

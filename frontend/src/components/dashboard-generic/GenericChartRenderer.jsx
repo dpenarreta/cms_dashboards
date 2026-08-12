@@ -27,7 +27,7 @@ function categoricoDesdeMultiserie(datosMultiserie) {
  * ya agregado al dashboard (`component.chart_type`). Así "los gráficos sugeridos se pueden
  * visualizar de cualquiera de estas formas" sin duplicar la lógica de despacho en dos lugares.
  */
-export default function GenericChartRenderer({ tipoVisualizacion, datos, datosMultiserie, titulo, override, config, esHistorica }) {
+export default function GenericChartRenderer({ tipoVisualizacion, datos, datosMultiserie, titulo, override, config, esHistorica, hallazgoIA }) {
   // Pastel/dona son compatibles con posiciones de 2+ columnas de valor (`multivalor`/`multiserie`,
   // ver `utils/plantillaSlots.js::TIPOS_COMPATIBLES`) aunque su contenido calculado siga llegando
   // como `datosMultiserie` (varias series) — acá, y solo para estos dos tipos, se colapsa en una
@@ -40,29 +40,29 @@ export default function GenericChartRenderer({ tipoVisualizacion, datos, datosMu
 
   switch (tipoVisualizacion) {
     case 'kpi':
-      return datosConTitulo ? <GenericKpiCard data={datosConTitulo} override={override} config={config} /> : null
+      return datosConTitulo ? <GenericKpiCard data={datosConTitulo} override={override} config={config} hallazgoIA={hallazgoIA} /> : null
     case 'barras_verticales':
-      return <GenericBarChart data={datosConTitulo} override={override} orientacion="vertical" />
+      return <GenericBarChart data={datosConTitulo} override={override} orientacion="vertical" hallazgoIA={hallazgoIA} />
     case 'barras_agrupadas':
-      return <GenericMultiSeriesBarChart data={datosMultiserieConTitulo} override={override} apilado={false} leyendaPosicion={leyendaPosicion} />
+      return <GenericMultiSeriesBarChart data={datosMultiserieConTitulo} override={override} apilado={false} leyendaPosicion={leyendaPosicion} hallazgoIA={hallazgoIA} />
     case 'barras_apiladas':
-      return <GenericMultiSeriesBarChart data={datosMultiserieConTitulo} override={override} apilado leyendaPosicion={leyendaPosicion} />
+      return <GenericMultiSeriesBarChart data={datosMultiserieConTitulo} override={override} apilado leyendaPosicion={leyendaPosicion} hallazgoIA={hallazgoIA} />
     case 'area_apilada':
-      return <GenericStackedAreaChart data={datosMultiserieConTitulo} override={override} leyendaPosicion={leyendaPosicion} />
+      return <GenericStackedAreaChart data={datosMultiserieConTitulo} override={override} leyendaPosicion={leyendaPosicion} hallazgoIA={hallazgoIA} />
     case 'lineas_multiples':
-      return <GenericMultiLineChart data={datosMultiserieConTitulo} override={override} leyendaPosicion={leyendaPosicion} />
+      return <GenericMultiLineChart data={datosMultiserieConTitulo} override={override} leyendaPosicion={leyendaPosicion} hallazgoIA={hallazgoIA} />
     case 'lineas':
-      return <GenericLineChart data={datosConTitulo} override={override} />
+      return <GenericLineChart data={datosConTitulo} override={override} hallazgoIA={hallazgoIA} />
     case 'pastel':
-      return <GenericPieChart data={datosConTitulo} override={override} leyendaPosicion={leyendaPosicion} />
+      return <GenericPieChart data={datosConTitulo} override={override} leyendaPosicion={leyendaPosicion} hallazgoIA={hallazgoIA} />
     case 'dona':
-      return <GenericPieChart data={datosConTitulo} override={override} dona leyendaPosicion={leyendaPosicion} mostrarTotal={Boolean(config?.mostrar_total)} />
+      return <GenericPieChart data={datosConTitulo} override={override} dona leyendaPosicion={leyendaPosicion} mostrarTotal={Boolean(config?.mostrar_total)} hallazgoIA={hallazgoIA} />
     case 'tabla':
-      return <GenericDataTable data={datosConTitulo} override={override} esHistorica={esHistorica} />
+      return <GenericDataTable data={datosConTitulo} override={override} esHistorica={esHistorica} hallazgoIA={hallazgoIA} />
     case 'dispersion':
-      return <GenericScatterChart data={datosConTitulo} override={override} />
+      return <GenericScatterChart data={datosConTitulo} override={override} hallazgoIA={hallazgoIA} />
     case 'barras_horizontales':
     default:
-      return <GenericBarChart data={datosConTitulo} override={override} orientacion="horizontal" />
+      return <GenericBarChart data={datosConTitulo} override={override} orientacion="horizontal" hallazgoIA={hallazgoIA} />
   }
 }

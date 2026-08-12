@@ -11,3 +11,4 @@ python-dateutil>=2.9,<2.10
 python-dotenv>=1.0,<1.1
 argon2-cffi>=23.1,<23.2
 Pillow>=10.4,<10.5
+requests>=2.32,<2.33

@@ -163,6 +163,63 @@ class MyProfileTests(TestCase):
             actor=self.usuario, entity_id=str(self.usuario.id),
         ).exists())
 
+    def test_actualizar_nombre_propio(self):
+        resp = self.client.patch('/api/auth/me', {'first_name': 'Ana', 'last_name': 'Pérez'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['first_name'], 'Ana')
+        self.assertEqual(resp.json()['last_name'], 'Pérez')
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.first_name, 'Ana')
+        self.assertEqual(self.usuario.last_name, 'Pérez')
+
+    def test_actualizar_nombre_registra_auditoria_con_valores_previos(self):
+        self.usuario.first_name = 'Nombre viejo'
+        self.usuario.save(update_fields=['first_name'])
+        self.client.patch('/api/auth/me', {'first_name': 'Ana'}, format='json')
+        evento = AuditEvent.objects.get(
+            domain=AuditEvent.Domain.USER_MANAGEMENT, action='USER_PROFILE_UPDATED',
+            actor=self.usuario, entity_id=str(self.usuario.id),
+        )
+        self.assertEqual(evento.previous_values, {'first_name': 'Nombre viejo'})
+        self.assertEqual(evento.new_values, {'first_name': 'Ana'})
+
+    def test_actualizar_nombre_con_mas_de_150_caracteres_es_rechazado(self):
+        resp = self.client.patch('/api/auth/me', {'first_name': 'A' * 151}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_actualizar_username_propio(self):
+        resp = self.client.patch('/api/auth/me', {'username': 'ana2'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['username'], 'ana2')
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.username, 'ana2')
+
+    def test_actualizar_username_al_mismo_valor_no_falla_por_unicidad(self):
+        resp = self.client.patch('/api/auth/me', {'username': 'ana'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_actualizar_username_a_uno_ya_usado_por_otro_es_rechazado(self):
+        User.objects.create_user(username='beto', email='beto@example.com', password='Clave-Segura-123')
+        resp = self.client.patch('/api/auth/me', {'username': 'beto'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.username, 'ana')
+
+    def test_actualizar_username_a_uno_ya_usado_es_rechazado_sin_importar_mayusculas(self):
+        User.objects.create_user(username='beto', email='beto@example.com', password='Clave-Segura-123')
+        resp = self.client.patch('/api/auth/me', {'username': 'BETO'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_actualizar_username_con_caracteres_invalidos_es_rechazado(self):
+        resp = self.client.patch('/api/auth/me', {'username': 'ana con espacios'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_despues_de_cambiar_username_se_puede_iniciar_sesion_con_el_nuevo(self):
+        self.client.patch('/api/auth/me', {'username': 'ana2'}, format='json')
+        cliente_nuevo = APIClient()
+        resp = cliente_nuevo.post('/api/auth/login', {'identifier': 'ana2', 'password': 'Clave-Segura-123'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+
     def test_subir_avatar_exitoso(self):
         resp = self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
         self.assertEqual(resp.status_code, 200)

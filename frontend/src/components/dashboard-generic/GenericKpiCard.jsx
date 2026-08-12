@@ -33,7 +33,7 @@ function formatearValor(valor, formato) {
  * tiempo real sería engañoso), así que un KPI con datos reales muestra su descripción en su
  * lugar, igual que el resto de gráficas.
  */
-export default function GenericKpiCard({ data, override, config }) {
+export default function GenericKpiCard({ data, override, config, hallazgoIA }) {
   if (!data) return null
   const colorPrincipal = override?.colores?.colorPrincipal
   const colorIcono = colorPrincipal || '#2a78d6'
@@ -66,7 +66,7 @@ export default function GenericKpiCard({ data, override, config }) {
           <div className="kpi-card__sub">{override?.descripcion || data.descripcion}</div>
         )
       )}
-      <HallazgosClaveCard variante="kpi" datos={data} />
+      <HallazgosClaveCard variante="kpi" datos={data} textoIA={hallazgoIA} />
     </div>
   )
 }

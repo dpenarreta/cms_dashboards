@@ -15,7 +15,7 @@ function acortar(texto, max = 22) {
  * Cada categoría (cada barra) tiene su propio color, editable individualmente
  * (`override.colores.coloresPorCategoria`) — no un único color compartido por todas las barras.
  */
-export default function GenericBarChart({ data, override, orientacion = 'horizontal' }) {
+export default function GenericBarChart({ data, override, orientacion = 'horizontal', hallazgoIA }) {
   if (!data) return null
   const datosGrafico = (data.categorias || []).map((categoria, i) => ({
     categoria, etiqueta: acortar(categoria), valor: data.valores?.[i] ?? 0,
@@ -62,7 +62,7 @@ export default function GenericBarChart({ data, override, orientacion = 'horizon
           </Bar>
         </BarChart>
       </ResponsiveContainer>
-      <HallazgosClaveCard variante="categorico" datos={data} />
+      <HallazgosClaveCard variante="categorico" datos={data} textoIA={hallazgoIA} />
     </div>
   )
 }

@@ -200,7 +200,7 @@ function TablaSimple({ categorias, valores }) {
  * `TablaHistoricaAutomatica`) — es un prop controlado por quién renderiza la tabla, nunca algo
  * guardado en `content`/`mapeo`, así que ninguna edición de título/descripción puede quitarla.
  */
-export default function GenericDataTable({ data, override, mostrarHallazgos = true, esHistorica = false }) {
+export default function GenericDataTable({ data, override, mostrarHallazgos = true, esHistorica = false, hallazgoIA }) {
   if (!data) return null
   const esMultiColumna = Array.isArray(data.columnas) && Array.isArray(data.filas)
 
@@ -216,7 +216,7 @@ export default function GenericDataTable({ data, override, mostrarHallazgos = tr
       {esMultiColumna
         ? <TablaMultiColumna columnas={data.columnas} filas={data.filas} total={data.total} />
         : <TablaSimple categorias={data.categorias} valores={data.valores} />}
-      {mostrarHallazgos && <HallazgosClaveCard variante="tabla" datos={data} />}
+      {mostrarHallazgos && <HallazgosClaveCard variante="tabla" datos={data} textoIA={hallazgoIA} />}
     </div>
   )
 }

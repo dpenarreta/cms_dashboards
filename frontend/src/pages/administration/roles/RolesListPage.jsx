@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Spinner, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
+import UsersRolesTabsBar from '../../../components/admin/UsersRolesTabsBar'
 import * as rolesService from '../../../services/rolesService'
 
 export default function RolesListPage() {
@@ -37,6 +38,8 @@ export default function RolesListPage() {
         <h1 className="h4 mb-0">Roles</h1>
         <Button as={Link} to="/admin/roles/new" size="sm">Nuevo rol</Button>
       </div>
+
+      <UsersRolesTabsBar />
 
       {error && <Alert variant="danger">{error}</Alert>}
       {cargando && <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>}

@@ -67,10 +67,10 @@ class MeView(APIView):
         return Response(MeSerializer(request.user, context={'request': request}).data)
 
     def patch(self, request):
-        serializer = UpdateMyProfileSerializer(data=request.data, partial=True)
+        serializer = UpdateMyProfileSerializer(data=request.data, partial=True, context={'request': request})
         serializer.is_valid(raise_exception=True)
         usuario = request.user
-        anterior = {'area': usuario.area}
+        anterior = {campo: getattr(usuario, campo) for campo in serializer.validated_data}
         for campo, valor in serializer.validated_data.items():
             setattr(usuario, campo, valor)
         usuario.save(update_fields=list(serializer.validated_data.keys()) or None)

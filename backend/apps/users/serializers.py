@@ -6,12 +6,18 @@ from .models import User
 
 class UserAdminListSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
+    # No es un campo del modelo — lo anota `UserAdminViewSet.get_queryset` (subquery sobre
+    # `apps.authentication.models.Session`) porque `last_login` nunca se completa en este
+    # proyecto (login 100% JWT propio, nunca pasa por `django.contrib.auth.login()`). Se declara
+    # explícito (no lo infiere `ModelSerializer`, no es un campo real de `User`) y de solo lectura.
+    ultima_conexion = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = User
         fields = (
             'id', 'username', 'email', 'first_name', 'last_name', 'status',
             'is_superuser', 'must_change_password', 'last_login', 'created_at', 'roles',
+            'ultima_conexion',
         )
 
     def get_roles(self, obj):

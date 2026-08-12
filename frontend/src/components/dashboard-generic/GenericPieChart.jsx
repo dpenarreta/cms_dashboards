@@ -28,7 +28,7 @@ export function datosCircularConEtiquetas(data, etiquetasPorCategoria = {}) {
  * `mostrarTotal` (solo tiene efecto junto con `dona`) dibuja la suma de todos los valores
  * centrada dentro del agujero.
  */
-export default function GenericPieChart({ data, override, dona = false, leyendaPosicion, mostrarTotal = false }) {
+export default function GenericPieChart({ data, override, dona = false, leyendaPosicion, mostrarTotal = false, hallazgoIA }) {
   if (!data) return null
   const coloresPorCategoria = override?.colores?.coloresPorCategoria || {}
   const datosGrafico = datosCircularConEtiquetas(data, override?.colores?.etiquetasPorCategoria)
@@ -75,7 +75,7 @@ export default function GenericPieChart({ data, override, dona = false, leyendaP
           <div style={{ fontWeight: 600 }}>{formatNumber(total)}</div>
         </div>
       )}
-      <HallazgosClaveCard variante="categorico" datos={data} />
+      <HallazgosClaveCard variante="categorico" datos={data} textoIA={hallazgoIA} />
     </div>
   )
 }

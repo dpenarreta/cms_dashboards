@@ -11,7 +11,7 @@ function acortar(texto, max = 22) {
  * Renderiza un componente type=chart de una sola serie (`{titulo, categorias, valores}`) como
  * línea — útil sobre todo cuando las categorías tienen un orden natural (fechas, meses).
  */
-export default function GenericLineChart({ data, override }) {
+export default function GenericLineChart({ data, override, hallazgoIA }) {
   if (!data) return null
   const datosGrafico = (data.categorias || []).map((categoria, i) => ({
     categoria, etiqueta: acortar(categoria), valor: data.valores?.[i] ?? 0,
@@ -35,7 +35,7 @@ export default function GenericLineChart({ data, override }) {
           <Line type="monotone" dataKey="valor" stroke={colorPrincipal} strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
-      <HallazgosClaveCard variante="categorico" datos={data} />
+      <HallazgosClaveCard variante="categorico" datos={data} textoIA={hallazgoIA} />
     </div>
   )
 }

@@ -1,4 +1,8 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.validators import UnicodeUsernameValidator
 from rest_framework import serializers
+
+User = get_user_model()
 
 
 class LoginSerializer(serializers.Serializer):
@@ -39,6 +43,24 @@ class MeSerializer(serializers.Serializer):
 
 class UpdateMyProfileSerializer(serializers.Serializer):
     area = serializers.CharField(max_length=100, allow_blank=True, required=False)
+    # `max_length=150` calza con el default de Django en `first_name`/`last_name`
+    # (`AbstractUser`, sin sobreescribir — ver `apps/users/migrations/0001_initial.py`).
+    first_name = serializers.CharField(max_length=150, allow_blank=True, required=False)
+    last_name = serializers.CharField(max_length=150, allow_blank=True, required=False)
+    # Mismo validador que ya trae el campo en el modelo (`AbstractUser.username`, sin
+    # sobreescribir en `apps.users.models.User`): letras/dígitos/`@`/`.`/`+`/`-`/`_` solamente.
+    # No `allow_blank` — a diferencia de área/nombre/apellido, un username vacío nunca es válido.
+    username = serializers.CharField(max_length=150, validators=[UnicodeUsernameValidator()], required=False)
+
+    def validate_username(self, value):
+        # Este serializer no está atado a una instancia (`UpdateMyProfileSerializer(data=...)`,
+        # sin `instance=`) — la vista pasa `context={'request': request}` para poder excluir al
+        # propio usuario de la comprobación de unicidad. Mismo criterio case-insensitive y mismo
+        # mensaje que `UserAdminCreateSerializer.validate_username` (`apps/users/serializers.py`).
+        usuario_actual = self.context['request'].user
+        if User.objects.filter(username__iexact=value).exclude(pk=usuario_actual.pk).exists():
+            raise serializers.ValidationError('Ya existe un usuario con ese nombre de usuario.')
+        return value
 
 
 # 2 MB — un avatar no necesita el límite de 25 MB pensado para el Excel de cartera

@@ -17,10 +17,13 @@ const CAMPOS_PASSWORD_INICIALES = { oldPassword: '', newPassword: '', confirmPas
 export default function ProfilePage() {
   const { user, refreshUser } = useAuth()
 
+  const [nombre, setNombre] = useState(user?.first_name || '')
+  const [apellido, setApellido] = useState(user?.last_name || '')
+  const [username, setUsername] = useState(user?.username || '')
   const [area, setArea] = useState(user?.area || '')
-  const [guardandoArea, setGuardandoArea] = useState(false)
-  const [errorArea, setErrorArea] = useState('')
-  const [exitoArea, setExitoArea] = useState('')
+  const [guardandoDatos, setGuardandoDatos] = useState(false)
+  const [errorDatos, setErrorDatos] = useState('')
+  const [exitoDatos, setExitoDatos] = useState('')
 
   const inputArchivoRef = useRef(null)
   const [archivoSeleccionado, setArchivoSeleccionado] = useState(null)
@@ -34,6 +37,7 @@ export default function ProfilePage() {
   const [exitoPassword, setExitoPassword] = useState('')
 
   const inicial = (user?.username || '?').charAt(0).toUpperCase()
+  const nombreCompleto = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username
 
   const elegirArchivo = (e) => {
     const archivo = e.target.files?.[0] || null
@@ -42,19 +46,19 @@ export default function ProfilePage() {
     setPrevisualizacion(archivo ? URL.createObjectURL(archivo) : null)
   }
 
-  const guardarArea = async (e) => {
+  const guardarDatos = async (e) => {
     e.preventDefault()
-    setGuardandoArea(true)
-    setErrorArea('')
-    setExitoArea('')
+    setGuardandoDatos(true)
+    setErrorDatos('')
+    setExitoDatos('')
     try {
-      await authService.updateProfile({ area })
+      await authService.updateProfile({ area, firstName: nombre, lastName: apellido, username })
       await refreshUser()
-      setExitoArea('Área actualizada.')
+      setExitoDatos('Datos actualizados.')
     } catch (err) {
-      setErrorArea(extraerMensajeError(err, 'No se pudo actualizar el área.'))
+      setErrorDatos(extraerMensajeError(err, 'No se pudo actualizar el perfil.'))
     } finally {
-      setGuardandoArea(false)
+      setGuardandoDatos(false)
     }
   }
 
@@ -116,7 +120,7 @@ export default function ProfilePage() {
             </div>
           )}
           <div>
-            <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>{user?.username}</div>
+            <div className="fw-semibold" style={{ fontSize: '1.1rem' }}>{nombreCompleto}</div>
             <div className="chart-panel__subtitle mb-1">{user?.email}</div>
             <div>
               {user?.roles?.length > 0
@@ -141,24 +145,31 @@ export default function ProfilePage() {
 
       <Card className="chart-panel mb-3">
         <h6>Datos generales</h6>
-        <Form.Group className="mb-2" controlId="profile-first-name">
-          <Form.Label>Nombre</Form.Label>
-          <Form.Control value={[user?.first_name, user?.last_name].filter(Boolean).join(' ') || '—'} disabled />
-        </Form.Group>
-        <Form.Group className="mb-2" controlId="profile-email">
-          <Form.Label>Correo</Form.Label>
-          <Form.Control value={user?.email || ''} disabled />
-        </Form.Group>
-
-        <Form onSubmit={guardarArea}>
-          {errorArea && <Alert variant="danger">{errorArea}</Alert>}
-          {exitoArea && <Alert variant="success">{exitoArea}</Alert>}
+        <Form onSubmit={guardarDatos}>
+          {errorDatos && <Alert variant="danger">{errorDatos}</Alert>}
+          {exitoDatos && <Alert variant="success">{exitoDatos}</Alert>}
+          <Form.Group className="mb-2" controlId="profile-first-name">
+            <Form.Label>Nombre</Form.Label>
+            <Form.Control value={nombre} onChange={(e) => setNombre(e.target.value)} maxLength={150} placeholder="Nombre" />
+          </Form.Group>
+          <Form.Group className="mb-2" controlId="profile-last-name">
+            <Form.Label>Apellido</Form.Label>
+            <Form.Control value={apellido} onChange={(e) => setApellido(e.target.value)} maxLength={150} placeholder="Apellido" />
+          </Form.Group>
+          <Form.Group className="mb-2" controlId="profile-username">
+            <Form.Label>Nombre de usuario</Form.Label>
+            <Form.Control value={username} onChange={(e) => setUsername(e.target.value)} maxLength={150} required />
+          </Form.Group>
+          <Form.Group className="mb-2" controlId="profile-email">
+            <Form.Label>Correo</Form.Label>
+            <Form.Control value={user?.email || ''} disabled />
+          </Form.Group>
           <Form.Group className="mb-2" controlId="profile-area">
             <Form.Label>Área</Form.Label>
             <Form.Control value={area} onChange={(e) => setArea(e.target.value)} maxLength={100} placeholder="Ej. Cobranzas" />
           </Form.Group>
-          <Button type="submit" disabled={guardandoArea}>
-            {guardandoArea ? <Spinner size="sm" animation="border" /> : 'Guardar área'}
+          <Button type="submit" disabled={guardandoDatos}>
+            {guardandoDatos ? <Spinner size="sm" animation="border" /> : 'Guardar cambios'}
           </Button>
         </Form>
       </Card>

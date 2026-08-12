@@ -26,8 +26,14 @@ describe('AdminSidebar', () => {
     renderSidebar()
 
     expect(screen.getByText('Usuarios')).toBeInTheDocument()
-    expect(screen.getByText('Roles')).toBeInTheDocument()
     expect(screen.queryByText('Permisos')).not.toBeInTheDocument()
+  })
+
+  it('"Usuarios" y "Roles" comparten un único ítem de menú (no hay un ítem "Roles" separado), visible con cualquiera de los dos permisos', () => {
+    renderSidebar({ permissions: ['roles.ver'], username: 'ana' })
+
+    expect(screen.getByText('Usuarios')).toBeInTheDocument()
+    expect(screen.queryByText('Roles')).not.toBeInTheDocument()
   })
 
   it('sin autenticar, no muestra ningún ítem', () => {
@@ -36,10 +42,16 @@ describe('AdminSidebar', () => {
     expect(screen.queryByText('Usuarios')).not.toBeInTheDocument()
   })
 
-  it('muestra la inicial del usuario en el avatar y su nombre completo', () => {
+  it('sin nombre/apellido cargados, muestra la inicial del usuario en el avatar y el username', () => {
     renderSidebar({ permissions: [], username: 'roberto' })
     expect(screen.getByText('R')).toBeInTheDocument()
     expect(screen.getByText('roberto')).toBeInTheDocument()
+  })
+
+  it('con nombre/apellido cargados (editado desde /admin/profile), muestra el nombre completo en vez del username', () => {
+    renderSidebar({ permissions: [], username: 'roberto', first_name: 'Roberto', last_name: 'Gómez' })
+    expect(screen.getByText('Roberto Gómez')).toBeInTheDocument()
+    expect(screen.queryByText('roberto')).not.toBeInTheDocument()
   })
 
   it('el bloque de avatar/nombre enlaza a /admin/profile', () => {

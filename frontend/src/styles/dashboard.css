@@ -157,6 +157,25 @@ body {
   margin-bottom: 12px;
 }
 
+/* Aviso "Columnas con valores en blanco" (`AvisoColumnasEnBlanco`, `TemplateMappingStep.jsx`,
+   paso de mapeo del asistente de carga) — antes un `Alert variant="warning"` de Bootstrap (fondo
+   amarillo fijo, reteñido por el color de marca sin garantía de buen contraste, y demasiado
+   llamativo para información que no bloquea nada). Reusa el mismo azul oscuro/texto claro que ya
+   llevan los recuadros "Hallazgos clave" (`--hallazgos-bg`/`--hallazgos-border`) para que se vea
+   como el resto de tarjetas del dashboard. */
+.aviso-columnas-blanco {
+  padding: 14px 16px;
+  border: 1px solid var(--hallazgos-border);
+  border-radius: var(--border-radius);
+  background: var(--hallazgos-bg);
+  color: var(--text-primary);
+}
+
+.aviso-columnas-blanco__ejemplos {
+  color: inherit;
+  opacity: 0.75;
+}
+
 /* Tarjetas de "Mis dashboards" (DashboardsListPage) — los botones de acción (Entrar/Editar/
    Eliminar) siempre existen en el DOM, solo se revelan visualmente al pasar el cursor o al
    recibir foco de teclado (accesible sin mouse). */

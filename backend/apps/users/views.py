@@ -1,7 +1,9 @@
+from django.db.models import OuterRef, Subquery
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.authentication.models import Session
 from apps.permissions.permissions import IsSuperuser, require_permission
 
 from .filters import filter_users
@@ -53,7 +55,15 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         return UserAdminListSerializer
 
     def get_queryset(self):
-        return filter_users(super().get_queryset(), self.request.query_params)
+        # `last_login` (heredado de `AbstractUser`) nunca se completa: el login real emite JWT
+        # propio (`AuthenticationService.login`, apps.authentication) sin pasar por
+        # `django.contrib.auth.login()`, que es lo único que lo actualiza. `Session.created_at`
+        # (una fila nueva por cada login exitoso, ver `SessionService.crear`) es la fuente real de
+        # "última conexión" — se anota acá (subquery correlacionada, evita N+1 por usuario) en vez
+        # de calcularla en el serializer.
+        ultima_sesion = Session.objects.filter(user=OuterRef('pk')).order_by('-created_at')
+        queryset = super().get_queryset().annotate(ultima_conexion=Subquery(ultima_sesion.values('created_at')[:1]))
+        return filter_users(queryset, self.request.query_params)
 
     def perform_create(self, serializer):
         usuario = UserAdminService.create_user(data=serializer.validated_data, created_by=self.request.user)

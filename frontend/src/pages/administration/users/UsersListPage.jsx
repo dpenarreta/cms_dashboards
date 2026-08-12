@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Badge, Button, Form, Modal, Spinner, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 import ConfirmModal from '../../../components/dashboard-editor/ConfirmModal'
+import UsersRolesTabsBar from '../../../components/admin/UsersRolesTabsBar'
 import { useAuth } from '../../../context/AuthContext'
 import * as usersService from '../../../services/usersService'
 
@@ -13,6 +14,13 @@ const ESTADOS = [
 ]
 
 const ETIQUETA_ESTADO = { active: 'Activo', disabled: 'Deshabilitado', blocked: 'Bloqueado' }
+
+// Mismo patrón que `AuditListPage.jsx::formatFecha` — sin formateador de fecha+hora compartido
+// en `utils/format.js` (ese solo tiene `formatDate`, sin hora).
+function formatFecha(iso) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('es-EC')
+}
 
 export default function UsersListPage() {
   const { user } = useAuth()
@@ -73,6 +81,8 @@ export default function UsersListPage() {
         <Button as={Link} to="/admin/users/new" size="sm">Nuevo usuario</Button>
       </div>
 
+      <UsersRolesTabsBar />
+
       <div className="d-flex gap-2 mb-3 flex-wrap">
         <Form.Control
           size="sm"
@@ -99,6 +109,7 @@ export default function UsersListPage() {
                 <th>Nombre</th>
                 <th>Estado</th>
                 <th>Roles</th>
+                <th>Última conexión</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -113,6 +124,7 @@ export default function UsersListPage() {
                   <td>{[u.first_name, u.last_name].filter(Boolean).join(' ') || '—'}</td>
                   <td>{ETIQUETA_ESTADO[u.status] || u.status}</td>
                   <td>{u.roles.join(', ') || '—'}</td>
+                  <td>{formatFecha(u.ultima_conexion)}</td>
                   <td>
                     <div className="d-flex gap-2 flex-wrap">
                       {u.status === 'active' ? (
@@ -128,7 +140,7 @@ export default function UsersListPage() {
                 </tr>
               ))}
               {datos.results.length === 0 && (
-                <tr><td colSpan={6} className="text-center text-secondary">No hay usuarios que coincidan con la búsqueda.</td></tr>
+                <tr><td colSpan={7} className="text-center text-secondary">No hay usuarios que coincidan con la búsqueda.</td></tr>
               )}
             </tbody>
           </Table>

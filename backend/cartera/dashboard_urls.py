@@ -12,5 +12,7 @@ urlpatterns = [
     path('<slug:dashboard_id>/pestanas', dashboard_views.DashboardTabsView.as_view(), name='dashboard-pestanas'),
     path('<slug:dashboard_id>/acceso', dashboard_views.DashboardAccesoView.as_view(), name='dashboard-acceso'),
     path('<slug:dashboard_id>/dueno', dashboard_views.DashboardDuenoView.as_view(), name='dashboard-dueno'),
+    path('<slug:dashboard_id>/interpretacion', dashboard_views.DashboardInterpretacionView.as_view(), name='dashboard-interpretacion'),
+    path('<slug:dashboard_id>/hallazgos-ia', dashboard_views.DashboardHallazgosIAView.as_view(), name='dashboard-hallazgos-ia'),
     path('<slug:dashboard_id>/', dashboard_views.DashboardDetailView.as_view(), name='dashboard-detail'),
 ]

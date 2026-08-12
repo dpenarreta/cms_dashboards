@@ -204,3 +204,53 @@ class UserAdminViewSetTests(TestCase):
         resp = self.client.post(f'/api/users/{self.admin.id}/superuser/', {'is_superuser': False}, format='json')
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['error'], 'ULTIMO_ADMINISTRADOR_ACTIVO')
+
+    def test_sin_sesiones_ultima_conexion_es_nula(self):
+        User.objects.create_user(username='nina', email='nina@example.com', password='Clave-Segura-123')
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/users/')
+        fila = next(u for u in resp.json()['results'] if u['username'] == 'nina')
+        self.assertIsNone(fila['ultima_conexion'])
+        self.assertIsNone(fila['last_login'])
+
+    def test_ultima_conexion_es_la_sesion_mas_reciente_no_la_primera(self):
+        usuario = User.objects.create_user(username='oscar', email='oscar@example.com', password='Clave-Segura-123')
+        vieja = timezone.now() - timezone.timedelta(days=5)
+        nueva = timezone.now() - timezone.timedelta(hours=1)
+        sesion_vieja = Session.objects.create(user=usuario, refresh_token_jti='jti-vieja', expires_at=timezone.now() + timezone.timedelta(days=7))
+        Session.objects.filter(pk=sesion_vieja.pk).update(created_at=vieja)
+        sesion_nueva = Session.objects.create(user=usuario, refresh_token_jti='jti-nueva', expires_at=timezone.now() + timezone.timedelta(days=7))
+        Session.objects.filter(pk=sesion_nueva.pk).update(created_at=nueva)
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/users/')
+        fila = next(u for u in resp.json()['results'] if u['username'] == 'oscar')
+
+        # Comparación por instante, con tolerancia de redondeo de la columna en SQL Server (no
+        # por string exacto: la representación — offset local vs `Z`/UTC — depende de
+        # `settings.TIME_ZONE`, no es lo que este test quiere probar).
+        from django.utils.dateparse import parse_datetime
+        devuelto = parse_datetime(fila['ultima_conexion'])
+        self.assertLess(abs((devuelto - nueva).total_seconds()), 1)
+        self.assertGreater(abs((devuelto - vieja).total_seconds()), 1)
+
+    def test_ultima_conexion_de_una_sesion_ya_revocada_se_sigue_mostrando(self):
+        usuario = User.objects.create_user(username='paola', email='paola@example.com', password='Clave-Segura-123')
+        sesion = Session.objects.create(user=usuario, refresh_token_jti='jti-revocada', expires_at=timezone.now() + timezone.timedelta(days=7))
+        sesion.revoke()
+
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/users/')
+        fila = next(u for u in resp.json()['results'] if u['username'] == 'paola')
+
+        self.assertIsNotNone(fila['ultima_conexion'])
+
+    def test_ultima_conexion_se_incluye_en_el_detalle_de_un_usuario(self):
+        usuario = User.objects.create_user(username='quique', email='quique@example.com', password='Clave-Segura-123')
+        Session.objects.create(user=usuario, refresh_token_jti='jti-detalle', expires_at=timezone.now() + timezone.timedelta(days=7))
+        self.client.force_authenticate(user=self.admin)
+
+        resp = self.client.get(f'/api/users/{usuario.id}/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNotNone(resp.json()['ultima_conexion'])

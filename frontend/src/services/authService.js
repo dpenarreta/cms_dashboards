@@ -20,8 +20,8 @@ export function me() {
   return authApi.get('/auth/me').then((r) => r.data)
 }
 
-export function updateProfile({ area }) {
-  return authApi.patch('/auth/me', { area }).then((r) => r.data)
+export function updateProfile({ area, firstName, lastName, username }) {
+  return authApi.patch('/auth/me', { area, first_name: firstName, last_name: lastName, username }).then((r) => r.data)
 }
 
 export function uploadAvatar(archivo) {
