@@ -838,7 +838,7 @@ class HistoricoCargasView(APIView):
     histórica (`columnas_disponibles`) y las columnas marcadas como históricas para este dashboard
     (`columnas_historicas_configuradas`) — ambas son, a propósito, la misma configuración
     persistente (`ColumnaHistorica`), no lo observado en los datos guardados: se usa para pre-tildar
-    el paso "Renombrar columnas", para que Tabla 4/Tabla 5 sepan qué comparar, y para limitar el
+    el paso "Renombrar columnas", para que Tabla 3 sepa qué comparar, y para limitar el
     selector de "Histórico de cargas" a solo lo que el usuario marcó a propósito."""
 
     def get(self, request):
@@ -853,10 +853,11 @@ class HistoricoCargasView(APIView):
 
 
 class HistoricoTablaView(APIView):
-    """`POST /api/cartera/historico/tabla` — una fila por carga histórica del dashboard (o solo
-    las de `carga_ids`, si se pasa), con el valor de cada columna de `columnas_valor` agregado
-    según el tipo de cálculo elegido para esa columna (suma/promedio/conteo de valores únicos).
-    Misma forma `{columnas, filas}` que ya renderiza `GenericDataTable` en el frontend."""
+    """`POST /api/cartera/historico/tabla` — una fila por carga histórica *habilitada* del
+    dashboard (o solo las de `carga_ids`, si se pasa — bypasea el filtro de habilitadas), con el
+    valor de cada columna de `columnas_valor` agregado según el tipo de cálculo elegido para esa
+    columna (suma/promedio/conteo de valores únicos). Misma forma `{columnas, filas}` que ya
+    renderiza `GenericDataTable` en el frontend."""
 
     def post(self, request):
         dashboard_id = request.data.get('dashboard_id')
@@ -879,3 +880,20 @@ class HistoricoArchivoView(APIView):
         if not _tiene_acceso(request, carga.dashboard_id):
             return _acceso_denegado()
         return Response(historico.obtener_filas_archivo(carga))
+
+
+class HistoricoCargaIncluidaView(APIView):
+    """`PATCH /api/cartera/historico/cargas/<carga_id>/incluir` — habilita/deshabilita una carga
+    puntual para la comparación histórica del dashboard (checkbox en "Histórico de cargas", persiste
+    de inmediato — mismo criterio que la Zona Personal del editor visual). Afecta tanto la vista
+    previa que arma esa pantalla como Tabla 3 dentro del dashboard real, ya que ambas usan
+    `historico.calcular_tabla_historica` sin `carga_ids`."""
+
+    def patch(self, request, carga_id):
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        if not _tiene_acceso(request, carga.dashboard_id, requiere_edicion=True):
+            return _acceso_denegado()
+        if 'incluir' not in request.data:
+            raise CarteraError('incluir es requerido.', codigo='INCLUIR_REQUERIDO')
+        carga = historico.establecer_carga_incluida_en_historico(carga, request.data.get('incluir'))
+        return Response({'carga_id': str(carga.id), 'incluir_en_historico': carga.incluir_en_historico})

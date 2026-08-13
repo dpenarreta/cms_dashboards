@@ -49,7 +49,7 @@ describe('ValoresEnBlancoStep', () => {
 
   it('columna marcada como histórica: muestra el badge correspondiente', () => {
     renderComponente({ columnasHistoricas: ['Alterno Cliente'] })
-    expect(screen.getByText(/usada en Tabla 4 y Tabla 5 \(histórica\)/)).toBeInTheDocument()
+    expect(screen.getByText(/usada en Tabla 3 \(histórica\)/)).toBeInTheDocument()
   })
 
   it('columna que no está marcada como histórica: no muestra el badge', () => {

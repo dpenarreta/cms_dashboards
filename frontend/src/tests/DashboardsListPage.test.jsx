@@ -81,8 +81,25 @@ describe('DashboardsListPage', () => {
     await userEvent.type(screen.getByLabelText('Área'), 'Finanzas')
     await userEvent.click(screen.getByRole('button', { name: 'Crear' }))
 
-    expect(dashboardLayoutService.crearDashboard).toHaveBeenCalledWith({ name: 'Finanzas', area: 'Finanzas', description: '' })
+    expect(dashboardLayoutService.crearDashboard).toHaveBeenCalledWith({ name: 'Finanzas', area: 'Finanzas', description: '', contexto: '' })
     expect(await screen.findByText('Finanzas')).toBeInTheDocument()
+  })
+
+  it('al crear, el contexto para la IA se envía al servicio', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ dashboard_id: 'finanzas', name: 'Finanzas', area: '' }])
+    dashboardLayoutService.crearDashboard.mockResolvedValue({ dashboard_id: 'finanzas', name: 'Finanzas', area: '' })
+    renderPagina(['dashboard.crear'])
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Crear dashboard' }))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Finanzas')
+    await userEvent.type(screen.getByLabelText('Contexto para la IA (opcional)'), 'Cartera vencida de la región norte.')
+    await userEvent.click(screen.getByRole('button', { name: 'Crear' }))
+
+    expect(dashboardLayoutService.crearDashboard).toHaveBeenCalledWith({
+      name: 'Finanzas', area: '', description: '', contexto: 'Cartera vencida de la región norte.',
+    })
   })
 
   it('sin los permisos dashboard.editar/dashboard.eliminar, no muestra esos botones en la tarjeta', async () => {
@@ -113,8 +130,34 @@ describe('DashboardsListPage', () => {
     await userEvent.type(nombreInput, 'Finanzas Nacionales')
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
 
-    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', { name: 'Finanzas Nacionales', area: 'Finanzas y Contabilidad' })
+    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', { name: 'Finanzas Nacionales', area: 'Finanzas y Contabilidad', contexto: '' })
     expect(await screen.findByText('Finanzas Nacionales')).toBeInTheDocument()
+  })
+
+  it('al editar, el contexto ya guardado se precarga y se puede cambiar', async () => {
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValueOnce([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', contexto: 'Contexto original.' },
+    ]).mockResolvedValueOnce([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', contexto: 'Contexto nuevo.' },
+    ])
+    dashboardLayoutService.actualizarDashboard.mockResolvedValue({
+      dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad', contexto: 'Contexto nuevo.',
+    })
+    renderPagina(['dashboard.editar'])
+
+    const tarjeta = await screen.findByTestId('dashboard-card-finanzas')
+    await userEvent.click(within(tarjeta).getByRole('button', { name: 'Editar' }))
+
+    const campoContexto = await screen.findByLabelText('Contexto para la IA (opcional)')
+    expect(campoContexto).toHaveValue('Contexto original.')
+
+    await userEvent.clear(campoContexto)
+    await userEvent.type(campoContexto, 'Contexto nuevo.')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', {
+      name: 'Finanzas', area: 'Finanzas y Contabilidad', contexto: 'Contexto nuevo.',
+    })
   })
 
   it('con el permiso dashboard.eliminar, el botón Eliminar exige escribir el nombre exacto y muestra ese nombre en un <span>', async () => {
@@ -267,7 +310,7 @@ describe('DashboardsListPage', () => {
     await userEvent.click(screen.getByLabelText('Analista', { selector: '#acceso-editor-1' }))
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
 
-    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', { name: 'Finanzas', area: 'Finanzas y Contabilidad' })
+    expect(dashboardLayoutService.actualizarDashboard).toHaveBeenCalledWith('finanzas', { name: 'Finanzas', area: 'Finanzas y Contabilidad', contexto: '' })
     expect(dashboardLayoutService.actualizarAcceso).toHaveBeenCalledWith('finanzas', { rolesEditores: [1], rolesLectores: [] })
     expect(await screen.findByText('Finanzas Nacionales')).toBeInTheDocument()
   })

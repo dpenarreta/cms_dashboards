@@ -18,6 +18,7 @@ import RoleFormPage from '../pages/administration/roles/RoleFormPage'
 import PermissionsPage from '../pages/administration/permissions/PermissionsPage'
 import SettingsPage from '../pages/administration/settings/SettingsPage'
 import PlantillaBasePage from '../pages/administration/settings/PlantillaBasePage'
+import EmailTemplatesPage from '../pages/administration/settings/EmailTemplatesPage'
 import AuditListPage from '../pages/administration/audit/AuditListPage'
 
 export default function AppRoutes() {
@@ -69,6 +70,7 @@ export default function AppRoutes() {
           <Route path="permissions" element={<RequirePermission permission="permisos.ver"><PermissionsPage /></RequirePermission>} />
           <Route path="settings" element={<RequirePermission permission="configuracion.ver"><SettingsPage /></RequirePermission>} />
           <Route path="settings/plantilla-base" element={<RequirePermission permission="configuracion.ver"><PlantillaBasePage /></RequirePermission>} />
+          <Route path="settings/email-templates" element={<RequirePermission permission="configuracion.ver"><EmailTemplatesPage /></RequirePermission>} />
           <Route path="audit" element={<RequirePermission permission="auditoria.ver"><AuditListPage /></RequirePermission>} />
         </Route>
       </Route>

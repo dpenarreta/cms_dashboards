@@ -64,3 +64,59 @@ class PasswordResetToken(BaseModel):
     def marcar_usado(self):
         self.used_at = timezone.now()
         self.save(update_fields=['used_at'])
+
+
+class EmailTemplate(BaseModel):
+    """Plantilla de correo transaccional personalizable (asunto + HTML propio, editado desde un
+    editor de texto enriquecido en `/admin/settings`) — un único `html_body` por plantilla, no un
+    `.html`/`.txt` por separado: el cuerpo en texto plano del correo se deriva automáticamente
+    quitándole las etiquetas (`strip_tags`, ver `services.py::_enviar_correo_recuperacion`), igual
+    que ya hacían a mano los templates que reemplaza. `key` (no un singleton `pk=1` como
+    `apps.branding.SiteTheme`) porque puede haber más de una plantilla — hoy solo
+    `password_reset`, pensado para más tipos de correo a futuro sin agregar un modelo nuevo por
+    cada uno.
+
+    El HTML se guarda tal cual lo entrega el editor (confiado — solo un usuario con
+    `configuracion.editar` puede escribirlo, mismo nivel de confianza que ya tiene para editar
+    `SiteTheme`) y se le insertan valores dinámicos (`{{ nombre_usuario }}`, `{{ enlace }}`, etc.)
+    con un reemplazo de texto simple y propio (`services.py::_renderizar_plantilla`) — NO el motor
+    de templates de Django (`Template(...).render(...)`), que permitiría `{% %}` y ejecutar lógica
+    arbitraria sobre el HTML guardado por un admin; los valores insertados sí se escapan
+    (`django.utils.html.escape`) para que un `first_name`/`username` con caracteres especiales no
+    rompa la estructura del HTML."""
+
+    KEY_PASSWORD_RESET = 'password_reset'
+    KEY_CHOICES = [
+        (KEY_PASSWORD_RESET, 'Recuperación de contraseña'),
+    ]
+
+    key = models.CharField(max_length=50, unique=True, choices=KEY_CHOICES)
+    subject = models.CharField(max_length=200)
+    html_body = models.TextField()
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+
+    class Meta:
+        ordering = ['key']
+
+    def __str__(self):
+        return self.key
+
+    @classmethod
+    def get_or_seed(cls, key):
+        from .email_template_defaults import DEFAULT_EMAIL_TEMPLATES
+
+        defecto = DEFAULT_EMAIL_TEMPLATES[key]
+        instancia, _creada = cls.objects.get_or_create(
+            key=key, defaults={'subject': defecto['subject'], 'html_body': defecto['html_body']},
+        )
+        return instancia
+
+    def restablecer(self):
+        from .email_template_defaults import DEFAULT_EMAIL_TEMPLATES
+
+        defecto = DEFAULT_EMAIL_TEMPLATES[self.key]
+        self.subject = defecto['subject']
+        self.html_body = defecto['html_body']
+        self.save(update_fields=['subject', 'html_body', 'updated_at'])

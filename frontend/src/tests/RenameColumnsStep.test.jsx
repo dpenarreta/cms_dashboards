@@ -16,7 +16,8 @@ function renderComponente(overrides = {}) {
     error: null,
     ...overrides,
   }
-  return { props, ...render(<RenameColumnsStep {...props} />) }
+  const resultado = render(<RenameColumnsStep {...props} />)
+  return { props, ...resultado }
 }
 
 describe('RenameColumnsStep', () => {
@@ -111,7 +112,7 @@ describe('RenameColumnsStep', () => {
       expect(screen.queryByText(/estaban marcadas como históricas/)).not.toBeInTheDocument()
     })
 
-    it('una columna configurada ausente en este archivo: muestra una advertencia que la nombra, sin bloquear', () => {
+    it('una columna configurada ausente en este archivo: muestra una advertencia que la nombra y BLOQUEA "Continuar"', () => {
       renderComponente({
         columnas: ['Ciudad'],
         aliases: { Ciudad: 'Ciudad' },
@@ -119,8 +120,8 @@ describe('RenameColumnsStep', () => {
       })
       const alerta = screen.getByText(/estaban marcadas como históricas/)
       expect(alerta).toBeInTheDocument()
-      expect(alerta.textContent).toContain('"Saldo"')
-      expect(screen.getByRole('button', { name: 'Continuar' })).not.toBeDisabled()
+      expect(screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
     })
 
     it('el alias aplicado se usa para la comparación, no el nombre original de la columna', () => {
@@ -130,6 +131,104 @@ describe('RenameColumnsStep', () => {
         columnasHistoricasConfiguradas: ['Saldo'],
       })
       expect(screen.queryByText(/estaban marcadas como históricas/)).not.toBeInTheDocument()
+    })
+
+    it('identificar la columna que reemplaza a la histórica aplica el alias y la vuelve a marcar como histórica', async () => {
+      const usuario = userEvent.setup()
+      const { props } = renderComponente({
+        columnas: ['saldo_usd', 'Ciudad'],
+        aliases: { saldo_usd: 'saldo_usd', Ciudad: 'Ciudad' },
+        columnasHistoricasConfiguradas: ['Saldo'],
+      })
+      const selector = screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"')
+
+      await usuario.selectOptions(selector, 'saldo_usd')
+
+      expect(props.onActualizarAlias).toHaveBeenCalledWith('saldo_usd', 'Saldo')
+      expect(props.onCambiarColumnaHistorica).toHaveBeenCalledWith('saldo_usd', true)
+    })
+
+    it('tras identificar la columna (alias ya aplicado), la fila desaparece y "Continuar" se habilita', () => {
+      const { rerender } = renderComponente({
+        columnas: ['saldo_usd', 'Ciudad'],
+        aliases: { saldo_usd: 'saldo_usd', Ciudad: 'Ciudad' },
+        columnasHistoricasConfiguradas: ['Saldo'],
+      })
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
+
+      rerender(
+        <RenameColumnsStep
+          archivoInfo={{ nombreArchivo: 'datos.xlsx', totalFilas: 10 }}
+          columnas={['saldo_usd', 'Ciudad']}
+          aliases={{ saldo_usd: 'Saldo', Ciudad: 'Ciudad' }}
+          onActualizarAlias={vi.fn()}
+          onCambiarColumnaHistorica={vi.fn()}
+          onContinuar={vi.fn()}
+          onCancelar={vi.fn()}
+          cargando={false}
+          error={null}
+          columnasHistoricasConfiguradas={['Saldo']}
+        />,
+      )
+
+      expect(screen.queryByText(/estaban marcadas como históricas/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Continuar' })).not.toBeDisabled()
+    })
+
+    it('confirmar "Ya no existe en este archivo" desbloquea "Continuar" sin tocar ningún alias', async () => {
+      const usuario = userEvent.setup()
+      const { props } = renderComponente({
+        columnas: ['Ciudad'],
+        aliases: { Ciudad: 'Ciudad' },
+        columnasHistoricasConfiguradas: ['Saldo'],
+      })
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
+
+      const selector = screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"')
+      await usuario.selectOptions(selector, 'Ya no existe en este archivo')
+
+      expect(props.onActualizarAlias).not.toHaveBeenCalled()
+      expect(props.onCambiarColumnaHistorica).not.toHaveBeenCalled()
+      expect(screen.getByRole('alert').textContent).toContain('Confirmaste que "Saldo" ya no está en este archivo')
+      expect(screen.getByRole('button', { name: 'Continuar' })).not.toBeDisabled()
+    })
+
+    it('"Deshacer" sobre una ausencia confirmada vuelve a bloquear "Continuar"', async () => {
+      const usuario = userEvent.setup()
+      renderComponente({
+        columnas: ['Ciudad'],
+        aliases: { Ciudad: 'Ciudad' },
+        columnasHistoricasConfiguradas: ['Saldo'],
+      })
+      await usuario.selectOptions(
+        screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"'), 'Ya no existe en este archivo',
+      )
+      expect(screen.getByRole('button', { name: 'Continuar' })).not.toBeDisabled()
+
+      await usuario.click(screen.getByRole('button', { name: 'Deshacer' }))
+
+      expect(screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
+    })
+
+    it('con dos columnas faltantes, "Continuar" sigue bloqueado hasta resolver AMBAS', async () => {
+      const usuario = userEvent.setup()
+      renderComponente({
+        columnas: ['Ciudad'],
+        aliases: { Ciudad: 'Ciudad' },
+        columnasHistoricasConfiguradas: ['Saldo', 'Region'],
+      })
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
+
+      await usuario.selectOptions(
+        screen.getByLabelText('Columna que corresponde a la columna histórica "Saldo"'), 'Ya no existe en este archivo',
+      )
+      expect(screen.getByRole('button', { name: 'Continuar' })).toBeDisabled()
+
+      await usuario.selectOptions(
+        screen.getByLabelText('Columna que corresponde a la columna histórica "Region"'), 'Ya no existe en este archivo',
+      )
+      expect(screen.getByRole('button', { name: 'Continuar' })).not.toBeDisabled()
     })
   })
 })

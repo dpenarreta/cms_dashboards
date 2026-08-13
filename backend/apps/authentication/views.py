@@ -1,3 +1,4 @@
+from django.http import Http404
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -7,12 +8,14 @@ from rest_framework.views import APIView
 from apps.audit.models import AuditEvent
 from apps.audit.services import log_event
 from apps.core.audit import request_meta
+from apps.permissions.permissions import require_permission
 from cartera.exceptions import CarteraError
 
+from .models import EmailTemplate
 from .serializers import (
-    AvatarUploadSerializer, ChangeOwnPasswordSerializer, LoginSerializer, MeSerializer,
-    PasswordResetConfirmSerializer, PasswordResetRequestSerializer, PasswordResetValidateSerializer,
-    RefreshSerializer, UpdateMyProfileSerializer,
+    AvatarUploadSerializer, ChangeOwnPasswordSerializer, EmailTemplateSerializer, EmailTemplateUpdateSerializer,
+    LoginSerializer, MeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer,
+    PasswordResetValidateSerializer, RefreshSerializer, UpdateMyProfileSerializer,
 )
 from .services import AuthenticationService, PasswordResetService
 
@@ -158,6 +161,61 @@ class PasswordResetValidateView(APIView):
             raw_token=serializer.validated_data['token'], request=request, ip_address=ip, user_agent=user_agent,
         )
         return Response({'valid': True}, status=200)
+
+
+class EmailTemplateAdminView(APIView):
+    """`GET`/`PATCH /api/auth/admin/email-templates/<key>` — asunto + HTML de una plantilla de
+    correo transaccional (hoy solo `password_reset`, ver `EmailTemplate`). El `GET` siembra la
+    fila por defecto si todavía no existe (`get_or_seed`, mismo patrón que
+    `SiteTheme.get_solo()`)."""
+
+    def get_permissions(self):
+        if self.request.method == 'PATCH':
+            return [require_permission('configuracion.editar')()]
+        return [require_permission('configuracion.ver')()]
+
+    def _obtener_o_404(self, key):
+        if key not in dict(EmailTemplate.KEY_CHOICES):
+            raise Http404
+        return EmailTemplate.get_or_seed(key)
+
+    def get(self, request, key):
+        plantilla = self._obtener_o_404(key)
+        return Response(EmailTemplateSerializer(plantilla).data)
+
+    def patch(self, request, key):
+        plantilla = self._obtener_o_404(key)
+        anterior = {'subject': plantilla.subject, 'html_body': plantilla.html_body}
+        serializer = EmailTemplateUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for campo, valor in serializer.validated_data.items():
+            setattr(plantilla, campo, valor)
+        plantilla.updated_by = request.user
+        plantilla.save(update_fields=list(serializer.validated_data.keys()) + ['updated_by', 'updated_at'])
+        log_event(
+            domain=AuditEvent.Domain.SYSTEM_CONFIGURATION, action='EMAIL_TEMPLATE_UPDATED', actor=request.user,
+            entity_type='email_template', entity_id=plantilla.pk, entity_name=plantilla.key, request=request,
+            previous_values=anterior, new_values=serializer.validated_data,
+        )
+        return Response(EmailTemplateSerializer(plantilla).data)
+
+
+class EmailTemplateResetView(APIView):
+    """`POST /api/auth/admin/email-templates/<key>/reset` — vuelve la plantilla al HTML/asunto
+    por defecto (`EmailTemplate.restablecer`)."""
+
+    permission_classes = [require_permission('configuracion.editar')]
+
+    def post(self, request, key):
+        if key not in dict(EmailTemplate.KEY_CHOICES):
+            raise Http404
+        plantilla = EmailTemplate.get_or_seed(key)
+        plantilla.restablecer()
+        log_event(
+            domain=AuditEvent.Domain.SYSTEM_CONFIGURATION, action='EMAIL_TEMPLATE_RESET', actor=request.user,
+            entity_type='email_template', entity_id=plantilla.pk, entity_name=plantilla.key, request=request,
+        )
+        return Response(EmailTemplateSerializer(plantilla).data)
 
 
 class PasswordResetConfirmView(APIView):

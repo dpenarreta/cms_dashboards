@@ -15,3 +15,11 @@ export function calcularTablaHistorica(dashboardId, columnasValor, cargaIds) {
 export function obtenerArchivoCarga(cargaId) {
   return api.get(`/historico/cargas/${cargaId}/archivo`).then((r) => r.data)
 }
+
+/** Habilita/deshabilita una carga puntual para la comparación histórica del dashboard — persiste
+ * de inmediato (checkbox en `DashboardHistoricoPage`). Afecta tanto la vista previa de esa página
+ * como Tabla 3 dentro del dashboard real, ya que ambas llaman a `calcularTablaHistorica` sin
+ * `cargaIds`. */
+export function establecerCargaIncluida(cargaId, incluir) {
+  return api.patch(`/historico/cargas/${cargaId}/incluir`, { incluir }).then((r) => r.data)
+}

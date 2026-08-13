@@ -20,6 +20,42 @@ export function tipoVisualizacionElegido(slot, propuesta) {
   return slot.tipoVisualizacion
 }
 
+/** Etiquetas de los selectores de columna/categoría/serie/valor, específicas del tipo de gráfico
+ * elegido (no un genérico "Categoría"/"Valor" igual para los 5 tipos compatibles con `chart`, o
+ * para los 6 compatibles con `multivalor`/`multiserie`) — para que el nombre del campo por sí solo
+ * diga qué controla en ESE gráfico puntual: qué eje ocupa en una barra/línea (y de cuál eje,
+ * porque una barra horizontal invierte cuál columna va en cada eje — ver
+ * `GenericBarChart.jsx::esHorizontal`), o qué arma cada porción/la leyenda en un pastel/dona. */
+function etiquetasPorTipoGrafico(chartType) {
+  if (chartType === 'barras_horizontales') {
+    return {
+      categoria: 'Eje vertical (categoría)', valor: 'Eje horizontal (valor)',
+      serie: 'Serie (una barra por cada valor distinto)',
+    }
+  }
+  if (chartType === 'pastel' || chartType === 'dona') {
+    return {
+      categoria: 'Categoría (una porción por valor)', valor: 'Valor (tamaño de cada porción)',
+      serie: 'Serie (se combina en el total de cada porción)',
+    }
+  }
+  return {
+    categoria: 'Eje horizontal (categoría)', valor: 'Eje vertical (valor)',
+    serie: 'Serie (una barra, línea o capa por cada valor distinto)',
+  }
+}
+
+/** Aclara, debajo de "Categoría", que sus valores se convierten en la leyenda — solo aplica a
+ * pastel/dona, donde "la leyenda" es un concepto visible del gráfico (una barra o línea no tiene
+ * una leyenda por categoría de la misma forma). */
+function AyudaCircular() {
+  return (
+    <Form.Text className="d-block mb-2" style={{ fontSize: '0.72rem', marginTop: '-0.35rem' }}>
+      Cada valor distinto se dibuja como una porción del gráfico y aparece en la leyenda.
+    </Form.Text>
+  )
+}
+
 /** `datos[slot.id]` (calculado por el backend) viene como `{categorias, valores}` o
  * `{categorias, series}` según el `calculo` de la posición — `GenericChartRenderer` espera esa
  * forma en `datos` o `datosMultiserie` según corresponda. */
@@ -210,12 +246,51 @@ function ColumnasTabla({ contexto, columnasElegidas, opciones, onCambiarColumna,
   )
 }
 
+/** Solo aplica a posiciones `multivalor` cuando el tipo de gráfico elegido realmente compara
+ * varias métricas a la vez (barras agrupadas/apiladas, área apilada, líneas múltiples) —
+ * `camposParaSlot` decide si se usa este selector o el de una sola "Valor" (pastel/dona, ver más
+ * abajo) según el tipo de gráfico, no según el `calculo` de la posición. Entre 2 columnas (mínimo
+ * para que "comparar varias métricas" tenga sentido) y 3 (más se vuelve ilegible en un gráfico
+ * chico) — a diferencia de `ColumnasTabla` (sin límite), y sin tipo de agregación por columna:
+ * cada entrada acá es solo el nombre de columna (string), `generic_charts.generar_datos_multivalor`
+ * siempre suma. */
+function ColumnasValorMultiples({ contexto, columnasValor, opciones, onCambiar }) {
+  const lista = columnasValor.length >= 2 ? columnasValor : [...columnasValor, ...Array(2 - columnasValor.length).fill(null)]
+  const cambiarColumna = (i) => (valor) => {
+    const nueva = [...lista]
+    nueva[i] = valor
+    onCambiar(nueva)
+  }
+  return (
+    <div className="mb-2">
+      {lista.map((columna, i) => (
+        <div key={i} className="d-flex align-items-start gap-1">
+          <div className="flex-grow-1">
+            <SelectorColumna etiqueta={`Métrica ${i + 1}`} contexto={contexto} valor={columna} opciones={opciones} onCambiar={cambiarColumna(i)} />
+          </div>
+          {lista.length > 2 && (
+            <Button
+              size="sm" variant="outline-danger" className="mt-4" onClick={() => onCambiar(lista.filter((_, idx) => idx !== i))}
+              aria-label={`Quitar métrica ${i + 1} de ${contexto}`} title="Quitar métrica"
+            >
+              ×
+            </Button>
+          )}
+        </div>
+      ))}
+      {lista.length < 3 && (
+        <Button size="sm" variant="outline-secondary" onClick={() => onCambiar([...lista, null])}>+ Agregar métrica</Button>
+      )}
+    </div>
+  )
+}
+
 /** Selectores de columna(s)/tipo de cálculo/tipo de gráfico para una posición, según su
  * `calculo` — sin el filtro (`FiltroSlot`, siempre se agrega aparte, al final). `cambiar(campo)`
- * y `cambiarEnLista(campo, indice)` ya saben cómo empaquetar cada cambio (mismo contrato que
- * `onActualizarSlot(slotId, cambios)` del builder/mapeo); `cambiarLista(campo)` reemplaza la
- * lista completa de una sola vez (agregar/quitar/reordenar, solo lo usan las Tablas). */
-export function camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarEnLista, cambiarLista }) {
+ * ya sabe cómo empaquetar cada cambio (mismo contrato que `onActualizarSlot(slotId, cambios)` del
+ * builder/mapeo); `cambiarLista(campo)` reemplaza la lista completa de una sola vez (agregar/
+ * quitar/reordenar — Tablas, y ahora también Métricas de un `multivalor` no circular). */
+export function camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarLista }) {
   const contexto = slot.titulo
 
   if (slot.calculo === 'kpi') {
@@ -227,35 +302,64 @@ export function camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarEnLi
     )
   }
   if (slot.calculo === 'chart') {
+    const chartType = tipoVisualizacionElegido(slot, propuesta)
+    const esCircular = chartType === 'pastel' || chartType === 'dona'
+    const etiquetas = etiquetasPorTipoGrafico(chartType)
     return (
       <>
         <SelectorTipoGrafico contexto={contexto} calculo={slot.calculo} valor={propuesta.chart_type} valorDefecto={slot.tipoVisualizacion} onCambiar={cambiar('chart_type')} />
-        <SelectorColumna etiqueta="Categoría" contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
-        <SelectorColumna etiqueta="Valor" contexto={contexto} valor={propuesta.columna_valor} opciones={columnas} onCambiar={cambiar('columna_valor')} />
+        <SelectorColumna etiqueta={etiquetas.categoria} contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
+        {esCircular && <AyudaCircular />}
+        <SelectorColumna etiqueta={etiquetas.valor} contexto={contexto} valor={propuesta.columna_valor} opciones={columnas} onCambiar={cambiar('columna_valor')} />
       </>
     )
   }
   if (slot.calculo === 'multivalor') {
+    // El tipo de gráfico decide cuántas columnas de valor hacen falta, no el `calculo` (fijo para
+    // toda la posición): pastel/dona solo pueden mostrar una porción por categoría (ver
+    // `GenericChartRenderer.jsx::categoricoDesdeMultiserie`), así que ahí alcanza con una sola
+    // "Valor" — el resto de tipos compatibles con `multivalor` (barras agrupadas/apiladas, área
+    // apilada, líneas múltiples) sí comparan varias métricas a la vez, entre 2 y 3.
+    const chartType = tipoVisualizacionElegido(slot, propuesta)
+    const esCircular = chartType === 'pastel' || chartType === 'dona'
+    const etiquetas = etiquetasPorTipoGrafico(chartType)
+    const columnasValor = propuesta.columnas_valor || []
     return (
       <>
         <SelectorTipoGrafico contexto={contexto} calculo={slot.calculo} valor={propuesta.chart_type} valorDefecto={slot.tipoVisualizacion} onCambiar={cambiar('chart_type')} />
-        <SelectorColumna etiqueta="Categoría" contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
-        {[0, 1].map((i) => (
-          <SelectorColumna
-            key={i} etiqueta={`Métrica ${i + 1}`} contexto={contexto} valor={propuesta.columnas_valor?.[i]} opciones={columnas}
-            onCambiar={cambiarEnLista('columnas_valor', i)}
+        <SelectorColumna etiqueta={etiquetas.categoria} contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
+        {esCircular ? (
+          <>
+            <AyudaCircular />
+            <SelectorColumna
+              etiqueta={etiquetas.valor} contexto={contexto} valor={columnasValor[0]} opciones={columnas}
+              onCambiar={(valor) => cambiarLista('columnas_valor')([valor])}
+            />
+          </>
+        ) : (
+          <ColumnasValorMultiples
+            contexto={contexto} columnasValor={columnasValor} opciones={columnas}
+            onCambiar={cambiarLista('columnas_valor')}
           />
-        ))}
+        )}
       </>
     )
   }
   if (slot.calculo === 'multiserie') {
+    // A diferencia de `multivalor`, acá "Serie" no se puede ocultar ni para pastel/dona: el
+    // cálculo (`generic_charts.generar_datos_multiserie`) siempre necesita las 3 columnas para
+    // poder calcular algo — la etiqueta sí cambia, para explicar que en un gráfico circular las
+    // series se combinan dentro de cada porción en vez de dibujarse cada una por separado.
+    const chartType = tipoVisualizacionElegido(slot, propuesta)
+    const esCircular = chartType === 'pastel' || chartType === 'dona'
+    const etiquetas = etiquetasPorTipoGrafico(chartType)
     return (
       <>
         <SelectorTipoGrafico contexto={contexto} calculo={slot.calculo} valor={propuesta.chart_type} valorDefecto={slot.tipoVisualizacion} onCambiar={cambiar('chart_type')} />
-        <SelectorColumna etiqueta="Categoría" contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
-        <SelectorColumna etiqueta="Serie" contexto={contexto} valor={propuesta.columna_serie} opciones={columnas} onCambiar={cambiar('columna_serie')} />
-        <SelectorColumna etiqueta="Valor" contexto={contexto} valor={propuesta.columna_valor} opciones={columnas} onCambiar={cambiar('columna_valor')} />
+        <SelectorColumna etiqueta={etiquetas.categoria} contexto={contexto} valor={propuesta.columna_categoria} opciones={columnas} onCambiar={cambiar('columna_categoria')} />
+        {esCircular && <AyudaCircular />}
+        <SelectorColumna etiqueta={etiquetas.serie} contexto={contexto} valor={propuesta.columna_serie} opciones={columnas} onCambiar={cambiar('columna_serie')} />
+        <SelectorColumna etiqueta={etiquetas.valor} contexto={contexto} valor={propuesta.columna_valor} opciones={columnas} onCambiar={cambiar('columna_valor')} />
       </>
     )
   }

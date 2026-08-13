@@ -12,7 +12,10 @@ descripción por componente (`_describir_componente`) y la misma llamada a Gemin
   resuelve o si falla.
 
 Ambas parten de los mismos datos ya calculados que sirve `serializar_layout` (`content` de cada
-componente visible) — no reprocesan ningún archivo ni vuelven a consultar `RegistroCartera`.
+componente visible) — no reprocesan ningún archivo ni vuelven a consultar `RegistroCartera`. Ambas
+también incluyen, si existe, `Dashboard.contexto` (`_bloque_contexto`) — texto libre que un
+administrador carga al crear/editar el dashboard únicamente para orientar a la IA, nunca mostrado
+dentro del dashboard.
 """
 
 import json
@@ -102,18 +105,32 @@ def _describir_componente(componente):
     return None
 
 
+def _bloque_contexto(dashboard):
+    """`Dashboard.contexto`: texto libre que un administrador carga al crear/editar el dashboard,
+    pensado únicamente para orientar a la IA (qué es este dashboard, de dónde vienen los datos, qué
+    matices tener en cuenta) — nunca se muestra dentro del dashboard en sí, a diferencia de
+    `description`. Cadena vacía si no hay nada cargado, para no agregar una sección vacía al
+    prompt."""
+    if not dashboard.contexto:
+        return ''
+    return f'\nContexto adicional sobre este dashboard, provisto por un administrador:\n{dashboard.contexto}\n'
+
+
 def _construir_prompt(dashboard, componentes_descritos):
     cuerpo = '\n'.join(f'- {texto}' for texto in componentes_descritos)
     return (
         'Sos un analista de datos redactando para un directivo que no vio el dashboard. '
         f'A continuación tenés los componentes (KPIs, gráficos y tablas) del dashboard '
         f'"{dashboard.name}" (área: {dashboard.area or "sin área"}), con sus datos ya calculados:\n\n'
-        f'{cuerpo}\n\n'
+        f'{cuerpo}\n'
+        f'{_bloque_contexto(dashboard)}\n'
         'Redactá una interpretación completa y ejecutiva en español, en prosa clara (párrafos, no '
         'una lista mecánica de cada número), que resuma la situación general, destaque los '
         'hallazgos más relevantes (valores más altos/bajos, concentraciones, proporciones) y '
         'señale relaciones entre componentes si son evidentes a partir de los datos provistos. '
-        'No inventes datos que no estén en la información de arriba.'
+        'Si hay contexto adicional provisto por un administrador, usalo para interpretar mejor los '
+        'datos (a qué corresponden, qué matices tener en cuenta), pero no lo repitas textualmente '
+        'ni inventes datos que no estén en la información de arriba.'
     )
 
 
@@ -125,8 +142,10 @@ def _construir_prompt_hallazgos(dashboard, items):
         'datos ya calculados), escribí un párrafo breve (1 a 3 oraciones) de "hallazgo clave": el '
         'punto más relevante que ESE componente en particular muestra, en español, con los números '
         'y nombres importantes resaltados entre **dobles asteriscos**. Analizá cada componente de '
-        'forma independiente, sin compararlo con los demás. No inventes datos que no estén en la '
-        'información provista.\n\n'
+        'forma independiente, sin compararlo con los demás. Si hay contexto adicional provisto por '
+        'un administrador, usalo para interpretar mejor los datos, pero no inventes datos que no '
+        'estén en la información provista.\n'
+        f'{_bloque_contexto(dashboard)}\n'
         f'Componentes:\n{cuerpo}\n\n'
         'Devolvé ÚNICAMENTE un objeto JSON plano (sin texto adicional, sin bloque de código) con '
         'esta forma exacta: {"<ID>": "<párrafo>", ...}, con exactamente una entrada por cada ID '

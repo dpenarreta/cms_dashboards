@@ -53,6 +53,27 @@ describe('TablaHistoricaAutomatica', () => {
     expect(historicoService.calcularTablaHistorica).not.toHaveBeenCalled()
   })
 
+  it('con cargas históricas pero ninguna habilitada, cae al contenido normal en vez de mostrar una tabla vacía', async () => {
+    // `listarCargasHistoricas` sigue devolviendo cargas deshabilitadas (las necesita "Histórico de
+    // cargas" para poder rehabilitarlas), así que `calcularTablaHistorica` igual se llama — pero
+    // el backend filtra las deshabilitadas por defecto y devuelve `filas: []`.
+    historicoService.listarCargasHistoricas.mockResolvedValue({
+      cargas: [{ carga_id: 'c1', nombre_original: 'enero.xlsx', incluir_en_historico: false }],
+      columnas_disponibles: ['Ventas'],
+    })
+    historicoService.calcularTablaHistorica.mockResolvedValue({
+      columnas: ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'Ventas'], filas: [],
+    })
+    render(
+      <TablaHistoricaAutomatica
+        dashboardId="finanzas" columnasValor={[{ columna: 'Ventas', tipo_agregacion: 'suma' }]}
+        contenidoNormal={<div>Contenido normal</div>}
+      />,
+    )
+    expect(await screen.findByText('Contenido normal')).toBeInTheDocument()
+    expect(screen.queryByText('Histórica')).not.toBeInTheDocument()
+  })
+
   it('con cargas históricas, pide y muestra la tabla comparativa (no el contenido normal)', async () => {
     historicoService.listarCargasHistoricas.mockResolvedValue({
       cargas: [{ carga_id: 'c1', nombre_original: 'enero.xlsx' }], columnas_disponibles: ['Ventas'],

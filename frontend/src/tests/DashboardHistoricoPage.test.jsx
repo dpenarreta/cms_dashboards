@@ -10,8 +10,8 @@ vi.mock('../services/historicoService')
 vi.mock('../services/carteraService')
 
 const CARGAS = [
-  { carga_id: 'carga-1', nombre_original: 'enero.xlsx', fecha_carga: '2026-01-15T10:00:00', fecha_corte: '2026-01-31', total_filas: 10 },
-  { carga_id: 'carga-2', nombre_original: 'febrero.xlsx', fecha_carga: '2026-02-15T10:00:00', fecha_corte: null, total_filas: 12 },
+  { carga_id: 'carga-1', nombre_original: 'enero.xlsx', fecha_carga: '2026-01-15T10:00:00', fecha_corte: '2026-01-31', total_filas: 10, incluir_en_historico: true },
+  { carga_id: 'carga-2', nombre_original: 'febrero.xlsx', fecha_carga: '2026-02-15T10:00:00', fecha_corte: null, total_filas: 12, incluir_en_historico: true },
 ]
 
 function renderPagina() {
@@ -41,29 +41,72 @@ describe('DashboardHistoricoPage', () => {
     expect(await screen.findByText('No se pudo cargar el histórico de este dashboard.')).toBeInTheDocument()
   })
 
-  it('lista las cargas con sus checkboxes, todos marcados por defecto', async () => {
-    historicoService.listarCargasHistoricas.mockResolvedValue({ cargas: CARGAS, columnas_disponibles: ['Ventas'] })
+  it('lista las cargas con sus checkboxes, reflejando el estado de incluir_en_historico', async () => {
+    historicoService.listarCargasHistoricas.mockResolvedValue({
+      cargas: [CARGAS[0], { ...CARGAS[1], incluir_en_historico: false }], columnas_disponibles: ['Ventas'],
+    })
     renderPagina()
 
     expect(await screen.findByText('enero.xlsx')).toBeInTheDocument()
     expect(screen.getByText('febrero.xlsx')).toBeInTheDocument()
     expect(screen.getByLabelText('Incluir enero.xlsx')).toBeChecked()
+    expect(screen.getByLabelText('Incluir febrero.xlsx')).not.toBeChecked()
+  })
+
+  it('destildar una carga persiste de inmediato y actualiza el checkbox sin esperar a recargar la lista', async () => {
+    const usuario = userEvent.setup()
+    historicoService.listarCargasHistoricas.mockResolvedValue({ cargas: CARGAS, columnas_disponibles: ['Ventas'] })
+    historicoService.establecerCargaIncluida.mockResolvedValue({ carga_id: 'carga-2', incluir_en_historico: false })
+    renderPagina()
+    await screen.findByText('enero.xlsx')
+
+    await usuario.click(screen.getByLabelText('Incluir febrero.xlsx'))
+
+    expect(historicoService.establecerCargaIncluida).toHaveBeenCalledWith('carga-2', false)
+    expect(screen.getByLabelText('Incluir febrero.xlsx')).not.toBeChecked()
+    expect(screen.getByLabelText('Incluir enero.xlsx')).toBeChecked()
+  })
+
+  it('tildar de nuevo una carga deshabilitada la vuelve a incluir', async () => {
+    const usuario = userEvent.setup()
+    historicoService.listarCargasHistoricas.mockResolvedValue({
+      cargas: [CARGAS[0], { ...CARGAS[1], incluir_en_historico: false }], columnas_disponibles: ['Ventas'],
+    })
+    historicoService.establecerCargaIncluida.mockResolvedValue({ carga_id: 'carga-2', incluir_en_historico: true })
+    renderPagina()
+    await screen.findByText('febrero.xlsx')
+
+    await usuario.click(screen.getByLabelText('Incluir febrero.xlsx'))
+
+    expect(historicoService.establecerCargaIncluida).toHaveBeenCalledWith('carga-2', true)
     expect(screen.getByLabelText('Incluir febrero.xlsx')).toBeChecked()
   })
 
-  it('destildar una carga la excluye de la próxima tabla generada', async () => {
+  it('si falla al persistir, revierte el checkbox y muestra un error', async () => {
+    const usuario = userEvent.setup()
+    historicoService.listarCargasHistoricas.mockResolvedValue({ cargas: CARGAS, columnas_disponibles: ['Ventas'] })
+    historicoService.establecerCargaIncluida.mockRejectedValue(new Error('falló'))
+    renderPagina()
+    await screen.findByText('enero.xlsx')
+
+    await usuario.click(screen.getByLabelText('Incluir febrero.xlsx'))
+
+    await waitFor(() => expect(screen.getByLabelText('Incluir febrero.xlsx')).toBeChecked())
+    expect(await screen.findByText('No se pudo actualizar la carga. Intentá de nuevo.')).toBeInTheDocument()
+  })
+
+  it('"Generar tabla histórica" ya no manda una selección de cargas: usa el criterio por defecto del backend (las habilitadas)', async () => {
     const usuario = userEvent.setup()
     historicoService.listarCargasHistoricas.mockResolvedValue({ cargas: CARGAS, columnas_disponibles: ['Ventas'] })
     historicoService.calcularTablaHistorica.mockResolvedValue({ columnas: ['Archivo', 'Ventas'], filas: [['enero.xlsx', 100]] })
     renderPagina()
     await screen.findByText('enero.xlsx')
 
-    await usuario.click(screen.getByLabelText('Incluir febrero.xlsx'))
     await usuario.selectOptions(screen.getByLabelText('Columna 1 de histórico'), 'Ventas')
     await usuario.click(screen.getByRole('button', { name: 'Generar tabla histórica' }))
 
     await waitFor(() => expect(historicoService.calcularTablaHistorica).toHaveBeenCalledWith(
-      'finanzas', [{ columna: 'Ventas', tipo_agregacion: 'suma' }], ['carga-1'],
+      'finanzas', [{ columna: 'Ventas', tipo_agregacion: 'suma' }],
     ))
   })
 
@@ -105,7 +148,7 @@ describe('DashboardHistoricoPage', () => {
     await usuario.click(screen.getByRole('button', { name: 'Generar tabla histórica' }))
 
     await waitFor(() => expect(historicoService.calcularTablaHistorica).toHaveBeenCalledWith(
-      'finanzas', [{ columna: 'Ventas', tipo_agregacion: 'suma' }], ['carga-1', 'carga-2'],
+      'finanzas', [{ columna: 'Ventas', tipo_agregacion: 'suma' }],
     ))
     expect(await screen.findByText('Tabla histórica')).toBeInTheDocument()
     // La tabla generada (dentro de GenericDataTable) es una fila más, aparte de la que ya

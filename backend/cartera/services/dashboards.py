@@ -20,6 +20,7 @@ User = get_user_model()
 LONGITUD_MAXIMA_NOMBRE = 150
 LONGITUD_MAXIMA_AREA = 100
 LONGITUD_MAXIMA_DESCRIPCION = 300
+LONGITUD_MAXIMA_CONTEXTO = 3000
 # Máximo de pestañas por dashboard (la raíz cuenta como la primera) — sección "pestañas dentro de
 # un mismo dashboard".
 LIMITE_PESTANAS = 5
@@ -45,7 +46,7 @@ def _generar_dashboard_id_unico(nombre):
     return candidato
 
 
-def crear_dashboard(*, nombre, area='', descripcion='', creado_por=None, request=None, parent=None, orden=1):
+def crear_dashboard(*, nombre, area='', descripcion='', contexto='', creado_por=None, request=None, parent=None, orden=1):
     nombre = (nombre or '').strip()
     if not nombre:
         raise CarteraError('El nombre del dashboard es obligatorio.', codigo='NOMBRE_REQUERIDO')
@@ -54,11 +55,12 @@ def crear_dashboard(*, nombre, area='', descripcion='', creado_por=None, request
 
     area = (area or '').strip()[:LONGITUD_MAXIMA_AREA]
     descripcion = (descripcion or '').strip()[:LONGITUD_MAXIMA_DESCRIPCION]
+    contexto = (contexto or '').strip()[:LONGITUD_MAXIMA_CONTEXTO]
 
     dashboard_id = _generar_dashboard_id_unico(nombre)
     dashboard = Dashboard.objects.create(
-        dashboard_id=dashboard_id, name=nombre, area=area, description=descripcion, created_by=creado_por,
-        owner=creado_por, parent=parent, orden=orden,
+        dashboard_id=dashboard_id, name=nombre, area=area, description=descripcion, contexto=contexto,
+        created_by=creado_por, owner=creado_por, parent=parent, orden=orden,
     )
     # Todo dashboard nuevo (sea de nivel superior o una pestaña de otro) nace con las 13
     # posiciones fijas de la plantilla (4 KPI, 6 gráficos, 3 tablas) con datos ficticios — nunca
@@ -111,7 +113,7 @@ def listar_pestanas(dashboard_id):
     return [{'dashboard_id': d.dashboard_id, 'name': d.name, 'orden': d.orden, 'area': d.area} for d in familia]
 
 
-def actualizar_dashboard(dashboard_id, *, nombre, area='', actor=None, request=None):
+def actualizar_dashboard(dashboard_id, *, nombre, area='', contexto='', actor=None, request=None):
     dashboard = _obtener_dashboard_o_error(dashboard_id)
 
     nombre = (nombre or '').strip()
@@ -121,11 +123,13 @@ def actualizar_dashboard(dashboard_id, *, nombre, area='', actor=None, request=N
         raise CarteraError(f'El nombre no puede superar los {LONGITUD_MAXIMA_NOMBRE} caracteres.', codigo='NOMBRE_DEMASIADO_LARGO')
 
     area = (area or '').strip()[:LONGITUD_MAXIMA_AREA]
+    contexto = (contexto or '').strip()[:LONGITUD_MAXIMA_CONTEXTO]
 
     valores_anteriores = {'name': dashboard.name, 'area': dashboard.area}
     dashboard.name = nombre
     dashboard.area = area
-    dashboard.save(update_fields=['name', 'area'])
+    dashboard.contexto = contexto
+    dashboard.save(update_fields=['name', 'area', 'contexto'])
 
     log_event(
         domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_UPDATED',

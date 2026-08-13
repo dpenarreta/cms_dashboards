@@ -5,9 +5,11 @@ import { MemoryRouter } from 'react-router-dom'
 import SettingsPage from '../pages/administration/settings/SettingsPage'
 import * as brandingService from '../services/brandingService'
 import { useTheme } from '../context/ThemeContext'
+import { useAuth } from '../context/AuthContext'
 
 vi.mock('../services/brandingService')
 vi.mock('../context/ThemeContext', () => ({ useTheme: vi.fn() }))
+vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 const TEMA = {
   site_name: 'Dashboard de Cartera', short_name: 'Cartera', logo_url: '', favicon_url: '',
@@ -33,6 +35,7 @@ describe('SettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useTheme.mockReturnValue({ theme: TEMA, reloadTheme })
+    useAuth.mockReturnValue({ user: { permissions: ['configuracion.ver'] } })
   })
 
   it('precarga los valores institucionales actuales', async () => {

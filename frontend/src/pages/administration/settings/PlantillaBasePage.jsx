@@ -1,5 +1,5 @@
 import { Alert, Button, Spinner } from 'react-bootstrap'
-import { Link } from 'react-router-dom'
+import SettingsTabsBar from '../../../components/admin/SettingsTabsBar'
 import { useAuth } from '../../../context/AuthContext'
 import { usePlantillaBaseLayout } from '../../../hooks/usePlantillaBaseLayout'
 import EditModeToolbar from '../../../components/dashboard-editor/EditModeToolbar'
@@ -35,7 +35,7 @@ export default function PlantillaBasePage() {
         if (componente.type !== 'kpi' && componente.type !== 'chart') return null
         const override = construirOverride(componente)
         const { datos, datosMultiserie } = datosDesdeComponente(componente)
-        const esTablaHistorica = componente.component_id === 'tabla-4' || componente.component_id === 'tabla-5'
+        const esTablaHistorica = componente.component_id === 'tabla-3'
         const contenidoNormal = (
           <GenericChartRenderer
             tipoVisualizacion={componente.type === 'kpi' ? 'kpi' : (componente.chart_type || 'barras_horizontales')}
@@ -47,10 +47,10 @@ export default function PlantillaBasePage() {
             esHistorica={esTablaHistorica}
           />
         )
-        // Tabla 4 y Tabla 5 también comparan en vivo el histórico de cargas acá — en la
-        // práctica siempre caen a `contenidoNormal` (dato ficticio), ya que a la plantilla base
-        // nunca se le sube un archivo real (no tiene columnas históricas configuradas), pero se
-        // mantiene el mismo comportamiento que un dashboard real por consistencia.
+        // Tabla 3 también compara en vivo el histórico de cargas acá — en la práctica siempre
+        // cae a `contenidoNormal` (dato ficticio), ya que a la plantilla base nunca se le sube un
+        // archivo real (no tiene columnas históricas configuradas), pero se mantiene el mismo
+        // comportamiento que un dashboard real por consistencia.
         if (esTablaHistorica) {
           return (
             <TablaHistoricaAutomatica
@@ -75,8 +75,9 @@ export default function PlantillaBasePage() {
             su creación. Los cambios guardados acá no afectan a los dashboards que ya existen.
           </p>
         </div>
-        <Button as={Link} to="/admin/settings" variant="outline-secondary" size="sm">Volver a Configuración</Button>
       </div>
+
+      <SettingsTabsBar />
 
       {cargandoInicial && layout.error && <Alert variant="danger">{layout.error}</Alert>}
       {cargandoInicial && !layout.error && <div className="text-center mb-3" role="status"><Spinner animation="border" /></div>}

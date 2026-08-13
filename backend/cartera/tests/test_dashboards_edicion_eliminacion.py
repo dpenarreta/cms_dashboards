@@ -22,6 +22,11 @@ class ActualizarDashboardServiceTests(TestCase):
         # El dashboard_id (slug) no cambia al editar, solo nombre/área.
         self.assertEqual(actualizado.dashboard_id, 'finanzas')
 
+    def test_actualiza_el_contexto_para_la_ia(self):
+        dashboard = crear_dashboard(nombre='Finanzas')
+        actualizado = actualizar_dashboard(dashboard.dashboard_id, nombre='Finanzas', contexto='Datos de facturación mensual.')
+        self.assertEqual(actualizado.contexto, 'Datos de facturación mensual.')
+
     def test_dashboard_inexistente_es_rechazado(self):
         with self.assertRaises(CarteraError) as ctx:
             actualizar_dashboard('no-existe', nombre='X')
@@ -101,6 +106,18 @@ class DashboardDetailViewTests(TestCase):
         self.assertEqual(resp.json()['name'], 'Ventas Nacionales')
         dashboard.refresh_from_db()
         self.assertEqual(dashboard.name, 'Ventas Nacionales')
+
+    def test_patch_actualiza_el_contexto(self):
+        dashboard = crear_dashboard(nombre='Ventas', contexto='Original.')
+        usuario = self._usuario_con('dashboard.editar', username='con_editar_contexto')
+        self.client.force_authenticate(user=usuario)
+        resp = self.client.patch(
+            f'/api/dashboards/{dashboard.dashboard_id}/', {'name': 'Ventas', 'contexto': 'Nuevo contexto para la IA.'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['contexto'], 'Nuevo contexto para la IA.')
+        dashboard.refresh_from_db()
+        self.assertEqual(dashboard.contexto, 'Nuevo contexto para la IA.')
 
     def test_delete_sin_permiso_devuelve_403(self):
         dashboard = crear_dashboard(nombre='Ventas')

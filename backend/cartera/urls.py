@@ -27,4 +27,5 @@ urlpatterns = [
     path('historico/cargas', views.HistoricoCargasView.as_view(), name='historico-cargas'),
     path('historico/tabla', views.HistoricoTablaView.as_view(), name='historico-tabla'),
     path('historico/cargas/<uuid:carga_id>/archivo', views.HistoricoArchivoView.as_view(), name='historico-archivo'),
+    path('historico/cargas/<uuid:carga_id>/incluir', views.HistoricoCargaIncluidaView.as_view(), name='historico-carga-incluir'),
 ]

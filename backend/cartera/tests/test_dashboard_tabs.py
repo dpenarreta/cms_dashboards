@@ -121,7 +121,7 @@ class DashboardsAutorizadosSinPestanasTests(TestCase):
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [{
-            'dashboard_id': raiz.dashboard_id, 'name': 'Cartera', 'area': '', 'puede_administrar_acceso': False,
+            'dashboard_id': raiz.dashboard_id, 'name': 'Cartera', 'area': '', 'contexto': '', 'puede_administrar_acceso': False,
         }])
 
 

@@ -145,8 +145,9 @@ describe('TemplateMappingStep', () => {
   it('cada selector ofrece todas las columnas del archivo, sin importar el tipo detectado', () => {
     renderComponente()
     // "Ciudad" es categórica y "Saldo" es numérica; el selector de Categoría de un gráfico debe
-    // poder elegir cualquiera de las dos, no solo las marcadas aptas para esa función.
-    const selectorCategoria = screen.getByLabelText('Categoría de Gráfico 1')
+    // poder elegir cualquiera de las dos, no solo las marcadas aptas para esa función. Gráfico 1
+    // arranca en "barras_verticales" (tipo por defecto del slot), de ahí la etiqueta de eje.
+    const selectorCategoria = screen.getByLabelText('Eje horizontal (categoría) de Gráfico 1')
     const opciones = Array.from(selectorCategoria.querySelectorAll('option')).map((o) => o.value)
     expect(opciones).toEqual(expect.arrayContaining(['Saldo', 'Ciudad']))
   })
@@ -296,7 +297,7 @@ describe('TemplateMappingStep', () => {
         columnasConBlancos: [{ columna: 'Saldo', cantidad_en_blanco: 5, filas_ejemplo: [] }],
         columnasHistoricas: ['Saldo'],
       })
-      expect(screen.getByText(/usada en Tabla 4 y Tabla 5 \(histórica\)/)).toBeInTheDocument()
+      expect(screen.getByText(/usada en Tabla 3 \(histórica\)/)).toBeInTheDocument()
     })
 
     it('columna que no está marcada como histórica: no muestra el badge', () => {

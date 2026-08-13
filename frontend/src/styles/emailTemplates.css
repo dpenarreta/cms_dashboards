@@ -1,0 +1,47 @@
+/* El HTML de plantillas de correo (`email_template_defaults.py`) está pensado para un cliente de
+   correo real (bloque con fondo blanco) — al cargarlo como contenido inicial de Quill, éste
+   normaliza el HTML pegado y "hornea" ese fondo blanco heredado como `background-color` en línea
+   en cada párrafo/enlace (comportamiento propio de su pipeline de import, no un estilo que
+   pusimos nosotros). Sobrescribimos acá, solo dentro del área de edición (nunca en la vista
+   previa del iframe, que sí debe verse como un correo real de fondo blanco), para que el texto
+   sea legible sobre el fondo oscuro/claro de la app en vez de quedar blanco sobre blanco. */
+.ql-editor,
+.ql-editor * {
+  background-color: transparent !important;
+  color: var(--text-primary) !important;
+  text-decoration: none !important;
+}
+
+.ql-editor.ql-blank::before {
+  color: var(--text-muted) !important;
+  font-style: normal;
+}
+
+/* Misma causa que arriba pero en la barra de herramientas: el tema "snow" de Quill viene
+   pensado para una barra clara con íconos/texto oscuros — sobre el fondo oscuro de la app
+   quedan casi invisibles (el selector "Normal" y los íconos SVG por stroke/fill). */
+.ql-toolbar.ql-snow {
+  border-color: var(--border) !important;
+}
+
+.ql-toolbar.ql-snow .ql-picker-label,
+.ql-toolbar.ql-snow .ql-picker-item {
+  color: var(--text-primary) !important;
+}
+
+.ql-toolbar.ql-snow .ql-picker-label::before {
+  color: var(--text-primary) !important;
+}
+
+.ql-toolbar.ql-snow .ql-stroke {
+  stroke: var(--text-primary) !important;
+}
+
+.ql-toolbar.ql-snow .ql-fill {
+  fill: var(--text-primary) !important;
+}
+
+.ql-toolbar.ql-snow .ql-picker-options {
+  background-color: var(--surface-1) !important;
+  border-color: var(--border) !important;
+}

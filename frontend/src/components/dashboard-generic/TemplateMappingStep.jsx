@@ -16,7 +16,7 @@ function filaEjemploTexto(fila) {
  * blanco, una celda suelta no se reporta). Por cada una: su tratamiento real
  * (`tratamientoColumnaEnBlanco`) y, si además es una de las columnas marcadas como históricas
  * (`columnasHistoricas`, casilla del paso "Renombrar columnas" — cualquiera de ellas alimenta por
- * igual a Tabla 4 y Tabla 5), una marca aparte — ahí el tratamiento importa más porque se arrastra
+ * igual a Tabla 3), una marca aparte — ahí el tratamiento importa más porque se arrastra
  * a la comparación histórica de esta carga.
  *
  * A propósito NO es un `Alert variant="warning"` de Bootstrap (fondo amarillo fijo, muy
@@ -38,7 +38,7 @@ function AvisoColumnasEnBlanco({ columnasConBlancos, columnas, columnasHistorica
               <strong>{c.columna}</strong> — {c.cantidad_en_blanco} fila(s) en blanco.{' '}
               {esHistorica && (
                 <Badge bg="danger" className="me-1">
-                  usada en Tabla 4 y Tabla 5 (histórica)
+                  usada en Tabla 3 (histórica)
                 </Badge>
               )}
               {tratamientoColumnaEnBlanco(columnaInfo)}
@@ -54,8 +54,8 @@ function AvisoColumnasEnBlanco({ columnasConBlancos, columnas, columnasHistorica
 }
 
 /**
- * Paso "mapeo a la plantilla": tras cargar un archivo, muestra las 15 posiciones fijas de la
- * plantilla (KPI 1-4, Gráfico 1-6, Tabla 1-5) con la columna (o columnas) que el sistema propuso
+ * Paso "mapeo a la plantilla": tras cargar un archivo, muestra las 13 posiciones fijas de la
+ * plantilla (KPI 1-4, Gráfico 1-6, Tabla 1-3) con la columna (o columnas) que el sistema propuso
  * para cada una (`services/plantilla.py::sugerir_mapeo`) y una vista previa real de cómo
  * quedaría. El usuario puede cambiar cualquier selector antes de confirmar; una posición sin
  * columnas adecuadas se marca "dato de ejemplo" y conserva su contenido ficticio.
@@ -67,13 +67,8 @@ export default function TemplateMappingStep({
   const camposPorSlot = (slot) => {
     const propuesta = mapeo[slot.id] || {}
     const cambiar = (campo) => (valor) => onActualizarSlot(slot.id, { [campo]: valor })
-    const cambiarEnLista = (campo, indice) => (valor) => {
-      const lista = [...(propuesta[campo] || [])]
-      lista[indice] = valor
-      onActualizarSlot(slot.id, { [campo]: lista })
-    }
     const cambiarLista = (campo) => (nuevaLista) => onActualizarSlot(slot.id, { [campo]: nuevaLista })
-    return camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarEnLista, cambiarLista })
+    return camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarLista })
   }
 
   return (
@@ -86,7 +81,7 @@ export default function TemplateMappingStep({
       {error && <Alert variant="danger">{error}</Alert>}
       <div className="chart-panel__subtitle d-flex align-items-center gap-2 flex-wrap">
         <span>
-          Así quedarían las 15 posiciones de la plantilla con este archivo. Puedes elegir
+          Así quedarían las 13 posiciones de la plantilla con este archivo. Puedes elegir
           cualquier columna del archivo en cada selector; la vista previa se actualiza al
           instante. Las posiciones sin columnas elegidas conservan su dato de ejemplo.
         </span>
@@ -119,7 +114,7 @@ export default function TemplateMappingStep({
                   </div>
                   <div className="row g-3">
                     <div className="col-md-4">
-                      {slot.id === 'tabla-4' || slot.id === 'tabla-5' ? (
+                      {slot.id === 'tabla-3' ? (
                         <p className="chart-panel__subtitle mb-0">
                           Esta tabla se arma automáticamente con las columnas que marcaste como
                           históricas en el paso anterior — no hace falta configurarla acá.

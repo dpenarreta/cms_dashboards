@@ -30,7 +30,7 @@ class SembrarPlantillaServiceTests(TestCase):
     def test_los_tipos_con_leyenda_traen_posicion_de_leyenda_por_defecto(self):
         plantilla.sembrar_plantilla('finanzas')
         grafico_3 = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id='grafico-3')
-        self.assertEqual(grafico_3.chart_type, 'area_apilada')
+        self.assertEqual(grafico_3.chart_type, 'barras_agrupadas')
         self.assertEqual(grafico_3.config['leyenda_posicion'], 'abajo')
 
     def test_sembrar_dos_veces_no_duplica_componentes(self):
@@ -105,7 +105,7 @@ class SugerirMapeoServiceTests(TestCase):
         mapeo = plantilla.sugerir_mapeo(self._columnas(df))
         self.assertEqual(mapeo['grafico-1']['chart_type'], 'barras_verticales')
         self.assertEqual(mapeo['grafico-2']['chart_type'], 'lineas_multiples')
-        self.assertEqual(mapeo['grafico-3']['chart_type'], 'area_apilada')
+        self.assertEqual(mapeo['grafico-3']['chart_type'], 'barras_agrupadas')
         self.assertEqual(mapeo['grafico-4']['chart_type'], 'dona')
         self.assertEqual(mapeo['grafico-5']['chart_type'], 'pastel')
 
@@ -310,7 +310,7 @@ class AplicarMapeoServiceTests(TestCase):
         }}
         plantilla.aplicar_mapeo(self.dashboard_id, df, mapeo)
         grafico_3 = DashboardComponent.objects.get(layout__dashboard_id=self.dashboard_id, component_id='grafico-3')
-        self.assertEqual(grafico_3.chart_type, 'area_apilada')
+        self.assertEqual(grafico_3.chart_type, 'barras_agrupadas')
 
     def test_sembrar_no_se_ve_afectado_por_chart_type_de_un_mapeo_anterior(self):
         df = pd.DataFrame({'region': ['Norte', 'Sur'], 'ventas': [100, 200]})
@@ -423,12 +423,12 @@ class FlujoApiMapeoPlantillaTests(TestCase):
         carga_id = self._subir_archivo()
         sugerido = self.client.post('/api/cartera/plantilla/sugerir', {'carga_id': carga_id}, format='json').json()
         mapeo = sugerido['mapeo']
-        mapeo['grafico-1']['chart_type'] = 'lineas'
+        mapeo['grafico-1']['chart_type'] = 'barras_horizontales'
 
         resp = self.client.post('/api/cartera/plantilla/aplicar', {'carga_id': carga_id, 'mapeo': mapeo}, format='json')
         self.assertEqual(resp.status_code, 200)
         grafico_1 = next(c for c in resp.json()['components'] if c['component_id'] == 'grafico-1')
-        self.assertEqual(grafico_1['chart_type'], 'lineas')
+        self.assertEqual(grafico_1['chart_type'], 'barras_horizontales')
 
     def test_previsualizar_con_tipo_agregacion_conteo_unicos(self):
         carga_id = self._subir_archivo()

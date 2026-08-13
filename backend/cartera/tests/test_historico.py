@@ -192,6 +192,28 @@ class CalcularTablaHistoricaServiceTests(TestCase):
         self.assertEqual(len(resultado['filas']), 1)
         self.assertEqual(resultado['filas'][0][-1], 600.0)
 
+    def test_sin_carga_ids_excluye_las_cargas_deshabilitadas(self):
+        historico.establecer_carga_incluida_en_historico(self.carga_febrero, False)
+
+        resultado = historico.calcular_tabla_historica('finanzas', [{'columna': 'ventas', 'tipo_agregacion': 'suma'}])
+
+        self.assertEqual(len(resultado['filas']), 1)
+        self.assertEqual(resultado['filas'][0][-1], 600.0)  # solo enero
+
+    def test_carga_ids_explicito_incluye_una_carga_deshabilitada(self):
+        historico.establecer_carga_incluida_en_historico(self.carga_febrero, False)
+
+        resultado = historico.calcular_tabla_historica(
+            'finanzas', [{'columna': 'ventas', 'tipo_agregacion': 'suma'}], carga_ids=[str(self.carga_febrero.id)],
+        )
+
+        self.assertEqual(len(resultado['filas']), 1)
+        self.assertEqual(resultado['filas'][0][-1], 1000.0)  # febrero, aunque esté deshabilitada
+
+    def test_todas_habilitadas_por_defecto(self):
+        resultado = historico.calcular_tabla_historica('finanzas', [{'columna': 'ventas', 'tipo_agregacion': 'suma'}])
+        self.assertEqual(len(resultado['filas']), 2)
+
     def test_dos_columnas_con_distinto_tipo_de_agregacion(self):
         resultado = historico.calcular_tabla_historica('finanzas', [
             {'columna': 'ventas', 'tipo_agregacion': 'suma'},
@@ -221,6 +243,32 @@ class CalcularTablaHistoricaServiceTests(TestCase):
         self.assertIsNone(resultado['filas'][0][-1])
 
 
+class EstablecerCargaIncluidaEnHistoricoServiceTests(TestCase):
+    def test_deshabilita_y_rehabilita_una_carga(self):
+        carga = _crear_carga()
+        _guardar_todo(carga, pd.DataFrame({'ventas': [1]}))
+
+        historico.establecer_carga_incluida_en_historico(carga, False)
+        carga.refresh_from_db()
+        self.assertFalse(carga.incluir_en_historico)
+
+        historico.establecer_carga_incluida_en_historico(carga, True)
+        carga.refresh_from_db()
+        self.assertTrue(carga.incluir_en_historico)
+
+    def test_no_borra_las_filas_historicas_al_deshabilitar(self):
+        carga = _crear_carga()
+        _guardar_todo(carga, pd.DataFrame({'ventas': [1, 2]}))
+
+        historico.establecer_carga_incluida_en_historico(carga, False)
+
+        self.assertEqual(FilaArchivoHistorico.objects.filter(carga=carga).count(), 2)
+
+    def test_habilitada_por_defecto(self):
+        carga = _crear_carga()
+        self.assertTrue(carga.incluir_en_historico)
+
+
 class ListarCargasHistoricasServiceTests(TestCase):
     def test_solo_incluye_cargas_con_filas_historicas(self):
         con_historico = _crear_carga()
@@ -231,6 +279,19 @@ class ListarCargasHistoricasServiceTests(TestCase):
 
         self.assertEqual(len(resultado['cargas']), 1)
         self.assertEqual(resultado['cargas'][0]['carga_id'], str(con_historico.id))
+
+    def test_incluye_incluir_en_historico_por_carga(self):
+        habilitada = _crear_carga()
+        deshabilitada = _crear_carga()
+        _guardar_todo(habilitada, pd.DataFrame({'ventas': [1]}))
+        _guardar_todo(deshabilitada, pd.DataFrame({'ventas': [1]}))
+        historico.establecer_carga_incluida_en_historico(deshabilitada, False)
+
+        resultado = historico.listar_cargas_historicas('finanzas')
+
+        por_id = {c['carga_id']: c['incluir_en_historico'] for c in resultado['cargas']}
+        self.assertTrue(por_id[str(habilitada.id)])
+        self.assertFalse(por_id[str(deshabilitada.id)])
 
     def test_columnas_disponibles_es_la_configuracion_de_columnas_historicas_no_lo_guardado(self):
         # Aunque las filas guardadas tengan columnas distintas (p. ej. cargas de antes de esta
@@ -380,4 +441,41 @@ class HistoricoViewsApiTests(TestCase):
         carga_id = self._subir_y_aplicar()
         self.client.force_authenticate(user=None)
         resp = self.client.get(f'/api/cartera/historico/cargas/{carga_id}/archivo')
+        self.assertIn(resp.status_code, (401, 403))
+
+
+class HistoricoCargaIncluidaViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        usuario = User.objects.create_superuser(username='tester_incluir', email='ti@example.com', password='Clave-Segura-123')
+        self.client.force_authenticate(user=usuario)
+        self.carga = _crear_carga()
+        _guardar_todo(self.carga, pd.DataFrame({'ventas': [1]}))
+
+    def test_deshabilita_la_carga(self):
+        resp = self.client.patch(f'/api/cartera/historico/cargas/{self.carga.id}/incluir', {'incluir': False}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {'carga_id': str(self.carga.id), 'incluir_en_historico': False})
+        self.carga.refresh_from_db()
+        self.assertFalse(self.carga.incluir_en_historico)
+
+    def test_rehabilita_la_carga(self):
+        historico.establecer_carga_incluida_en_historico(self.carga, False)
+        resp = self.client.patch(f'/api/cartera/historico/cargas/{self.carga.id}/incluir', {'incluir': True}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['incluir_en_historico'])
+
+    def test_sin_el_campo_incluir_devuelve_400(self):
+        resp = self.client.patch(f'/api/cartera/historico/cargas/{self.carga.id}/incluir', {}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'INCLUIR_REQUERIDO')
+
+    def test_carga_inexistente_devuelve_404(self):
+        import uuid
+        resp = self.client.patch(f'/api/cartera/historico/cargas/{uuid.uuid4()}/incluir', {'incluir': False}, format='json')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_sin_acceso_al_dashboard_devuelve_403(self):
+        self.client.force_authenticate(user=None)
+        resp = self.client.patch(f'/api/cartera/historico/cargas/{self.carga.id}/incluir', {'incluir': False}, format='json')
         self.assertIn(resp.status_code, (401, 403))

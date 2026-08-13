@@ -14,11 +14,12 @@ function ModalCrearDashboard({ show, onHide, onCreado }) {
   const [name, setName] = useState('')
   const [area, setArea] = useState('')
   const [description, setDescription] = useState('')
+  const [contexto, setContexto] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
   const limpiarYCerrar = () => {
-    setName(''); setArea(''); setDescription(''); setError('')
+    setName(''); setArea(''); setDescription(''); setContexto(''); setError('')
     onHide()
   }
 
@@ -27,7 +28,7 @@ function ModalCrearDashboard({ show, onHide, onCreado }) {
     setGuardando(true)
     setError('')
     try {
-      const dashboard = await dashboardLayoutService.crearDashboard({ name, area, description })
+      const dashboard = await dashboardLayoutService.crearDashboard({ name, area, description, contexto })
       onCreado(dashboard)
       limpiarYCerrar()
     } catch (err) {
@@ -53,9 +54,21 @@ function ModalCrearDashboard({ show, onHide, onCreado }) {
             <Form.Label>Área</Form.Label>
             <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
           </Form.Group>
-          <Form.Group controlId="crear-dashboard-description">
+          <Form.Group className="mb-3" controlId="crear-dashboard-description">
             <Form.Label>Descripción (opcional)</Form.Label>
             <Form.Control as="textarea" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} disabled={guardando} />
+          </Form.Group>
+          <Form.Group controlId="crear-dashboard-contexto">
+            <Form.Label>Contexto para la IA (opcional)</Form.Label>
+            <Form.Control
+              as="textarea" rows={3} maxLength={3000} value={contexto}
+              onChange={(e) => setContexto(e.target.value)} disabled={guardando}
+              placeholder="Ej. Este dashboard muestra la cartera vencida de la región norte, cargada mensualmente por el equipo de cobranza..."
+            />
+            <Form.Text>
+              No se muestra dentro del dashboard — se usa para que la IA entienda mejor los datos
+              al generar la interpretación completa y los hallazgos clave.
+            </Form.Text>
           </Form.Group>
         </Modal.Body>
         <Modal.Footer>
@@ -85,6 +98,7 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
 
   const [name, setName] = useState('')
   const [area, setArea] = useState('')
+  const [contexto, setContexto] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
 
@@ -100,6 +114,7 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
     if (dashboard) {
       setName(dashboard.name || '')
       setArea(dashboard.area || '')
+      setContexto(dashboard.contexto || '')
       setError('')
     }
   }, [dashboard])
@@ -143,7 +158,7 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
     try {
       let actualizado = dashboard
       if (puedeEditarNombre) {
-        actualizado = await dashboardLayoutService.actualizarDashboard(dashboard.dashboard_id, { name, area })
+        actualizado = await dashboardLayoutService.actualizarDashboard(dashboard.dashboard_id, { name, area, contexto })
       }
       if (puedeAdministrarAcceso) {
         await dashboardLayoutService.actualizarAcceso(dashboard.dashboard_id, { rolesEditores: editores, rolesLectores: lectores })
@@ -184,9 +199,21 @@ function ModalEditarDashboard({ show, dashboard, onHide, onEditado }) {
                     <Form.Label>Nombre</Form.Label>
                     <Form.Control value={name} onChange={(e) => setName(e.target.value)} required autoFocus disabled={guardando} />
                   </Form.Group>
-                  <Form.Group controlId="editar-dashboard-area">
+                  <Form.Group className="mb-3" controlId="editar-dashboard-area">
                     <Form.Label>Área</Form.Label>
                     <Form.Control value={area} onChange={(e) => setArea(e.target.value)} placeholder="Ej. Finanzas, Logística..." disabled={guardando} />
+                  </Form.Group>
+                  <Form.Group controlId="editar-dashboard-contexto">
+                    <Form.Label>Contexto para la IA (opcional)</Form.Label>
+                    <Form.Control
+                      as="textarea" rows={3} maxLength={3000} value={contexto}
+                      onChange={(e) => setContexto(e.target.value)} disabled={guardando}
+                      placeholder="Ej. Este dashboard muestra la cartera vencida de la región norte, cargada mensualmente por el equipo de cobranza..."
+                    />
+                    <Form.Text>
+                      No se muestra dentro del dashboard — se usa para que la IA entienda mejor los
+                      datos al generar la interpretación completa y los hallazgos clave.
+                    </Form.Text>
                   </Form.Group>
                 </Accordion.Body>
               </Accordion.Item>

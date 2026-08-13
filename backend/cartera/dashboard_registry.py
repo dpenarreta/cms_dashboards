@@ -24,7 +24,7 @@ def dashboards_autorizados(request):
     # configurar esa ACL.
     return [
         {
-            'dashboard_id': d.dashboard_id, 'name': d.name, 'area': d.area,
+            'dashboard_id': d.dashboard_id, 'name': d.name, 'area': d.area, 'contexto': d.contexto,
             'puede_administrar_acceso': permisos.puede_administrar_acceso(request, d.dashboard_id),
         }
         for d in Dashboard.objects.filter(parent__isnull=True)

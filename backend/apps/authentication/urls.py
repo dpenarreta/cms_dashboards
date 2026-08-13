@@ -13,4 +13,6 @@ urlpatterns = [
     path('password-reset/request', views.PasswordResetRequestView.as_view(), name='auth-password-reset-request'),
     path('password-reset/validate', views.PasswordResetValidateView.as_view(), name='auth-password-reset-validate'),
     path('password-reset/confirm', views.PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
+    path('admin/email-templates/<str:key>', views.EmailTemplateAdminView.as_view(), name='auth-email-template-admin'),
+    path('admin/email-templates/<str:key>/reset', views.EmailTemplateResetView.as_view(), name='auth-email-template-reset'),
 ]

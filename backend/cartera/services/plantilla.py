@@ -1,16 +1,16 @@
-"""Plantilla fija de dashboard: 15 posiciones (4 KPI, 6 gráficos, 5 tablas) que todo dashboard
+"""Plantilla fija de dashboard: 13 posiciones (4 KPI, 6 gráficos, 3 tablas) que todo dashboard
 nuevo trae desde su creación (`sembrar_plantilla`, llamado por `services.dashboards.crear_dashboard`),
 con datos ficticios mientras no se haya cargado ningún archivo. Al cargar un archivo, se propone
-un mapeo automático de columnas a esas mismas 15 posiciones (`sugerir_mapeo`) que el usuario
+un mapeo automático de columnas a esas mismas 13 posiciones (`sugerir_mapeo`) que el usuario
 puede ajustar antes de confirmarlo (`aplicar_mapeo`) — reemplaza al viejo flujo de "recomendar
 gráficas sueltas" (`AnalizarColumnasView`/`RecomendarGraficasView`/`AgregarGraficaView`, que se
 dejan intactos pero sin consumidor en el frontend nuevo).
 
-De esas 5 tablas, las últimas dos (Tabla 4 y Tabla 5) son especiales: en vez de mostrar el detalle
-del último archivo cargado (como Tabla 1/2/3), el frontend (`TablaHistoricaAutomatica.jsx`) las
-intercepta por `component_id` para comparar en vivo todas las cargas históricas del dashboard —
-por eso van al final de `PLANTILLA_SLOTS` ("al final del dashboard") y llevan una etiqueta fija
-"Histórica" junto a su título. Acá, en el backend, no se distinguen de Tabla 1/2/3: tienen el mismo
+De esas 3 tablas, la última (Tabla 3) es especial: en vez de mostrar el detalle del último archivo
+cargado (como Tabla 1/2), el frontend (`TablaHistoricaAutomatica.jsx`) la intercepta por
+`component_id` para comparar en vivo todas las cargas históricas del dashboard — por eso va al
+final de la zona de tablas de apoyo dentro de `PLANTILLA_SLOTS` y lleva una etiqueta fija
+"Histórica" junto a su título. Acá, en el backend, no se distingue de Tabla 1/2: tiene el mismo
 `calculo='tabla'` y el mismo mapeo columna_id/columnas_valor, así que su contenido ficticio o real
 sigue sirviendo de resguardo si el dashboard todavía no tiene ninguna carga histórica.
 
@@ -55,7 +55,7 @@ PLANTILLA_SLOTS = [
      'titulo': 'KPI 3', 'calculo': 'kpi', 'color_defecto': '#8b5cf6', 'config_fijo': {'icono': 'carrito'}},
     {'id': 'kpi-4', 'tipo': DashboardComponent.Tipo.KPI, 'chart_type': '', 'ancho': KPI_ANCHO, 'alto': KPI_ALTO,
      'titulo': 'KPI 4', 'calculo': 'kpi', 'color_defecto': '#eda100', 'config_fijo': {'icono': 'grafico'}},
-    {'id': 'grafico-3', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'area_apilada',
+    {'id': 'grafico-3', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'barras_agrupadas',
      'ancho': GRAFICO_COMPLETO_ANCHO, 'alto': GRAFICO_ALTO, 'titulo': 'Gráfico 3', 'calculo': 'multiserie', 'config_fijo': {}},
     {'id': 'grafico-1', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'barras_verticales',
      'ancho': GRAFICO_MEDIO_ANCHO, 'alto': GRAFICO_ALTO, 'titulo': 'Gráfico 1', 'calculo': 'chart', 'config_fijo': {}},
@@ -74,10 +74,6 @@ PLANTILLA_SLOTS = [
      'ancho': TABLA_MEDIA_ANCHO, 'alto': TABLA_MEDIA_ALTO, 'titulo': 'Tabla 2', 'calculo': 'tabla', 'config_fijo': {}},
     {'id': 'tabla-3', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'tabla',
      'ancho': TABLA_MEDIA_ANCHO, 'alto': TABLA_MEDIA_ALTO, 'titulo': 'Tabla 3', 'calculo': 'tabla', 'config_fijo': {}},
-    {'id': 'tabla-4', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'tabla',
-     'ancho': TABLA_MEDIA_ANCHO, 'alto': TABLA_MEDIA_ALTO, 'titulo': 'Tabla 4', 'calculo': 'tabla', 'config_fijo': {}},
-    {'id': 'tabla-5', 'tipo': DashboardComponent.Tipo.CHART, 'chart_type': 'tabla',
-     'ancho': TABLA_MEDIA_ANCHO, 'alto': TABLA_MEDIA_ALTO, 'titulo': 'Tabla 5', 'calculo': 'tabla', 'config_fijo': {}},
 ]
 
 _SLOTS_POR_ID = {slot['id']: slot for slot in PLANTILLA_SLOTS}
@@ -94,15 +90,22 @@ DASHBOARD_ID_PLANTILLA_BASE = 'plantilla-base-sistema'
 # `_calcular_contenido_slot`), agrupados por lo que el archivo real termina alimentando. KPI,
 # dispersión y tabla no aparecen: su `calculo` solo puede dibujarse de una forma.
 #
+# Catálogo cerrado a propósito: barras horizontales/verticales, pastel, dona, barras agrupadas y
+# líneas múltiples — ningún otro tipo debe quedar seleccionable desde acá. "Líneas" (una sola
+# serie), "barras apiladas" y "área apilada" se sacaron del catálogo (quedan solo como capacidad
+# de renderizado ya existente, para no romper componentes creados antes de este cambio — ver
+# `GenericChartRenderer.jsx` en el frontend, que los sigue dibujando si los encuentra, aunque ya
+# no se puedan elegir de nuevo).
+#
 # `pastel`/`dona` también son compatibles con `multivalor`/`multiserie` (2+ columnas de valor):
 # el contenido calculado sigue siendo `{categorias, series}` igual que para el resto de tipos de
 # ese `calculo` (este módulo no sabe ni le importa cómo se va a dibujar) — es el frontend
 # (`GenericChartRenderer`) el que colapsa las series en una sola porción por categoría cuando el
 # tipo elegido es circular, así el usuario no tiene que rehacer el mapeo a una sola columna.
 TIPOS_COMPATIBLES = {
-    'chart': ('barras_verticales', 'barras_horizontales', 'lineas', 'pastel', 'dona'),
-    'multivalor': ('barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples', 'pastel', 'dona'),
-    'multiserie': ('barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples', 'pastel', 'dona'),
+    'chart': ('barras_verticales', 'barras_horizontales', 'pastel', 'dona'),
+    'multivalor': ('barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
+    'multiserie': ('barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
 }
 
 
@@ -214,28 +217,6 @@ def datos_ficticios():
             ],
             'total': ['Total', 580000, '2,960', 100.0],
         },
-        'tabla-4': {
-            'titulo': 'Tabla 4', 'descripcion': 'Ejemplo: detalle por canal de venta.',
-            'columnas': ['Canal', 'Ventas (USD)', 'Unidades', '% del total'],
-            'filas': [
-                ['Tienda física', 320000, '1,540', 43.0],
-                ['E-commerce', 250000, '1,180', 33.6],
-                ['Marketplace', 175000, '820', 23.5],
-            ],
-            'total': ['Total', 745000, '3,540', 100.0],
-        },
-        'tabla-5': {
-            'titulo': 'Tabla 5', 'descripcion': 'Ejemplo: detalle por mes.',
-            'columnas': ['Mes', 'Ventas (USD)', 'Unidades', '% del total'],
-            'filas': [
-                ['Enero', 120000, '600', 16.1],
-                ['Febrero', 135000, '650', 18.1],
-                ['Marzo', 150000, '700', 20.1],
-                ['Abril', 170000, '780', 22.8],
-                ['Mayo', 170000, '810', 22.8],
-            ],
-            'total': ['Total', 745000, '3,540', 100.0],
-        },
     }
 
 
@@ -252,7 +233,7 @@ def _rankear_valores(columnas):
 
 
 def sugerir_mapeo(columnas):
-    """Elige, de forma determinista, qué columna(s) usar para cada una de las 15 posiciones —
+    """Elige, de forma determinista, qué columna(s) usar para cada una de las 13 posiciones —
     reutilizando columnas entre posiciones cuando hay pocas disponibles, evitando repetir la
     misma cuando hay suficientes. Una posición cuyo requisito estructural no se puede cumplir
     (p. ej. Gráfico 3 necesita dos columnas de categoría y el archivo solo trae una) queda con
@@ -334,28 +315,14 @@ def sugerir_mapeo(columnas):
         'columnas_valor': [columna_valor_tabla(0)] if disponible_t2 else [],
     }
 
+    # Tabla 3 es la posición histórica (ver módulo): estructuralmente es una tabla más, mismo
+    # requisito y mapeo que cualquier otra — su contenido calculado acá sirve de resguardo cuando
+    # el dashboard todavía no tiene ninguna carga histórica con la que comparar.
     disponible_t3 = len(categorias) >= 3 and len(valores) >= 2
     mapeo['tabla-3'] = {
         'disponible': disponible_t3,
         'columna_id': categoria(2) if disponible_t3 else None,
         'columnas_valor': [columna_valor_tabla(0), columna_valor_tabla(1)] if disponible_t3 else [],
-    }
-
-    # Tabla 4 y Tabla 5 son las posiciones históricas (ver módulo): estructuralmente son una tabla
-    # más, mismo requisito que Tabla 3, solo rotan a otras columnas de categoría para no repetir
-    # siempre la misma combinación.
-    disponible_t4 = len(categorias) >= 3 and len(valores) >= 2
-    mapeo['tabla-4'] = {
-        'disponible': disponible_t4,
-        'columna_id': categoria(3) if disponible_t4 else None,
-        'columnas_valor': [columna_valor_tabla(0), columna_valor_tabla(1)] if disponible_t4 else [],
-    }
-
-    disponible_t5 = len(categorias) >= 3 and len(valores) >= 2
-    mapeo['tabla-5'] = {
-        'disponible': disponible_t5,
-        'columna_id': categoria(4) if disponible_t5 else None,
-        'columnas_valor': [columna_valor_tabla(0), columna_valor_tabla(1)] if disponible_t5 else [],
     }
 
     return mapeo
@@ -510,7 +477,7 @@ def _calcular_contenido_slot(df, slot, propuesta):
 
 
 def calcular_datos_mapeo(df, mapeo):
-    """Contenido final de las 15 posiciones: el calculado a partir del mapeo cuando la posición
+    """Contenido final de las 13 posiciones: el calculado a partir del mapeo cuando la posición
     está `disponible` y sus columnas siguen existiendo, o el dato ficticio en cualquier otro
     caso — nunca deja una posición sin contenido."""
     fijos = datos_ficticios()
@@ -590,7 +557,7 @@ def _componentes_zona_personal(layout):
     """Los componentes que el usuario agregó a mano a la "Zona Personal" (`config.zona ==
     'personal'`, ver `dashboard_layout.agregar_componente_generado`) — se preservan tal cual (sin
     recalcular contra el archivo nuevo) cada vez que se vuelve a sembrar/aplicar la plantilla de
-    15 posiciones: recalcular abriría una superficie nueva de "la columna ya no existe" que la
+    13 posiciones: recalcular abriría una superficie nueva de "la columna ya no existe" que la
     plantilla fija ya resuelve cayendo a datos ficticios, pero un componente de Zona Personal no
     tiene ese resguardo. Se lee directo de `DashboardComponent` (no de `componentes_validos`, que
     no expone `is_visible`) para no perder el estado oculto de cada uno."""
@@ -622,7 +589,7 @@ def _escribir_plantilla(dashboard_id, contenidos_por_slot, mapeo=None, slots=Non
 
 
 def sembrar_plantilla(dashboard_id):
-    """Crea los 15 componentes de la plantilla con datos ficticios, siempre a partir de los
+    """Crea los 13 componentes de la plantilla con datos ficticios, siempre a partir de los
     valores de fábrica (`PLANTILLA_SLOTS`, patrón Z) — nunca de la personalización. Reservada para
     dos casos: el primer arranque de la propia plantilla base (`DASHBOARD_ID_PLANTILLA_BASE`) y el
     botón "Restablecer al patrón Z" (volver a sembrarla). Un dashboard real nuevo se siembra con
@@ -638,8 +605,8 @@ def sembrar_plantilla_desde_base(dashboard_id):
 
 
 def aplicar_mapeo(dashboard_id, df, mapeo, actor=None, request=None):
-    """Recalcula las 15 posiciones a partir de un mapeo ya confirmado por el usuario y
-    sobreescribe los mismos 15 componentes (nunca agrega otros) — se puede llamar varias veces
+    """Recalcula las 13 posiciones a partir de un mapeo ya confirmado por el usuario y
+    sobreescribe los mismos 13 componentes (nunca agrega otros) — se puede llamar varias veces
     (p. ej. tras cargar un archivo distinto) sin duplicar nada. El `chart_type` de cada posición
     (`_chart_type_elegido`) también sale del mapeo, así que cambiar cómo se dibuja una gráfica (p.
     ej. de barras a líneas) se aplica junto con el resto de ajustes."""

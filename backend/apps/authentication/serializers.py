@@ -90,6 +90,25 @@ class PasswordResetValidateSerializer(serializers.Serializer):
     token = serializers.CharField()
 
 
+class EmailTemplateSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    subject = serializers.CharField()
+    html_body = serializers.CharField()
+    updated_at = serializers.DateTimeField()
+    variables = serializers.SerializerMethodField()
+
+    def get_variables(self, obj):
+        from .email_template_defaults import TEMPLATE_VARIABLES
+        return TEMPLATE_VARIABLES.get(obj.key, [])
+
+
+class EmailTemplateUpdateSerializer(serializers.Serializer):
+    subject = serializers.CharField(max_length=200)
+    # Sin tope estricto de la plantilla de correo original (era ~1 KB) — pero sí un límite
+    # generoso para no aceptar payloads absurdos desde el editor de texto enriquecido.
+    html_body = serializers.CharField(max_length=100_000)
+
+
 class PasswordResetConfirmSerializer(serializers.Serializer):
     token = serializers.CharField()
     new_password = serializers.CharField(trim_whitespace=False, min_length=8)

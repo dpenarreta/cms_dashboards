@@ -196,7 +196,7 @@ function TablaSimple({ categorias, valores }) {
  * paginador. `mostrarHallazgos` (por defecto `true`) deja ocultar el párrafo de "Hallazgos
  * clave" — lo usa el modal "Ver archivo" del histórico de cargas, donde se muestra el archivo tal
  * cual (una previsualización cruda), no una interpretación de sus datos. `esHistorica` agrega una
- * etiqueta fija junto al título para las posiciones históricas (Tabla 4/Tabla 5, ver
+ * etiqueta fija junto al título para la posición histórica (Tabla 3, ver
  * `TablaHistoricaAutomatica`) — es un prop controlado por quién renderiza la tabla, nunca algo
  * guardado en `content`/`mapeo`, así que ninguna edición de título/descripción puede quitarla.
  */

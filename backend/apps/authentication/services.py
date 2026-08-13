@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 import secrets
 
 from django.conf import settings
@@ -7,9 +8,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import check_password
 from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q
-from django.template.loader import render_to_string
 from django.utils import timezone
-from django.utils.html import strip_tags
+from django.utils.html import escape, strip_tags
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -17,7 +17,7 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import log_event
 from cartera.exceptions import CarteraError
 
-from .models import LoginAttempt, PasswordResetToken, Session
+from .models import EmailTemplate, LoginAttempt, PasswordResetToken, Session
 from .tokens import issue_token_pair
 
 User = get_user_model()
@@ -145,6 +145,28 @@ def _hash_token(raw_token):
     return hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
 
 
+# `(?:\s|&nbsp;)*`, no solo `\s*`: el editor de texto enriquecido (Quill, `EmailTemplatesPage.jsx`)
+# reescribe el HTML al guardar y convierte espacios normales en la entidad literal `&nbsp;`
+# (6 caracteres de texto, no el carácter Unicode — comportamiento normal de un contenteditable
+# para que el navegador no colapse esos espacios visualmente) — pasa sobre todo justo alrededor de
+# `{{`/`}}`, que es exactamente donde este patrón necesita reconocer espacio. Sin este ajuste, un
+# admin que edita la plantilla desde el editor rompe la sustitución de variables sin darse cuenta.
+_MARCADOR_RE = re.compile(r'\{\{(?:\s|&nbsp;)*(\w+)(?:\s|&nbsp;)*\}\}')
+
+
+def _renderizar_plantilla(texto, contexto):
+    """Sustitución de `{{ variable }}` propia y deliberadamente simple — NO el motor de templates
+    de Django (`Template(texto).render(...)`), que permitiría `{% %}` y ejecutar lógica arbitraria
+    sobre HTML que guardó un admin desde el editor de texto enriquecido de `/admin/settings`. El
+    HTML alrededor de cada marcador se deja tal cual (confiado, mismo nivel que ya tiene un admin
+    para editar `SiteTheme`); el VALOR que se inserta si se escapa (`django.utils.html.escape`)
+    para que un dato como `first_name`/`username` con caracteres especiales no rompa la
+    estructura del HTML. Una clave sin valor en `contexto` se deja vacía, no revienta."""
+    def _reemplazar(match):
+        return escape(str(contexto.get(match.group(1), '')))
+    return _MARCADOR_RE.sub(_reemplazar, texto)
+
+
 def _enviar_correo_recuperacion(*, usuario, raw_token):
     from apps.branding.models import SiteTheme
 
@@ -158,12 +180,13 @@ def _enviar_correo_recuperacion(*, usuario, raw_token):
         'site_name': tema.site_name,
         'color_primary': tema.color_primary,
     }
-    html = render_to_string('authentication/password_reset_email.html', contexto)
-    texto = render_to_string('authentication/password_reset_email.txt', contexto)
+    plantilla = EmailTemplate.get_or_seed(EmailTemplate.KEY_PASSWORD_RESET)
+    asunto = _renderizar_plantilla(plantilla.subject, contexto)
+    html = _renderizar_plantilla(plantilla.html_body, contexto)
 
     correo = EmailMultiAlternatives(
-        subject='Recuperación de contraseña | CMS Dashboards',
-        body=strip_tags(texto),
+        subject=asunto,
+        body=strip_tags(html),
         from_email=settings.DEFAULT_FROM_EMAIL,
         to=[usuario.email],
     )

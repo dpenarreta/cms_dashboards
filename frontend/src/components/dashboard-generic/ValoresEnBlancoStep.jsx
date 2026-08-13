@@ -40,7 +40,7 @@ export default function ValoresEnBlancoStep({
                 <div className="d-flex align-items-center gap-2 flex-wrap mb-1">
                   <strong>{c.columna}</strong>
                   <span className="chart-panel__subtitle mb-0">{c.cantidad_en_blanco} fila(s) en blanco</span>
-                  {esHistorica && <Badge bg="danger">usada en Tabla 4 y Tabla 5 (histórica)</Badge>}
+                  {esHistorica && <Badge bg="danger">usada en Tabla 3 (histórica)</Badge>}
                 </div>
                 <Form.Control
                   size="sm"

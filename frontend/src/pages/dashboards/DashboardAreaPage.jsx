@@ -54,13 +54,13 @@ function ZonaPersonalDropTarget() {
 }
 
 /**
- * Página de un dashboard por área. Todo dashboard nace con las 15 posiciones fijas de la
+ * Página de un dashboard por área. Todo dashboard nace con las 13 posiciones fijas de la
  * plantilla (`services/plantilla.py`, sembradas al crearlo) con datos ficticios — nunca vacío.
  * "Cargar otro archivo" abre el flujo `CARGA → RENOMBRAR → [VALORES_EN_BLANCO] → MAPEO`
  * (`useGenericDashboardBuilder`): analiza el archivo, deja renombrar cualquier columna y marcarla
  * como "histórica" (`RenameColumnsStep` — esa marca queda guardada por dashboard, se reconoce sola
- * en la próxima carga, y alimenta automáticamente Tabla 4/Tabla 5, ver `columnasHistoricasConfiguradas`
- * más abajo), propone qué columna(s) usar en cada una de las 15 posiciones (`TemplateMappingStep`)
+ * en la próxima carga, y alimenta automáticamente Tabla 3, ver `columnasHistoricasConfiguradas`
+ * más abajo), propone qué columna(s) usar en cada una de las 13 posiciones (`TemplateMappingStep`)
  * y, al confirmar, sobreescribe esas mismas posiciones con datos reales.
  * Cada posición sigue siendo un componente normal del layout (`useDashboardLayout`), así que
  * conserva el editor de grid (mover/redimensionar/ocultar/recolorear) ya existente.
@@ -92,10 +92,10 @@ export default function DashboardAreaPage() {
   const puedeHallazgosIA = Boolean(user?.permissions?.includes('dashboard.hallazgos_ia'))
 
   // Las columnas que el usuario ya marcó como "históricas" para este dashboard (`ColumnaHistorica`,
-  // configuración persistente — no lo que aparece en los datos ya guardados). Alimenta Tabla 4/
-  // Tabla 5 en la vista normal del dashboard (más abajo) y, durante el asistente de carga, deja
+  // configuración persistente — no lo que aparece en los datos ya guardados). Alimenta Tabla 3
+  // en la vista normal del dashboard (más abajo) y, durante el asistente de carga, deja
   // pre-tildadas las mismas columnas en "Renombrar columnas" y avisa si alguna falta en el archivo
-  // nuevo. Se pide siempre (no solo durante el asistente): Tabla 4/5 la necesitan igual fuera de
+  // nuevo. Se pide siempre (no solo durante el asistente): Tabla 3 la necesita igual fuera de
   // él. `builder.fase` como dependencia hace que se refresque sola después de aplicar un mapeo
   // nuevo (esa acción vuelve la fase a CARGA).
   const [columnasHistoricasConfiguradas, setColumnasHistoricasConfiguradas] = useState([])
@@ -226,7 +226,7 @@ export default function DashboardAreaPage() {
         if (componente.type !== 'kpi' && componente.type !== 'chart') return null
         const override = construirOverride(componente)
         const { datos, datosMultiserie } = datosDesdeComponente(componente)
-        const esTablaHistorica = componente.component_id === 'tabla-4' || componente.component_id === 'tabla-5'
+        const esTablaHistorica = componente.component_id === 'tabla-3'
         const contenidoNormal = (
           <GenericChartRenderer
             tipoVisualizacion={componente.type === 'kpi' ? 'kpi' : (componente.chart_type || 'barras_horizontales')}
@@ -239,10 +239,10 @@ export default function DashboardAreaPage() {
             hallazgoIA={hallazgosIA[componente.component_id]}
           />
         )
-        // Tabla 4 y Tabla 5 son las únicas posiciones que, en vez de mostrar el detalle del
-        // archivo actual, comparan en vivo todas las cargas históricas del dashboard — caen a
-        // `contenidoNormal` si todavía no hay historial o esta posición no tiene columnas
-        // mapeadas.
+        // Tabla 3 es la única posición que, en vez de mostrar el detalle del archivo actual,
+        // compara en vivo las cargas históricas HABILITADAS del dashboard (ver
+        // `TablaHistoricaAutomatica.jsx`) — cae a `contenidoNormal` si todavía no hay historial
+        // habilitado o esta posición no tiene columnas mapeadas.
         if (esTablaHistorica) {
           return (
             <TablaHistoricaAutomatica

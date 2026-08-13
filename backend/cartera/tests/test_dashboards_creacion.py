@@ -48,6 +48,19 @@ class CrearDashboardServiceTests(TestCase):
             actor=usuario, dashboard_id='talento-humano',
         ).exists())
 
+    def test_persiste_el_contexto_para_la_ia(self):
+        dashboard = crear_dashboard(nombre='Cobranza', contexto='Cartera vencida de la región norte.')
+        self.assertEqual(dashboard.contexto, 'Cartera vencida de la región norte.')
+
+    def test_contexto_vacio_por_defecto(self):
+        dashboard = crear_dashboard(nombre='Sin contexto')
+        self.assertEqual(dashboard.contexto, '')
+
+    def test_contexto_se_trunca_a_la_longitud_maxima(self):
+        from cartera.services.dashboards import LONGITUD_MAXIMA_CONTEXTO
+        dashboard = crear_dashboard(nombre='Con contexto largo', contexto='x' * (LONGITUD_MAXIMA_CONTEXTO + 50))
+        self.assertEqual(len(dashboard.contexto), LONGITUD_MAXIMA_CONTEXTO)
+
 
 class DashboardCreateViewTests(TestCase):
     def setUp(self):
@@ -67,9 +80,12 @@ class DashboardCreateViewTests(TestCase):
         )
         self.client.force_authenticate(user=usuario)
 
-        resp = self.client.post('/api/dashboards/', {'name': 'Comercial', 'area': 'Ventas'}, format='json')
+        resp = self.client.post(
+            '/api/dashboards/', {'name': 'Comercial', 'area': 'Ventas', 'contexto': 'Ventas del canal digital.'}, format='json',
+        )
         self.assertEqual(resp.status_code, 201)
         self.assertEqual(resp.json()['dashboard_id'], 'comercial')
+        self.assertEqual(resp.json()['contexto'], 'Ventas del canal digital.')
         self.assertTrue(Dashboard.objects.filter(dashboard_id='comercial').exists())
 
         listado = self.client.get('/api/dashboards/authorized')

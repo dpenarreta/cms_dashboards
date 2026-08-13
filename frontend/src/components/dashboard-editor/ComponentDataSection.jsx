@@ -83,12 +83,6 @@ export default function ComponentDataSection({ componente, dashboardId, onActual
     recalcular(nuevoMapeo)
   }
 
-  const cambiarEnLista = (campo, indice) => (valor) => {
-    const lista = [...(propuesta[campo] || [])]
-    lista[indice] = valor
-    recalcular({ ...propuesta, [campo]: lista, disponible: true })
-  }
-
   const cambiarLista = (campo) => (nuevaLista) => recalcular({ ...propuesta, [campo]: nuevaLista, disponible: true })
 
   return (
@@ -102,7 +96,7 @@ export default function ComponentDataSection({ componente, dashboardId, onActual
           </span>
         )}
       </div>
-      {camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarEnLista, cambiarLista })}
+      {camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarLista })}
       <FiltroSlot
         contexto={slot.titulo}
         cargaId={archivoActual.carga_id}

@@ -95,12 +95,13 @@ class DashboardCreateView(APIView):
             nombre=request.data.get('name'),
             area=request.data.get('area', ''),
             descripcion=request.data.get('description', ''),
+            contexto=request.data.get('contexto', ''),
             creado_por=request.user,
             request=request,
         )
         return Response({
             'dashboard_id': dashboard.dashboard_id, 'name': dashboard.name, 'area': dashboard.area,
-            'description': dashboard.description,
+            'description': dashboard.description, 'contexto': dashboard.contexto,
         }, status=201)
 
 
@@ -114,9 +115,12 @@ class DashboardDetailView(APIView):
 
         dashboard = dashboards_service.actualizar_dashboard(
             dashboard_id, nombre=request.data.get('name'), area=request.data.get('area', ''),
-            actor=request.user, request=request,
+            contexto=request.data.get('contexto', ''), actor=request.user, request=request,
         )
-        return Response({'dashboard_id': dashboard.dashboard_id, 'name': dashboard.name, 'area': dashboard.area})
+        return Response({
+            'dashboard_id': dashboard.dashboard_id, 'name': dashboard.name, 'area': dashboard.area,
+            'contexto': dashboard.contexto,
+        })
 
     def delete(self, request, dashboard_id):
         if not permisos.tiene_permiso(request, permisos.DASHBOARD_ELIMINAR):

@@ -11,7 +11,7 @@ const TIPOS_COMPONENTE = [
   { id: 'kpi', etiqueta: 'KPI (un solo valor)', tipoVisualizacion: 'kpi' },
   { id: 'chart', etiqueta: 'Gráfico de una columna', tipoVisualizacion: 'barras_verticales' },
   { id: 'multivalor', etiqueta: 'Gráfico de 2+ columnas (comparar métricas)', tipoVisualizacion: 'lineas_multiples' },
-  { id: 'multiserie', etiqueta: 'Gráfico de 2+ columnas (categoría y serie)', tipoVisualizacion: 'area_apilada' },
+  { id: 'multiserie', etiqueta: 'Gráfico de 2+ columnas (categoría y serie)', tipoVisualizacion: 'barras_agrupadas' },
   { id: 'tabla', etiqueta: 'Tabla', tipoVisualizacion: 'tabla' },
   { id: 'dispersion', etiqueta: 'Dispersión', tipoVisualizacion: 'dispersion' },
 ]
@@ -124,11 +124,6 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
   const slot = { calculo: tipoId, titulo: 'Nuevo componente', tipoVisualizacion: tipoSeleccionado.tipoVisualizacion }
 
   const cambiar = (campo) => (valor) => setPropuesta((prev) => ({ ...prev, [campo]: valor }))
-  const cambiarEnLista = (campo, indice) => (valor) => setPropuesta((prev) => {
-    const lista = [...(prev[campo] || [])]
-    lista[indice] = valor
-    return { ...prev, [campo]: lista }
-  })
   const cambiarLista = (campo) => (nuevaLista) => setPropuesta((prev) => ({ ...prev, [campo]: nuevaLista }))
 
   const cambiarTipo = (nuevoTipoId) => {
@@ -188,7 +183,7 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
               </Form.Select>
             </Form.Group>
 
-            {camposParaSlot({ slot, propuesta, columnas: archivoActual.columnas, cambiar, cambiarEnLista, cambiarLista })}
+            {camposParaSlot({ slot, propuesta, columnas: archivoActual.columnas, cambiar, cambiarLista })}
 
             <Form.Group className="mb-2" controlId="agregar-personal-ancho">
               <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Ancho</Form.Label>

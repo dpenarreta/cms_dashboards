@@ -112,7 +112,7 @@ describe('DashboardAreaPage', () => {
       { dashboard_id: 'finanzas', name: 'Finanzas', orden: 1 },
     ])
     useAuth.mockReturnValue({ user: { permissions: [] } })
-    // La página pide `columnasHistoricasConfiguradas` siempre (Tabla 4/5 la necesitan también
+    // La página pide `columnasHistoricasConfiguradas` siempre (Tabla 3 la necesita también
     // fuera del asistente de carga) — sin este default, cualquier test que no le interese esa
     // parte rompería al llamar `.then` sobre un mock sin resolver.
     historicoService.listarCargasHistoricas.mockResolvedValue({
@@ -369,7 +369,7 @@ describe('DashboardAreaPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cargar otro archivo' }))
 
     expect(screen.getByText('Columnas con valores en blanco')).toBeInTheDocument()
-    expect(screen.getByText(/usada en Tabla 4 y Tabla 5 \(histórica\)/)).toBeInTheDocument()
+    expect(screen.getByText(/usada en Tabla 3 \(histórica\)/)).toBeInTheDocument()
   })
 
   it('confirmar el mapeo recarga el layout y vuelve a mostrar el grid', async () => {
@@ -576,29 +576,11 @@ describe('DashboardAreaPage', () => {
     expect(screen.queryByText('Total ventas')).not.toBeInTheDocument()
   })
 
-  it('Tabla 3 vuelve a mostrar siempre su contenido normal (último archivo), nunca la comparativa histórica', async () => {
+  describe('Tabla 3 (comparación histórica en vivo)', () => {
     const TABLA_3 = {
-      component_id: 'tabla-3', type: 'chart', chart_type: 'tabla', row: 1, order: 11, width: 12, height: 380,
+      component_id: 'tabla-3', type: 'chart', chart_type: 'tabla', row: 1, order: 11, width: 6, height: 340,
       is_visible: true,
       content: { titulo: 'Tabla 3', columnas: ['Producto', 'Ventas'], filas: [['A', 100]] },
-      styles: {}, config: {},
-      mapeo: { disponible: true, columna_id: 'Producto', columnas_valor: [{ columna: 'Ventas', tipo_agregacion: 'suma' }] },
-    }
-    useGenericDashboardBuilder.mockReturnValue(builderBase())
-    useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_3] }))
-    renderPagina()
-    await screen.findByRole('heading', { name: 'Finanzas' })
-
-    expect(await screen.findByText('Tabla 3')).toBeInTheDocument()
-    expect(screen.getAllByText('A').length).toBeGreaterThan(0)
-    expect(screen.queryByText('Histórica')).not.toBeInTheDocument()
-  })
-
-  describe('Tabla 4 y Tabla 5 (comparación histórica en vivo)', () => {
-    const TABLA_4 = {
-      component_id: 'tabla-4', type: 'chart', chart_type: 'tabla', row: 1, order: 12, width: 6, height: 340,
-      is_visible: true,
-      content: { titulo: 'Tabla 4', columnas: ['Producto', 'Ventas'], filas: [['A', 100]] },
       styles: {}, config: {}, mapeo: {},
     }
 
@@ -607,11 +589,11 @@ describe('DashboardAreaPage', () => {
         cargas: [], columnas_disponibles: [], columnas_historicas_configuradas: [],
       })
       useGenericDashboardBuilder.mockReturnValue(builderBase())
-      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_4] }))
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_3] }))
       renderPagina()
       await screen.findByRole('heading', { name: 'Finanzas' })
 
-      expect(await screen.findByText('Tabla 4')).toBeInTheDocument()
+      expect(await screen.findByText('Tabla 3')).toBeInTheDocument()
       expect(screen.getByText('Histórica')).toBeInTheDocument()
       expect(historicoService.calcularTablaHistorica).not.toHaveBeenCalled()
     })
@@ -621,11 +603,11 @@ describe('DashboardAreaPage', () => {
         cargas: [], columnas_disponibles: [], columnas_historicas_configuradas: ['Ventas'],
       })
       useGenericDashboardBuilder.mockReturnValue(builderBase())
-      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_4] }))
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_3] }))
       renderPagina()
       await screen.findByRole('heading', { name: 'Finanzas' })
 
-      expect(await screen.findByText('Tabla 4')).toBeInTheDocument()
+      expect(await screen.findByText('Tabla 3')).toBeInTheDocument()
       expect(screen.getAllByText('A').length).toBeGreaterThan(0)
       expect(historicoService.calcularTablaHistorica).not.toHaveBeenCalled()
     })
@@ -641,7 +623,7 @@ describe('DashboardAreaPage', () => {
         filas: [['enero.xlsx', 'admin', '2026-01-01', '', 100]],
       })
       useGenericDashboardBuilder.mockReturnValue(builderBase())
-      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_4] }))
+      useDashboardLayout.mockReturnValue(layoutBase({ borrador: [TABLA_3] }))
       renderPagina()
       await screen.findByRole('heading', { name: 'Finanzas' })
 

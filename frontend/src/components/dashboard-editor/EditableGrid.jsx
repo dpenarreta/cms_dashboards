@@ -15,7 +15,7 @@ const ZONA_DE = Object.fromEntries(IDS_CON_ZONA.map((id) => [
 /** A diferencia de `ZONA_DE` (estático, solo la plantilla fija), la Zona Personal es dinámica:
  * cualquier componente con `config.zona === 'personal'` (agregado desde "Agregar a Zona
  * Personal") — `personalIds` se recalcula en cada render, a partir de los componentes actuales,
- * para bloquear el arrastre cruzado hacia/desde ella igual que entre las 6 zonas de plantilla. */
+ * para bloquear el arrastre cruzado hacia/desde ella igual que entre las 5 zonas de plantilla. */
 function zonaDe(componentId, personalIds) {
   if (personalIds.has(componentId)) return 'personal'
   return ZONA_DE[componentId] ?? 'sin-zona'

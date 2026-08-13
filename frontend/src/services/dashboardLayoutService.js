@@ -31,12 +31,12 @@ export function obtenerDashboardsAutorizados() {
   return api.get('/authorized').then((r) => r.data)
 }
 
-export function crearDashboard({ name, area, description }) {
-  return api.post('/', { name, area, description }).then((r) => r.data)
+export function crearDashboard({ name, area, description, contexto }) {
+  return api.post('/', { name, area, description, contexto }).then((r) => r.data)
 }
 
-export function actualizarDashboard(dashboardId, { name, area }) {
-  return api.patch(`/${dashboardId}/`, { name, area }).then((r) => r.data)
+export function actualizarDashboard(dashboardId, { name, area, contexto }) {
+  return api.patch(`/${dashboardId}/`, { name, area, contexto }).then((r) => r.data)
 }
 
 export function eliminarDashboard(dashboardId, confirmationName) {

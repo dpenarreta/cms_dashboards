@@ -15,6 +15,10 @@ class Dashboard(models.Model):
     name = models.CharField(max_length=150)
     area = models.CharField(max_length=100, blank=True, default='')
     description = models.CharField(max_length=300, blank=True, default='')
+    # Texto libre, editable en creación y edición, pensado únicamente para orientar a la IA
+    # (`services/dashboard_interpretation.py`) sobre qué es este dashboard y qué representan sus
+    # datos — nunca se renderiza dentro del dashboard en sí, a diferencia de `description`.
+    contexto = models.TextField(blank=True, default='')
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Pestañas dentro de un mismo dashboard: cada pestaña es un `Dashboard` más (su propia
@@ -87,6 +91,14 @@ class CargaArchivo(models.Model):
     # (`views._guardar_archivo_permanente`) — permite reconfigurar el mapeo de columnas de un
     # componente después, desde "Configurar componente", sin volver a cargar el archivo.
     archivo_permanente_nombre = models.CharField(max_length=255, blank=True, default='')
+
+    # Si esta carga cuenta para la comparación histórica del dashboard (Tabla 3 y "Histórico de
+    # cargas", ver `services/historico.py::calcular_tabla_historica`) — editable desde "Histórico
+    # de cargas" (checkbox por carga, persiste de inmediato). `default=True`: toda carga cuenta por
+    # defecto, igual que el comportamiento antes de que este campo existiera. No borra
+    # `FilaArchivoHistorico`: los datos siguen guardados, solo se excluyen del cálculo mientras esté
+    # en `False`, así se puede revertir sin perder nada.
+    incluir_en_historico = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['-fecha_carga']
@@ -166,7 +178,7 @@ class ColumnaHistorica(models.Model):
     junto a cada columna) — persiste por `dashboard_id` para reconocerla sola en la próxima carga
     del mismo dashboard, sin que el usuario tenga que volver a tildarla. Decide tanto qué columnas
     persisten en `FilaArchivoHistorico` de acá en adelante (solo estas, no la fila completa) como
-    qué columnas comparan automáticamente Tabla 4/Tabla 5 (`TablaHistoricaAutomatica`, frontend).
+    qué columnas compara automáticamente Tabla 3 (`TablaHistoricaAutomatica`, frontend).
     `columna` ya viene renombrada por alias, igual que `FilaArchivoHistorico.datos`."""
 
     dashboard_id = models.SlugField(max_length=100, db_index=True)

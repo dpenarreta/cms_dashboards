@@ -1,4 +1,4 @@
-"""Plantilla base personalizable desde "Configuración → Plantilla base": las 15 posiciones fijas
+"""Plantilla base personalizable desde "Configuración → Plantilla base": las 13 posiciones fijas
 de todo dashboard, editables (arrastrar/redimensionar/reordenar/recolorear/renombrar/cambiar tipo
 de gráfico) bajo el `dashboard_id` reservado `plantilla.DASHBOARD_ID_PLANTILLA_BASE`. Lo que se
 guarde ahí es lo que hereda todo dashboard NUEVO de ahí en adelante."""
@@ -36,7 +36,7 @@ class SlotsEfectivosTests(TestCase):
         kpi1.content = {**kpi1.content, 'titulo': 'Ingresos totales'}
         kpi1.styles = {'colorPrincipal': '#ff0000'}
         kpi1.width = 6
-        kpi1.order = 16  # se mueve al final (más allá del resto, que sigue en 1..15)
+        kpi1.order = 14  # se mueve al final (más allá del resto, que sigue en 1..13)
         kpi1.save()
 
         grafico1 = layout.components.get(component_id='grafico-1')
@@ -44,7 +44,7 @@ class SlotsEfectivosTests(TestCase):
         grafico1.save()
 
         efectivos = plantilla.slots_efectivos()
-        self.assertEqual(len(efectivos), 15)
+        self.assertEqual(len(efectivos), 13)
 
         por_id = {s['id']: s for s in efectivos}
         self.assertEqual(por_id['kpi-1']['ancho'], 6)
@@ -102,7 +102,7 @@ class PlantillaBaseLayoutViewTests(TestCase):
         resp = self.client.get('/api/cartera/plantilla-base/layout')
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
-        self.assertEqual(len(data['components']), 15)
+        self.assertEqual(len(data['components']), 13)
         ids_en_orden = [c['component_id'] for c in sorted(data['components'], key=lambda c: c['order'])]
         self.assertEqual(ids_en_orden[:5], ['kpi-1', 'kpi-2', 'kpi-3', 'kpi-4', 'grafico-3'])
 

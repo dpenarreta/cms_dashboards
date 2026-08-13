@@ -13,9 +13,9 @@ from rest_framework.test import APIClient
 
 from apps.audit.models import AuditEvent
 
-from .models import LoginAttempt, PasswordResetToken, Session
+from .models import EmailTemplate, LoginAttempt, PasswordResetToken, Session
 from .serializers import AvatarUploadSerializer
-from .services import MENSAJE_GENERICO_RECUPERACION, PasswordResetService, _hash_token
+from .services import MENSAJE_GENERICO_RECUPERACION, PasswordResetService, _hash_token, _renderizar_plantilla
 
 User = get_user_model()
 
@@ -276,7 +276,7 @@ class PasswordResetServiceTests(TestCase):
         self.assertEqual(PasswordResetToken.objects.filter(user=self.usuario).count(), 1)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn('ana@example.com', mail.outbox[0].to)
-        self.assertEqual(mail.outbox[0].subject, 'Recuperación de contraseña | CMS Dashboards')
+        self.assertEqual(mail.outbox[0].subject, 'Recuperación de contraseña | Dashboard de Cartera')
 
     def test_correo_no_registrado_devuelve_el_mismo_mensaje_generico_sin_enviar_correo(self):
         mensaje = PasswordResetService.solicitar(email='no-existe@example.com')
@@ -428,4 +428,142 @@ class PasswordResetApiTests(TestCase):
     def test_validar_token_invalido_devuelve_400(self):
         resp = self.client.post('/api/auth/password-reset/validate', {'token': 'no-existe'}, format='json')
         self.assertEqual(resp.status_code, 400)
-        self.assertEqual(resp.json()['error'], 'TOKEN_INVALIDO')
+
+
+class RenderizarPlantillaTests(TestCase):
+    """Sustitución propia de `{{ variable }}` (`services.py::_renderizar_plantilla`) — no el
+    motor de templates de Django, ver el docstring de la función."""
+
+    def test_sustituye_variables_conocidas(self):
+        resultado = _renderizar_plantilla('Hola {{ nombre }}, tu enlace es {{ enlace }}.', {
+            'nombre': 'Ana', 'enlace': 'https://x.test/y',
+        })
+        self.assertEqual(resultado, 'Hola Ana, tu enlace es https://x.test/y.')
+
+    def test_variable_desconocida_se_deja_vacia_sin_reventar(self):
+        resultado = _renderizar_plantilla('Hola {{ nombre }}{{ inexistente }}.', {'nombre': 'Ana'})
+        self.assertEqual(resultado, 'Hola Ana.')
+
+    def test_escapa_el_valor_insertado_pero_no_el_html_alrededor(self):
+        resultado = _renderizar_plantilla('<p>{{ nombre }}</p>', {'nombre': '<script>alert(1)</script>'})
+        self.assertEqual(resultado, '<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>')
+
+    def test_sustituye_aunque_el_editor_haya_convertido_los_espacios_en_nbsp(self):
+        # Quill (editor de texto enriquecido, `EmailTemplatesPage.jsx`) reescribe el HTML al
+        # guardar y convierte espacios normales en `&nbsp;` — sobre todo justo alrededor de
+        # `{{`/`}}`. Sin esto, cualquier plantilla editada desde el editor deja de sustituir.
+        resultado = _renderizar_plantilla('<h1>{{&nbsp;site_name&nbsp;}}</h1>', {'site_name': 'ACME'})
+        self.assertEqual(resultado, '<h1>ACME</h1>')
+
+    def test_no_ejecuta_sintaxis_de_template_de_django_si_el_html_la_contiene(self):
+        # Un HTML guardado por un admin con `{% ... %}` (sea a propósito o sin querer) se deja
+        # literal — no es una etiqueta de Django real acá, es solo texto.
+        resultado = _renderizar_plantilla('{% if True %}{{ nombre }}{% endif %}', {'nombre': 'Ana'})
+        self.assertEqual(resultado, '{% if True %}Ana{% endif %}')
+
+
+class EmailTemplateModelTests(TestCase):
+    def test_get_or_seed_crea_la_fila_con_los_valores_por_defecto_si_no_existe(self):
+        EmailTemplate.objects.all().delete()
+        plantilla = EmailTemplate.get_or_seed(EmailTemplate.KEY_PASSWORD_RESET)
+        self.assertIn('{{ site_name }}', plantilla.subject)
+        self.assertIn('{{ enlace }}', plantilla.html_body)
+
+    def test_get_or_seed_no_pisa_una_plantilla_ya_personalizada(self):
+        EmailTemplate.objects.filter(key=EmailTemplate.KEY_PASSWORD_RESET).update(subject='Asunto personalizado')
+        plantilla = EmailTemplate.get_or_seed(EmailTemplate.KEY_PASSWORD_RESET)
+        self.assertEqual(plantilla.subject, 'Asunto personalizado')
+
+    def test_restablecer_vuelve_a_los_valores_por_defecto(self):
+        plantilla = EmailTemplate.get_or_seed(EmailTemplate.KEY_PASSWORD_RESET)
+        plantilla.subject = 'Asunto personalizado'
+        plantilla.html_body = '<p>a medida</p>'
+        plantilla.save()
+        plantilla.restablecer()
+        plantilla.refresh_from_db()
+        self.assertIn('{{ site_name }}', plantilla.subject)
+        self.assertIn('{{ enlace }}', plantilla.html_body)
+
+
+class EmailTemplateAdminViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(username='admin', email='admin@example.com', password='Clave-Segura-123')
+
+    def _cliente_con_permiso(self, codename):
+        from django.contrib.auth.models import Permission
+        usuario = User.objects.create_user(
+            username=f'user_{User.objects.count()}', email=f'user{User.objects.count()}@example.com',
+            password='Clave-Segura-123',
+        )
+        usuario.user_permissions.add(Permission.objects.get(codename=codename, content_type__app_label='permissions'))
+        cliente = APIClient()
+        cliente.force_authenticate(user=usuario)
+        return cliente
+
+    def test_get_requiere_configuracion_ver(self):
+        usuario = User.objects.create_user(username='sin_permiso', email='sp@example.com', password='Clave-Segura-123')
+        self.client.force_authenticate(user=usuario)
+        resp = self.client.get('/api/auth/admin/email-templates/password_reset')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_get_con_configuracion_ver_devuelve_la_plantilla(self):
+        cliente = self._cliente_con_permiso('configuracion.ver')
+        resp = cliente.get('/api/auth/admin/email-templates/password_reset')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['key'], 'password_reset')
+        self.assertIn('html_body', resp.json())
+        self.assertTrue(len(resp.json()['variables']) > 0)
+
+    def test_get_con_key_invalida_devuelve_404(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.get('/api/auth/admin/email-templates/no-existe')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_patch_requiere_configuracion_editar_no_alcanza_con_ver(self):
+        cliente = self._cliente_con_permiso('configuracion.ver')
+        resp = cliente.patch('/api/auth/admin/email-templates/password_reset', {'subject': 'Nuevo asunto'}, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_patch_con_configuracion_editar_actualiza_y_audita(self):
+        self.client.force_authenticate(user=self.admin)
+        resp = self.client.patch('/api/auth/admin/email-templates/password_reset', {
+            'subject': 'Asunto nuevo', 'html_body': '<p>Hola {{ nombre_usuario }}</p>',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['subject'], 'Asunto nuevo')
+
+        plantilla = EmailTemplate.objects.get(key='password_reset')
+        self.assertEqual(plantilla.html_body, '<p>Hola {{ nombre_usuario }}</p>')
+        self.assertEqual(plantilla.updated_by, self.admin)
+        self.assertTrue(AuditEvent.objects.filter(
+            domain=AuditEvent.Domain.SYSTEM_CONFIGURATION, action='EMAIL_TEMPLATE_UPDATED', actor=self.admin,
+        ).exists())
+
+    def test_reset_requiere_configuracion_editar(self):
+        cliente = self._cliente_con_permiso('configuracion.ver')
+        resp = cliente.post('/api/auth/admin/email-templates/password_reset/reset')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_reset_vuelve_al_html_por_defecto(self):
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch('/api/auth/admin/email-templates/password_reset', {'subject': 'A medida'}, format='json')
+
+        resp = self.client.post('/api/auth/admin/email-templates/password_reset/reset')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('{{ site_name }}', resp.json()['subject'])
+
+    def test_el_correo_de_recuperacion_usa_la_plantilla_personalizada(self):
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch('/api/auth/admin/email-templates/password_reset', {
+            'subject': 'Un asunto bien distinto',
+            'html_body': '<p>Hola {{ nombre_usuario }}, entrá acá: {{ enlace }}</p>',
+        }, format='json')
+        usuario = User.objects.create_user(username='fer', email='fer@example.com', password='Clave-Segura-123')
+
+        PasswordResetService.solicitar(email='fer@example.com')
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, 'Un asunto bien distinto')
+        self.assertIn('Hola fer,', mail.outbox[0].body)

@@ -92,7 +92,7 @@ class DashboardsAuthorizedViewTests(TestCase):
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [{
-            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': False,
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'contexto': '', 'puede_administrar_acceso': False,
         }])
 
     def test_administrador_general_ve_todos_los_dashboards_autorizados(self):
@@ -104,7 +104,7 @@ class DashboardsAuthorizedViewTests(TestCase):
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [{
-            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': False,
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'contexto': '', 'puede_administrar_acceso': False,
         }])
 
     def test_superusuario_ve_todos_los_dashboards(self):
@@ -115,5 +115,5 @@ class DashboardsAuthorizedViewTests(TestCase):
         resp = client.get('/api/dashboards/authorized')
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [{
-            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'puede_administrar_acceso': True,
+            'dashboard_id': 'cobranza', 'name': 'Cobranza', 'area': 'Cartera', 'contexto': '', 'puede_administrar_acceso': True,
         }])

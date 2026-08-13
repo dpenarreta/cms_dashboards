@@ -12,12 +12,18 @@ import { formatDate, formatNumber } from '../../utils/format'
  * Histórico de archivos cargados (sección 28): cada archivo aplicado a la plantilla de un
  * dashboard (`AplicarMapeoPlantillaView`) queda guardado fila por fila
  * (`FilaArchivoHistorico`, ligado a su `CargaArchivo` de origen — se borra en cascada si esa
- * carga se elimina). Acá se eligen cuáles cargas incluir y qué columnas comparar (cada una con su
- * propio tipo de cálculo, igual que una tabla normal del dashboard) para armar una tabla con una
- * fila por carga — reutiliza `GenericDataTable` tal cual para mostrarla (orden y paginación salen
- * gratis; `mostrarHallazgos={false}` en ambos usos de esta página, tanto la tabla histórica
- * generada como el modal "Ver archivo": acá se está comparando/previsualizando el dato crudo, no
- * pidiendo una interpretación).
+ * carga se elimina). Acá se elige qué columnas comparar (cada una con su propio tipo de cálculo,
+ * igual que una tabla normal del dashboard) para armar una tabla con una fila por carga —
+ * reutiliza `GenericDataTable` tal cual para mostrarla (orden y paginación salen gratis;
+ * `mostrarHallazgos={false}` en ambos usos de esta página, tanto la tabla histórica generada como
+ * el modal "Ver archivo": acá se está comparando/previsualizando el dato crudo, no pidiendo una
+ * interpretación).
+ *
+ * El checkbox "Incluir" de cada carga NO es una selección efímera para esta pantalla: persiste de
+ * inmediato (`historicoService.establecerCargaIncluida`, `CargaArchivo.incluir_en_historico`) y
+ * también decide qué cargas ve Tabla 3 dentro del dashboard real — así que "Generar tabla
+ * histórica" ya no manda una lista de cargas elegidas a mano, usa el mismo criterio por defecto
+ * (todas las habilitadas) que el propio dashboard.
  */
 export default function DashboardHistoricoPage() {
   const { dashboardId } = useParams()
@@ -25,7 +31,6 @@ export default function DashboardHistoricoPage() {
   const [error, setError] = useState('')
   const [cargas, setCargas] = useState([])
   const [columnasDisponibles, setColumnasDisponibles] = useState([])
-  const [seleccionadas, setSeleccionadas] = useState(new Set())
   const [columnasValor, setColumnasValor] = useState([])
   const [tabla, setTabla] = useState(null)
   const [generando, setGenerando] = useState(false)
@@ -36,6 +41,7 @@ export default function DashboardHistoricoPage() {
   const [archivoVisto, setArchivoVisto] = useState(null)
   const [cargandoArchivo, setCargandoArchivo] = useState(false)
   const [errorArchivo, setErrorArchivo] = useState('')
+  const [errorIncluir, setErrorIncluir] = useState('')
 
   const cargar = () => {
     setCargando(true)
@@ -44,7 +50,6 @@ export default function DashboardHistoricoPage() {
       .then((resultado) => {
         setCargas(resultado.cargas)
         setColumnasDisponibles(resultado.columnas_disponibles)
-        setSeleccionadas(new Set(resultado.cargas.map((c) => c.carga_id)))
       })
       .catch(() => setError('No se pudo cargar el histórico de este dashboard.'))
       .finally(() => setCargando(false))
@@ -53,13 +58,17 @@ export default function DashboardHistoricoPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- solo debe recargar cuando cambia el dashboard
   useEffect(cargar, [dashboardId])
 
-  const alternarCarga = (cargaId) => {
-    setSeleccionadas((prev) => {
-      const siguiente = new Set(prev)
-      if (siguiente.has(cargaId)) siguiente.delete(cargaId)
-      else siguiente.add(cargaId)
-      return siguiente
-    })
+  const alternarCarga = async (carga) => {
+    setErrorIncluir('')
+    const incluirNuevo = !carga.incluir_en_historico
+    setCargas((actual) => actual.map((c) => (c.carga_id === carga.carga_id ? { ...c, incluir_en_historico: incluirNuevo } : c)))
+    try {
+      await historicoService.establecerCargaIncluida(carga.carga_id, incluirNuevo)
+    } catch {
+      // Revierte el cambio optimista si falla en el backend.
+      setCargas((actual) => actual.map((c) => (c.carga_id === carga.carga_id ? { ...c, incluir_en_historico: carga.incluir_en_historico } : c)))
+      setErrorIncluir('No se pudo actualizar la carga. Intentá de nuevo.')
+    }
   }
 
   const opcionesColumna = columnasDisponibles.map((nombre) => ({ nombre }))
@@ -87,7 +96,7 @@ export default function DashboardHistoricoPage() {
     setErrorTabla('')
     setGenerando(true)
     try {
-      const resultado = await historicoService.calcularTablaHistorica(dashboardId, columnasElegidas, [...seleccionadas])
+      const resultado = await historicoService.calcularTablaHistorica(dashboardId, columnasElegidas)
       setTabla(resultado)
     } catch {
       setErrorTabla('No se pudo generar la tabla histórica.')
@@ -126,6 +135,8 @@ export default function DashboardHistoricoPage() {
           <h3 className="mb-1">Histórico de cargas</h3>
           <p className="chart-panel__subtitle mb-0">
             Compará la evolución de una o más columnas a través de las cargas de este dashboard.
+            Desmarcar "Incluir" excluye esa carga de esta comparación y también de la tabla
+            histórica dentro del dashboard.
           </p>
         </div>
         <Button as={Link} to={`/app/dashboards/${dashboardId}`} variant="outline-secondary" size="sm">
@@ -147,10 +158,11 @@ export default function DashboardHistoricoPage() {
         <>
           <div className="chart-panel mb-3">
             <div className="chart-panel__title">Cargas disponibles</div>
+            {errorIncluir && <Alert variant="danger" className="py-2">{errorIncluir}</Alert>}
             <Table responsive size="sm" className="mb-0">
               <thead>
                 <tr>
-                  <th aria-label="Incluir" />
+                  <th>Incluir</th>
                   <th>Archivo</th>
                   <th>Fecha de carga</th>
                   <th>Fecha de corte</th>
@@ -164,8 +176,8 @@ export default function DashboardHistoricoPage() {
                     <td>
                       <Form.Check
                         type="checkbox"
-                        checked={seleccionadas.has(carga.carga_id)}
-                        onChange={() => alternarCarga(carga.carga_id)}
+                        checked={carga.incluir_en_historico}
+                        onChange={() => alternarCarga(carga)}
                         aria-label={`Incluir ${carga.nombre_original}`}
                       />
                     </td>

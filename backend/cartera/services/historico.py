@@ -5,7 +5,10 @@ reconocen solas en la próxima carga) — para poder armar tablas históricas co
 del mismo dashboard a través del tiempo, sin depender de que el archivo físico original siga
 existiendo en disco. A diferencia del dominio clásico de cartera (`RegistroCartera`, esquema fijo),
 este módulo no asume ninguna columna en particular: trabaja sobre el mismo `DataFrame` genérico que
-ya usa `services/plantilla.py`.
+ya usa `services/plantilla.py`. Además de qué COLUMNAS comparar (`ColumnaHistorica`), cada carga
+puede habilitarse/deshabilitarse individualmente para el cálculo (`CargaArchivo.incluir_en_historico`,
+`establecer_carga_incluida_en_historico`) — ambos flags son independientes: uno decide qué columnas
+se persisten y comparan, el otro qué cargas cuentan.
 """
 
 import pandas as pd
@@ -48,7 +51,7 @@ def guardar_filas_historicas(carga, df, columnas_historicas):
 def columnas_historicas_configuradas(dashboard_id):
     """Las columnas que el usuario ya marcó como históricas para este dashboard en una carga
     anterior (`ColumnaHistorica`) — se usa para reconocerlas solas (pre-tildadas) en la próxima
-    carga, y para que Tabla 4/Tabla 5 sepan qué comparar sin que el usuario tenga que elegir nada
+    carga, y para que Tabla 3 sepa qué comparar sin que el usuario tenga que elegir nada
     en el paso de Mapeo."""
     return list(ColumnaHistorica.objects.filter(dashboard_id=dashboard_id).values_list('columna', flat=True))
 
@@ -71,7 +74,11 @@ def listar_cargas_historicas(dashboard_id):
     `columnas_disponibles` son las columnas marcadas como históricas para este dashboard
     (`columnas_historicas_configuradas`) — no lo que efectivamente haya guardado cada carga: las
     cargas de antes de esta configuración persisten la fila completa (ver `guardar_filas_historicas`)
-    y esas columnas extra no le sirven al usuario para comparar, solo las que marcó a propósito."""
+    y esas columnas extra no le sirven al usuario para comparar, solo las que marcó a propósito.
+    Incluye `incluir_en_historico` por carga (ver `CargaArchivo.incluir_en_historico`) para que el
+    frontend refleje el estado real del checkbox de "Histórico de cargas", tanto las habilitadas
+    como las deshabilitadas — a diferencia de `calcular_tabla_historica`, que sin `carga_ids`
+    excluye directamente las deshabilitadas."""
     cargas = list(
         CargaArchivo.objects.filter(dashboard_id=dashboard_id, filas_historicas__isnull=False)
         .distinct().order_by('fecha_carga'),
@@ -85,11 +92,23 @@ def listar_cargas_historicas(dashboard_id):
                 'fecha_carga': carga.fecha_carga.isoformat(),
                 'fecha_corte': carga.fecha_corte.isoformat() if carga.fecha_corte else None,
                 'total_filas': FilaArchivoHistorico.objects.filter(carga=carga).count(),
+                'incluir_en_historico': carga.incluir_en_historico,
             }
             for carga in cargas
         ],
         'columnas_disponibles': columnas_historicas_configuradas(dashboard_id),
     }
+
+
+def establecer_carga_incluida_en_historico(carga, incluida):
+    """Marca/desmarca una carga puntual para que cuente (o no) en `calcular_tabla_historica` de su
+    dashboard — Tabla 3 dentro del dashboard y "Histórico de cargas" respetan este mismo flag, así
+    que desmarcar una carga acá la excluye de ambos lugares por igual. No borra
+    `FilaArchivoHistorico`: los datos siguen guardados, solo se excluyen del cálculo mientras esté
+    deshabilitada, así se puede volver a habilitar sin perder nada."""
+    carga.incluir_en_historico = bool(incluida)
+    carga.save(update_fields=['incluir_en_historico'])
+    return carga
 
 
 def obtener_filas_archivo(carga):
@@ -118,7 +137,15 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
     valor (a diferencia de "Fecha de corte", opcional): es la columna que el frontend usa como
     identidad de la fila para el párrafo de "Hallazgos clave" ("X tiene el mayor valor de..."),
     así que no puede quedar vacía. Sin fila de `total`: sumar un "promedio por carga" entre cargas
-    sería engañoso."""
+    sería engañoso.
+
+    Sin `carga_ids`, solo entran las cargas con `incluir_en_historico=True` — es el caso de Tabla 3
+    dentro del dashboard (`TablaHistoricaAutomatica.jsx`, nunca manda `carga_ids`) y de "Generar
+    tabla histórica" en "Histórico de cargas", que ya no arma esa lista a mano: el checkbox por
+    carga de esa pantalla persiste el mismo flag (`establecer_carga_incluida_en_historico`) en vez
+    de armar una selección efímera. Pasar `carga_ids` explícito sigue siendo una selección puntual
+    que puede incluir una carga deshabilitada — la usan los tests y queda disponible para casos
+    futuros que necesiten esa precisión."""
     entradas = [generic_charts.normalizar_columna_valor_tabla(c) for c in (columnas_valor or [])]
     nombres_columna = [e['columna'] for e in entradas if e['columna']]
 
@@ -128,6 +155,8 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
     )
     if carga_ids:
         cargas_qs = cargas_qs.filter(id__in=carga_ids)
+    else:
+        cargas_qs = cargas_qs.filter(incluir_en_historico=True)
     cargas = list(cargas_qs.order_by('fecha_carga'))
 
     columnas = ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte'] + nombres_columna

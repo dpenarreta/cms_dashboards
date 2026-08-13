@@ -1,4 +1,8 @@
+import { useState } from 'react'
 import { Alert, Button, Form, Table } from 'react-bootstrap'
+
+const SIN_ELEGIR = ''
+const YA_NO_EXISTE = '__ya_no_existe__'
 
 function columnasFinales(columnas, aliases) {
   return columnas.map((c) => (aliases[c] || '').trim() || c)
@@ -17,6 +21,45 @@ function columnasHistoricasFaltantes(finales, columnasHistoricasConfiguradas) {
   return columnasHistoricasConfiguradas.filter((c) => !finales.includes(c))
 }
 
+/** Una fila de reconciliación por columna histórica faltante: el usuario identifica cuál columna
+ * de ESTE archivo (por su nombre original, el que se ve en la tabla de arriba) es en realidad esa
+ * columna histórica con otro nombre — elegirla aplica de una sola vez el alias (`onActualizarAlias`,
+ * mismo mecanismo que renombrar a mano) y la vuelve a marcar como histórica (`onCambiarColumnaHistorica`),
+ * así retoma la comparación en la próxima carga sin que el usuario tenga que hacer las dos cosas
+ * por separado. La alternativa es confirmar que la columna ya no existe (`YA_NO_EXISTE`): no
+ * cambia ningún alias, solo la marca como "resuelta" para esta pantalla (`onResolverAusente`) —
+ * "Continuar" exige que cada faltante quede en uno de los dos estados, nunca sin decidir. */
+function FilaColumnaFaltante({ nombreHistorico, columnas, resuelta, onIdentificar, onResolverAusente, onDeshacerResolucion }) {
+  if (resuelta) {
+    return (
+      <div className="d-flex align-items-center justify-content-between gap-2 py-1">
+        <span>
+          Confirmaste que <strong>"{nombreHistorico}"</strong> ya no está en este archivo — no se
+          va a seguir actualizando en la comparación histórica.
+        </span>
+        <Button size="sm" variant="link" className="p-0" onClick={onDeshacerResolucion}>Deshacer</Button>
+      </div>
+    )
+  }
+  return (
+    <Form.Group className="py-1">
+      <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>
+        ¿Qué columna de este archivo corresponde a la columna histórica <strong>"{nombreHistorico}"</strong>?
+      </Form.Label>
+      <Form.Select
+        size="sm"
+        value={SIN_ELEGIR}
+        onChange={(e) => (e.target.value === YA_NO_EXISTE ? onResolverAusente() : onIdentificar(e.target.value))}
+        aria-label={`Columna que corresponde a la columna histórica "${nombreHistorico}"`}
+      >
+        <option value={SIN_ELEGIR}>Elegí una columna de este archivo…</option>
+        {columnas.map((c) => <option key={c} value={c}>{c}</option>)}
+        <option value={YA_NO_EXISTE}>Ya no existe en este archivo</option>
+      </Form.Select>
+    </Form.Group>
+  )
+}
+
 /**
  * Paso "renombrar columnas": tras validar el archivo, se muestran TODAS sus columnas para que el
  * usuario les ponga un nombre más claro antes del mapeo a la plantilla — a la izquierda el nuevo
@@ -25,20 +68,42 @@ function columnasHistoricasFaltantes(finales, columnasHistoricasConfiguradas) {
  * mapeo (`TemplateMappingStep`), que ya trabaja sobre los nombres renombrados.
  *
  * Cada fila tiene además una casilla "Histórica" (`columnasHistoricas`/`onCambiarColumnaHistorica`)
- * — las columnas tildadas quedan guardadas como configuración del dashboard
- * (`ColumnaHistorica`, backend) y alimentan automáticamente Tabla 4/Tabla 5 de ahí en más, sin
- * tener que elegir nada en el paso de Mapeo. `columnasHistoricasConfiguradas` (lo que ya estaba
- * tildado en una carga anterior) se usa solo para advertir si alguna de esas columnas no aparece
- * en este archivo (`columnasHistoricasFaltantes`) — no bloquea, es información para decidir.
+ * — las columnas tildadas quedan guardadas como configuración del dashboard (`ColumnaHistorica`,
+ * backend) y alimentan automáticamente Tabla 3 de ahí en más, sin tener que elegir nada en el paso
+ * de Mapeo. `columnasHistoricasConfiguradas` (lo que ya estaba tildado en una carga anterior) se
+ * usa para pre-tildar (`DashboardAreaPage`/`useGenericDashboardBuilder::inicializarColumnasHistoricas`)
+ * y, acá, para detectar columnas históricas que "se perdieron" en este archivo
+ * (`columnasHistoricasFaltantes`) — a diferencia de antes, esto ahora es OBLIGATORIO de resolver:
+ * "Continuar" queda deshabilitado hasta que cada faltante quede identificada con una columna real
+ * de este archivo (`FilaColumnaFaltante`, aplica alias + marca histórica de una sola vez) o
+ * confirmada como efectivamente ausente — nunca se puede avanzar dejando una sin decidir.
  */
 export default function RenameColumnsStep({
   archivoInfo, columnas, aliases, onActualizarAlias, onContinuar, onCancelar, cargando, error,
   columnasHistoricas = [], onCambiarColumnaHistorica, columnasHistoricasConfiguradas = [],
 }) {
+  const [ausentesResueltas, setAusentesResueltas] = useState(() => new Set())
+
   const finales = columnasFinales(columnas, aliases)
   const duplicados = nombresDuplicados(finales)
   const hayDuplicados = duplicados.length > 0
   const faltantes = columnasHistoricasFaltantes(finales, columnasHistoricasConfiguradas)
+  const hayFaltantesSinResolver = faltantes.some((f) => !ausentesResueltas.has(f))
+
+  const identificarFaltante = (nombreHistorico, columnaOriginal) => {
+    onActualizarAlias(columnaOriginal, nombreHistorico)
+    onCambiarColumnaHistorica(columnaOriginal, true)
+  }
+  const resolverAusente = (nombreHistorico) => {
+    setAusentesResueltas((prev) => new Set(prev).add(nombreHistorico))
+  }
+  const deshacerResolucion = (nombreHistorico) => {
+    setAusentesResueltas((prev) => {
+      const siguiente = new Set(prev)
+      siguiente.delete(nombreHistorico)
+      return siguiente
+    })
+  }
 
   return (
     <div>
@@ -103,15 +168,26 @@ export default function RenameColumnsStep({
 
       {faltantes.length > 0 && (
         <Alert variant="warning">
-          Estas columnas estaban marcadas como históricas y no están en este archivo:{' '}
-          {faltantes.map((c) => `"${c}"`).join(', ')}. Si les cambiaste el nombre, revisalo antes
-          de continuar; si de verdad ya no vienen, van a dejar de actualizarse en la comparación
-          histórica a partir de esta carga.
+          <div className="mb-2">
+            Estas columnas estaban marcadas como históricas y no están en este archivo. Identificá
+            con qué columna corresponden ahora, o confirmá que ya no vienen, para poder continuar:
+          </div>
+          {faltantes.map((nombreHistorico) => (
+            <FilaColumnaFaltante
+              key={nombreHistorico}
+              nombreHistorico={nombreHistorico}
+              columnas={columnas}
+              resuelta={ausentesResueltas.has(nombreHistorico)}
+              onIdentificar={(columnaOriginal) => identificarFaltante(nombreHistorico, columnaOriginal)}
+              onResolverAusente={() => resolverAusente(nombreHistorico)}
+              onDeshacerResolucion={() => deshacerResolucion(nombreHistorico)}
+            />
+          ))}
         </Alert>
       )}
 
       <div className="d-flex gap-2">
-        <Button variant="primary" onClick={onContinuar} disabled={cargando || hayDuplicados}>
+        <Button variant="primary" onClick={onContinuar} disabled={cargando || hayDuplicados || hayFaltantesSinResolver}>
           {cargando ? 'Analizando…' : 'Continuar'}
         </Button>
         <Button variant="outline-secondary" onClick={onCancelar} disabled={cargando}>Cancelar</Button>

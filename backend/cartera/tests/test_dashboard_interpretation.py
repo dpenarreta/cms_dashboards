@@ -112,6 +112,35 @@ class GenerarInterpretacionServiceTests(TestCase):
 
     @override_settings(GEMINI_API_KEY='clave-de-prueba')
     @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_incluye_el_contexto_del_dashboard_en_el_prompt_si_esta_cargado(self, post_mock):
+        Dashboard.objects.filter(dashboard_id='finanzas').update(contexto='Datos de cartera vencida de la región norte.')
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 1.0},
+        })
+        post_mock.return_value = _respuesta_gemini('texto')
+
+        di.generar_interpretacion('finanzas')
+
+        prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertIn('Datos de cartera vencida de la región norte.', prompt)
+
+    @override_settings(GEMINI_API_KEY='clave-de-prueba')
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_sin_contexto_cargado_no_agrega_la_seccion_de_contexto(self, post_mock):
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 1.0},
+        })
+        post_mock.return_value = _respuesta_gemini('texto')
+
+        di.generar_interpretacion('finanzas')
+
+        prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertNotIn('Contexto adicional', prompt)
+
+    @override_settings(GEMINI_API_KEY='clave-de-prueba')
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
     def test_error_http_del_proveedor_se_traduce_a_error_de_negocio(self, post_mock):
         dl.agregar_componente_generado('finanzas', {
             'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
@@ -229,6 +258,21 @@ class GenerarHallazgosIAServiceTests(TestCase):
         kwargs = post_mock.call_args.kwargs
         self.assertEqual(kwargs['json']['generationConfig'], {'responseMimeType': 'application/json'})
         self.assertIn('total-cartera', kwargs['json']['contents'][0]['parts'][0]['text'])
+
+    @override_settings(GEMINI_API_KEY='clave-de-prueba')
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_incluye_el_contexto_del_dashboard_en_el_prompt_si_esta_cargado(self, post_mock):
+        Dashboard.objects.filter(dashboard_id='finanzas').update(contexto='Ventas del canal digital.')
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 1.0},
+        })
+        post_mock.return_value = _respuesta_gemini_json({'total': 'texto'})
+
+        di.generar_hallazgos_ia('finanzas')
+
+        prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertIn('Ventas del canal digital.', prompt)
 
     @override_settings(GEMINI_API_KEY='clave-de-prueba')
     @mock.patch('cartera.services.dashboard_interpretation.requests.post')

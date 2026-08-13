@@ -26,10 +26,6 @@ const TABLA_3 = {
   styles: {}, config: {},
   mapeo: { disponible: true, columna_id: 'Vendedor', columnas_valor: [{ columna: 'Ventas', tipo_agregacion: 'suma' }] },
 }
-const TABLA_4 = {
-  ...TABLA_3, component_id: 'tabla-4', order: 14,
-  content: { titulo: 'Tabla 4', columnas: ['Vendedor', 'Ventas'], filas: [['María', 100]] },
-}
 
 function layoutBase(overrides = {}) {
   return {
@@ -134,26 +130,16 @@ describe('PlantillaBasePage', () => {
     expect(await screen.findByText('No se pudo cargar la plantilla base.')).toBeInTheDocument()
   })
 
-  it('Tabla 3 vuelve a mostrar siempre su contenido normal, sin la etiqueta "Histórica" ni consultar el histórico', async () => {
-    usePlantillaBaseLayout.mockReturnValue(layoutBase({ borrador: [KPI_1, TABLA_3] }))
-    renderPagina()
-
-    expect(await screen.findByText('Tabla 3')).toBeInTheDocument()
-    expect(screen.getAllByText('María').length).toBeGreaterThan(0)
-    expect(historicoService.listarCargasHistoricas).not.toHaveBeenCalled()
-    expect(screen.queryByText('Histórica')).not.toBeInTheDocument()
-  })
-
-  describe('Tabla 4 (comparación histórica en vivo)', () => {
+  describe('Tabla 3 (comparación histórica en vivo)', () => {
     // La plantilla base nunca tiene columnas históricas configuradas (no existe un flujo de carga
-    // de archivo para el dashboard_id reservado `plantilla-base-sistema`) — Tabla 4 siempre cae al
+    // de archivo para el dashboard_id reservado `plantilla-base-sistema`) — Tabla 3 siempre cae al
     // contenido ficticio, con la etiqueta "Histórica" igual (es una posición histórica por
     // naturaleza, sin importar si en este momento tiene o no con qué comparar).
     it('muestra siempre el contenido ficticio con la etiqueta "Histórica", sin consultar el histórico', async () => {
-      usePlantillaBaseLayout.mockReturnValue(layoutBase({ borrador: [KPI_1, TABLA_4] }))
+      usePlantillaBaseLayout.mockReturnValue(layoutBase({ borrador: [KPI_1, TABLA_3] }))
       renderPagina()
 
-      expect(await screen.findByText('Tabla 4')).toBeInTheDocument()
+      expect(await screen.findByText('Tabla 3')).toBeInTheDocument()
       expect(screen.getAllByText('María').length).toBeGreaterThan(0)
       expect(screen.getByText('Histórica')).toBeInTheDocument()
       expect(historicoService.listarCargasHistoricas).not.toHaveBeenCalled()
