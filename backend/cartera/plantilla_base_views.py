@@ -18,6 +18,7 @@ from rest_framework.views import APIView
 
 from apps.permissions.permissions import require_permission
 
+from .dashboard_views import _etiqueta_actor
 from .exceptions import CarteraError
 from .services import dashboard_layout as dl
 from .services import plantilla
@@ -54,7 +55,9 @@ class PlantillaBaseLayoutView(APIView):
             }, status=409)
 
         componentes = dl.validar_componentes(plantilla.DASHBOARD_ID_PLANTILLA_BASE, request.data.get('components') or [])
-        changed_by = (request.data.get('changed_by') or 'Anónimo')[:150]
+        # Igual que en `dashboard_views`: la etiqueta del historial se deriva del usuario
+        # autenticado, nunca del cuerpo de la petición (ver `_etiqueta_actor`).
+        changed_by = _etiqueta_actor(request)
         layout = dl.aplicar_layout(plantilla.DASHBOARD_ID_PLANTILLA_BASE, componentes, changed_by, actor=request.user, request=request)
 
         return Response(dl.serializar_layout(layout))

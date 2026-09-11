@@ -1,5 +1,11 @@
 import axios from 'axios'
 
+// Origen del backend. Vacío = mismo origen que el frontend, que es el caso en desarrollo (el
+// proxy de Vite reenvía `/api` a :8000) y en un despliegue donde nginx sirve ambos. Se puede
+// apuntar a otro host con `VITE_API_BASE_URL` sin tocar código, en vez de tener el prefijo
+// escrito a mano en cada cliente.
+const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/$/, '')
+
 const ACCESS_TOKEN_KEY = 'cms_dashboards_access_token'
 const REFRESH_TOKEN_KEY = 'cms_dashboards_refresh_token'
 
@@ -35,14 +41,33 @@ let refreshPendiente = null
 async function refrescarAccessToken() {
   const refresh = getRefreshToken()
   if (!refresh) throw new Error('No hay sesión activa.')
-  const { data } = await axios.post('/api/auth/token/refresh', { refresh })
-  setTokens(data.access, refresh)
+  // Se respeta `API_BASE_URL` como cualquier otro cliente: antes era un
+  // `axios.post('/api/auth/token/refresh')` con el prefijo escrito a mano, así que el refresco
+  // era lo único que dejaba de funcionar si el backend no está en el mismo origen. Se llama a
+  // `axios.post` directo y no a un cliente creado con `createApiClient` a propósito: ese trae el
+  // interceptor de 401 y un fallo acá dispararía otro refresco en cascada.
+  const { data } = await axios.post(`${API_BASE_URL}/api/auth/token/refresh`, { refresh })
+  // El backend rota el refresh token en cada refresco (`ROTATE_REFRESH_TOKENS`), así que hay que
+  // guardar el nuevo: conservar el viejo lo dejaría inservible en el próximo refresco y —peor— el
+  // backend lo interpretaría como reutilización de un token robado y revocaría la sesión entera.
+  // `data.refresh` puede no venir si el backend todavía no rota; en ese caso se conserva el actual.
+  setTokens(data.access, data.refresh || refresh)
   return data.access
 }
 
 function redirigirALogin() {
   clearTokens()
-  if (typeof window !== 'undefined') window.location.assign('/login')
+  if (typeof window === 'undefined') return
+  // Se conserva a dónde iba el usuario. Este redirect es una recarga completa del documento (no
+  // pasa por React Router), así que el `state.from` que arma `RequirePermission` se pierde: sin
+  // esto, a quien se le vencía la sesión en medio de un dashboard lo devolvíamos al listado por
+  // defecto en vez de a la pantalla en la que estaba. Va como query param porque es lo único que
+  // sobrevive a una recarga; solo la ruta, nunca datos del usuario.
+  const destino = window.location.pathname + window.location.search
+  const yaEstaEnLogin = window.location.pathname === '/login'
+  window.location.assign(
+    yaEstaEnLogin ? '/login' : `/login?from=${encodeURIComponent(destino)}`,
+  )
 }
 
 /**
@@ -50,8 +75,8 @@ function redirigirALogin() {
  * ante un 401 (fuera de los endpoints de auth), intenta refrescar una sola vez y reintentar la
  * solicitud original. Si el refresh también falla, limpia la sesión y redirige a /login.
  */
-export function createApiClient(baseURL) {
-  const cliente = axios.create({ baseURL })
+export function createApiClient(prefijo) {
+  const cliente = axios.create({ baseURL: `${API_BASE_URL}${prefijo}` })
 
   cliente.interceptors.request.use((config) => {
     const token = getAccessToken()

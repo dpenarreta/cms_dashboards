@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ComponentDataSection from '../components/dashboard-editor/ComponentDataSection'
 import * as carteraService from '../services/carteraService'
+import * as historicoService from '../services/historicoService'
+import { ETIQUETAS_TRAMOS_ACUMULADOS } from '../utils/tramosAntiguedad'
 
 vi.mock('../services/carteraService')
+vi.mock('../services/historicoService')
 
 const COLUMNAS = [
   { nombre: 'Saldo', tipo: 'numerico', apta_para_valor: true, apta_para_categoria: false },
   { nombre: 'Zona', tipo: 'categorico', apta_para_valor: false, apta_para_categoria: true },
+  { nombre: 'Fecha de Vencimiento', tipo: 'fecha', apta_para_valor: false, apta_para_categoria: true },
 ]
 
 const ARCHIVO_DISPONIBLE = {
@@ -28,6 +32,8 @@ function renderSeccion(overrides = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   carteraService.obtenerArchivoActualDashboard.mockResolvedValue(ARCHIVO_DISPONIBLE)
+  carteraService.obtenerDuplicadosColumna.mockResolvedValue({ cantidad_valores_duplicados: 0, ejemplos: [] })
+  historicoService.listarCargasHistoricas.mockResolvedValue({ cargas: [], columnas_disponibles: ['Saldo'] })
 })
 
 describe('ComponentDataSection', () => {
@@ -110,7 +116,7 @@ describe('ComponentDataSection', () => {
     })
     const selector = await screen.findByLabelText('Tipo de gráfico de Gráfico 2')
     const opciones = Array.from(selector.querySelectorAll('option')).map((o) => o.value)
-    expect(opciones).toEqual(expect.arrayContaining(['pastel', 'dona']))
+    expect(opciones).toEqual(expect.arrayContaining(['pastel', 'dona', 'barras_verticales', 'barras_horizontales']))
 
     await userEvent.selectOptions(selector, 'dona')
 
@@ -125,6 +131,77 @@ describe('ComponentDataSection', () => {
     const selectorFiltro = await screen.findByLabelText('Columna de filtro de KPI 1')
     const opciones = Array.from(selectorFiltro.querySelectorAll('option')).map((o) => o.value)
     expect(opciones).toEqual(expect.arrayContaining(['Saldo', 'Zona']))
+  })
+
+  describe('filtro "Días desde una fecha" (solo KPI)', () => {
+    it('un KPI muestra el selector "Tipo de filtro", un gráfico no', async () => {
+      renderSeccion()
+      expect(await screen.findByLabelText('Tipo de filtro de KPI 1')).toHaveValue('igualdad')
+
+      renderSeccion({
+        componente: { component_id: 'grafico-1', mapeo: { disponible: true, columna_categoria: 'Zona', columna_valor: 'Saldo' } },
+      })
+      await screen.findByLabelText('Columna de filtro de Gráfico 1')
+      expect(screen.queryByLabelText('Tipo de filtro de Gráfico 1')).not.toBeInTheDocument()
+    })
+
+    it('elegir "Días desde una fecha" recalcula limpiando los campos del filtro anterior', async () => {
+      carteraService.previsualizarMapeoPlantilla.mockResolvedValue({ datos: { 'kpi-1': { titulo: 'KPI 1', valor: 500, formato: 'numero' } } })
+      carteraService.obtenerValoresColumnaPlantilla.mockResolvedValue({ valores: ['Norte', 'Sur'] })
+      renderSeccion({
+        componente: {
+          component_id: 'kpi-1',
+          mapeo: { disponible: true, columna_valor: 'Saldo', columna_filtro: 'Zona', valor_filtro: 'Norte' },
+        },
+      })
+      const selector = await screen.findByLabelText('Tipo de filtro de KPI 1')
+
+      await userEvent.selectOptions(selector, 'dias_vencidos')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith('carga-1', {
+        'kpi-1': {
+          disponible: true, columna_valor: 'Saldo', tipo_filtro: 'dias_vencidos',
+          columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+        },
+      }))
+    })
+
+    it('con la columna de fecha ya elegida, muestra selector de comparación y campo de días precargados', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'kpi-1',
+          mapeo: {
+            disponible: true, columna_valor: 'Saldo', tipo_filtro: 'dias_vencidos',
+            columna_filtro: 'Fecha de Vencimiento', operador_filtro: 'mayor_igual', dias_filtro: 30,
+          },
+        },
+      })
+      expect(await screen.findByLabelText('Comparación de días de KPI 1')).toHaveValue('mayor_igual')
+      expect(screen.getByLabelText('Cantidad de días de KPI 1')).toHaveValue(30)
+    })
+
+    it('cambiar la cantidad de días recalcula contra el archivo', async () => {
+      carteraService.previsualizarMapeoPlantilla.mockResolvedValue({ datos: { 'kpi-1': { titulo: 'KPI 1', valor: 300, formato: 'numero' } } })
+      renderSeccion({
+        componente: {
+          component_id: 'kpi-1',
+          mapeo: {
+            disponible: true, columna_valor: 'Saldo', tipo_filtro: 'dias_vencidos',
+            columna_filtro: 'Fecha de Vencimiento', operador_filtro: 'mayor',
+          },
+        },
+      })
+      const campoDias = await screen.findByLabelText('Cantidad de días de KPI 1')
+
+      fireEvent.change(campoDias, { target: { value: '30' } })
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith('carga-1', {
+        'kpi-1': {
+          disponible: true, columna_valor: 'Saldo', tipo_filtro: 'dias_vencidos',
+          columna_filtro: 'Fecha de Vencimiento', operador_filtro: 'mayor', dias_filtro: 30,
+        },
+      }))
+    })
   })
 
   describe('etiquetas de los campos según el tipo de gráfico elegido', () => {
@@ -349,6 +426,471 @@ describe('ComponentDataSection', () => {
           disponible: true, columna_id: 'Zona',
           columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'valor_celda' }],
         },
+      }))
+    })
+  })
+
+  describe('componentes de Zona Personal (component_id fuera de las 13 posiciones fijas)', () => {
+    it('con calculo ya guardado en el mapeo, arma el slot sintético y muestra los selectores', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-kpi', type: 'kpi', content: { titulo: 'Mi KPI' },
+          mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Saldo' },
+        },
+      })
+      expect(await screen.findByLabelText('Columna de Mi KPI')).toHaveValue('Saldo')
+    })
+
+    it('sin mapeo pero con forma inferible sin ambigüedad (KPI), igual se puede reconfigurar', async () => {
+      renderSeccion({
+        componente: { component_id: 'mi-kpi', type: 'kpi', content: { titulo: 'Mi KPI' }, mapeo: {} },
+      })
+      expect(await screen.findByLabelText('Columna de Mi KPI')).toBeInTheDocument()
+    })
+
+    it('dispersión se infiere sin ambigüedad por chart_type', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-dispersion', type: 'chart', chart_type: 'dispersion',
+          content: { titulo: 'Mi dispersión' }, mapeo: {},
+        },
+      })
+      expect(await screen.findByLabelText('Eje X de Mi dispersión')).toBeInTheDocument()
+    })
+
+    it('tabla se infiere sin ambigüedad por chart_type', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-tabla', type: 'chart', chart_type: 'tabla',
+          content: { titulo: 'Mi tabla' }, mapeo: {},
+        },
+      })
+      expect(await screen.findByLabelText('Identidad de fila de Mi tabla')).toBeInTheDocument()
+    })
+
+    it('multiserie se infiere sin ambigüedad cuando config trae columna_serie', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-multiserie', type: 'chart', chart_type: 'barras_agrupadas',
+          content: { titulo: 'Mi gráfico', series: [] }, config: { columna_serie: 'Zona' }, mapeo: {},
+        },
+      })
+      expect(await screen.findByLabelText('Serie (una barra, línea o capa por cada valor distinto) de Mi gráfico')).toBeInTheDocument()
+    })
+
+    it('multivalor se infiere sin ambigüedad cuando config trae columnas_valor', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-multivalor', type: 'chart', chart_type: 'lineas_multiples',
+          content: { titulo: 'Mi gráfico', series: [] }, config: { columnas_valor: ['Saldo', 'Costo'] }, mapeo: {},
+        },
+      })
+      expect(await screen.findByLabelText('Métrica 1 de Mi gráfico')).toBeInTheDocument()
+    })
+
+    it('series presente sin ninguna señal de config (calculo ambiguo) muestra el aviso de recrear el componente', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'mi-ambiguo', type: 'chart', chart_type: 'barras_agrupadas',
+          content: { titulo: 'Mi gráfico', series: [] }, config: {}, mapeo: {},
+        },
+      })
+      expect(await screen.findByText(/se creó antes de poder reconfigurar/)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/de Mi gráfico/)).not.toBeInTheDocument()
+    })
+
+    it('un separador/título de Zona Personal sigue mostrando el mensaje genérico, no el de recrear', async () => {
+      renderSeccion({ componente: { component_id: 'mi-separador', type: 'text', content: { titulo: '' }, mapeo: {} } })
+      expect(await screen.findByText('Esta posición no tiene datos configurables desde acá.')).toBeInTheDocument()
+    })
+
+    it('el panel de filtros de Zona Personal sigue mostrando el mensaje genérico', async () => {
+      renderSeccion({ componente: { component_id: 'mis-filtros', type: 'filters_panel', config: { filtros: [] }, mapeo: {} } })
+      expect(await screen.findByText('Esta posición no tiene datos configurables desde acá.')).toBeInTheDocument()
+    })
+
+    it('cambiar una columna llama a previsualizarMapeoComponente y actualiza mapeo+content', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({
+        contenido: { titulo: 'Mi KPI', descripcion: 'Suma de "Zona".', valor: 42, formato: 'numero' },
+      })
+      const { props } = renderSeccion({
+        componente: {
+          component_id: 'mi-kpi', type: 'kpi', content: { titulo: 'Mi KPI' },
+          mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Saldo' },
+        },
+      })
+      const selector = await screen.findByLabelText('Columna de Mi KPI')
+
+      await userEvent.selectOptions(selector, 'Zona')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'kpi', titulo: 'Mi KPI', mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Zona' },
+      }))
+      await waitFor(() => expect(props.onActualizarComponente).toHaveBeenCalledWith('mi-kpi', {
+        mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Zona' },
+        content: { titulo: 'Mi KPI', descripcion: 'Suma de "Zona".', valor: 42, formato: 'numero' },
+      }))
+    })
+
+    it('contenido null no pisa el contenido anterior y muestra un aviso', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({ contenido: null })
+      const { props } = renderSeccion({
+        componente: {
+          component_id: 'mi-kpi', type: 'kpi', content: { titulo: 'Mi KPI' },
+          mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Saldo' },
+        },
+      })
+      const selector = await screen.findByLabelText('Columna de Mi KPI')
+
+      await userEvent.selectOptions(selector, 'Zona')
+
+      await waitFor(() => expect(props.onActualizarComponente).toHaveBeenCalledWith('mi-kpi', {
+        mapeo: { disponible: true, calculo: 'kpi', columna_valor: 'Zona' },
+      }))
+      expect(await screen.findByText(/No se pudo calcular con esa combinación de columnas todavía/)).toBeInTheDocument()
+    })
+  })
+
+  describe('aviso de valores duplicados al elegir columna de categoría/identidad de fila', () => {
+    it('no consulta duplicados si todavía no hay columna elegida', async () => {
+      renderSeccion({
+        componente: {
+          component_id: 'grafico-1', type: 'chart', chart_type: 'barras_verticales',
+          mapeo: { disponible: true, columna_valor: 'Saldo' },
+        },
+      })
+      await screen.findByLabelText('Eje horizontal (categoría) de Gráfico 1')
+      expect(carteraService.obtenerDuplicadosColumna).not.toHaveBeenCalled()
+    })
+
+    it('sin duplicados, no muestra ningún aviso', async () => {
+      carteraService.obtenerDuplicadosColumna.mockResolvedValue({ cantidad_valores_duplicados: 0, ejemplos: [] })
+      renderSeccion({
+        componente: {
+          component_id: 'grafico-1', type: 'chart', chart_type: 'barras_verticales',
+          mapeo: { disponible: true, columna_categoria: 'Zona', columna_valor: 'Saldo' },
+        },
+      })
+      await screen.findByLabelText('Eje horizontal (categoría) de Gráfico 1')
+      await waitFor(() => expect(carteraService.obtenerDuplicadosColumna).toHaveBeenCalledWith('carga-1', 'Zona', undefined))
+      expect(screen.queryByText(/valor\(es\) duplicado\(s\)/)).not.toBeInTheDocument()
+    })
+
+    it('con duplicados, muestra cantidad y ejemplos junto al selector de categoría', async () => {
+      carteraService.obtenerDuplicadosColumna.mockResolvedValue({
+        cantidad_valores_duplicados: 2,
+        ejemplos: [{ valor: 'Quito', cantidad: 12 }, { valor: 'Guayaquil', cantidad: 8 }],
+      })
+      renderSeccion({
+        componente: {
+          component_id: 'grafico-1', type: 'chart', chart_type: 'barras_verticales',
+          mapeo: { disponible: true, columna_categoria: 'Zona', columna_valor: 'Saldo' },
+        },
+      })
+      expect(await screen.findByText(/Esta columna tiene 2 valor\(es\) duplicado\(s\)\./)).toBeInTheDocument()
+      expect(screen.getByText(/Quito \(12 veces\), Guayaquil \(8 veces\)/)).toBeInTheDocument()
+    })
+
+    it('con duplicados en la identidad de fila de una tabla, también muestra el aviso', async () => {
+      carteraService.obtenerDuplicadosColumna.mockResolvedValue({
+        cantidad_valores_duplicados: 1, ejemplos: [{ valor: 'Zona A', cantidad: 5 }],
+      })
+      renderSeccion({
+        componente: {
+          component_id: 'tabla-1', type: 'chart', chart_type: 'tabla',
+          mapeo: { disponible: true, columna_id: 'Zona', columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }] },
+        },
+      })
+      expect(await screen.findByText(/Esta columna tiene 1 valor\(es\) duplicado\(s\)\./)).toBeInTheDocument()
+      await waitFor(() => expect(carteraService.obtenerDuplicadosColumna).toHaveBeenCalledWith('carga-1', 'Zona', undefined))
+    })
+
+    it('si la consulta falla, no muestra ningún aviso (informativo, nunca bloquea)', async () => {
+      carteraService.obtenerDuplicadosColumna.mockRejectedValue(new Error('falló'))
+      renderSeccion({
+        componente: {
+          component_id: 'grafico-1', type: 'chart', chart_type: 'barras_verticales',
+          mapeo: { disponible: true, columna_categoria: 'Zona', columna_valor: 'Saldo' },
+        },
+      })
+      await screen.findByLabelText('Eje horizontal (categoría) de Gráfico 1')
+      await waitFor(() => expect(carteraService.obtenerDuplicadosColumna).toHaveBeenCalled())
+      expect(screen.queryByText(/valor\(es\) duplicado\(s\)/)).not.toBeInTheDocument()
+    })
+
+    it('no muestra el aviso junto al selector de "Valor" (solo aplica a categoría/identidad de fila)', async () => {
+      carteraService.obtenerDuplicadosColumna.mockResolvedValue({
+        cantidad_valores_duplicados: 3, ejemplos: [{ valor: '100', cantidad: 4 }],
+      })
+      renderSeccion({
+        componente: {
+          component_id: 'grafico-1', type: 'chart', chart_type: 'barras_verticales',
+          mapeo: { disponible: true, columna_categoria: 'Zona', columna_valor: 'Saldo' },
+        },
+      })
+      await screen.findByText(/Esta columna tiene 3 valor\(es\) duplicado\(s\)\./)
+      // Solo se consultó la columna de categoría, nunca la de valor.
+      expect(carteraService.obtenerDuplicadosColumna).toHaveBeenCalledTimes(1)
+      expect(carteraService.obtenerDuplicadosColumna).toHaveBeenCalledWith('carga-1', 'Zona', undefined)
+    })
+  })
+
+  describe('KPI con meta', () => {
+    it('precarga la meta ya guardada de un KPI (posición fija)', async () => {
+      renderSeccion({
+        componente: { component_id: 'kpi-1', mapeo: { disponible: true, columna_valor: 'Saldo', meta_min: 50, meta_max: 200 } },
+      })
+      expect(await screen.findByLabelText('Meta mínima de KPI 1')).toHaveValue(50)
+      expect(screen.getByLabelText('Meta máxima de KPI 1')).toHaveValue(200)
+    })
+
+    it('cambiar la meta recalcula contra el archivo', async () => {
+      carteraService.previsualizarMapeoPlantilla.mockResolvedValue({ datos: { 'kpi-1': { titulo: 'KPI 1', valor: 500, formato: 'numero' } } })
+      renderSeccion()
+      const campo = await screen.findByLabelText('Meta mínima de KPI 1')
+
+      fireEvent.change(campo, { target: { value: '50' } })
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith(
+        'carga-1', { 'kpi-1': { disponible: true, columna_valor: 'Saldo', meta_min: 50 } },
+      ))
+    })
+  })
+
+  describe('Zona Personal — calculo "tramos_antiguedad"', () => {
+    function componenteTramos(extra = {}) {
+      return {
+        component_id: 'mi-antiguedad', type: 'chart', chart_type: 'barras_verticales',
+        content: { titulo: 'Mi antigüedad' },
+        mapeo: { disponible: true, calculo: 'tramos_antiguedad', columna_fecha: 'Fecha de Vencimiento' },
+        ...extra,
+      }
+    }
+
+    it('muestra los selectores de columna de fecha y de valor, precargados', async () => {
+      renderSeccion({ componente: componenteTramos({ mapeo: { disponible: true, calculo: 'tramos_antiguedad', columna_fecha: 'Fecha de Vencimiento', columna_valor: 'Saldo' } }) })
+      expect(await screen.findByLabelText('Columna de fecha de Mi antigüedad')).toHaveValue('Fecha de Vencimiento')
+      expect(screen.getByLabelText('Columna de valor de Mi antigüedad')).toHaveValue('Saldo')
+    })
+
+    it('cambiar la columna de valor recalcula vía previsualizarMapeoComponente', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({ contenido: { titulo: 'Mi antigüedad', categorias: [], valores: [] } })
+      renderSeccion({ componente: componenteTramos() })
+      const selector = await screen.findByLabelText('Columna de valor de Mi antigüedad')
+
+      await userEvent.selectOptions(selector, 'Saldo')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'tramos_antiguedad', titulo: 'Mi antigüedad',
+        mapeo: { disponible: true, calculo: 'tramos_antiguedad', columna_fecha: 'Fecha de Vencimiento', columna_valor: 'Saldo' },
+      }))
+    })
+  })
+
+  describe('Zona Personal — calculo "cumplimiento_metas"', () => {
+    function componenteCumplimiento(extra = {}) {
+      return {
+        component_id: 'mi-cumplimiento', type: 'chart', chart_type: 'tabla',
+        content: { titulo: 'Mi cumplimiento', columnas: ['Tramo', 'Saldo', '% acumulado', 'Resultado'], filas: [], total: null },
+        mapeo: { disponible: true, calculo: 'cumplimiento_metas', columna_fecha: 'Fecha de Vencimiento', columna_valor: 'Saldo' },
+        ...extra,
+      }
+    }
+
+    it('muestra los selectores de columna y las 6 filas fijas de metas por tramo', async () => {
+      renderSeccion({ componente: componenteCumplimiento() })
+      expect(await screen.findByLabelText('Columna de fecha de Mi cumplimiento')).toHaveValue('Fecha de Vencimiento')
+      expect(screen.getByLabelText('Columna de valor de Mi cumplimiento')).toHaveValue('Saldo')
+      for (const etiqueta of ETIQUETAS_TRAMOS_ACUMULADOS) {
+        expect(screen.getByLabelText(`Meta mínima de tramo "${etiqueta}" de Mi cumplimiento`)).toBeInTheDocument()
+      }
+    })
+
+    it('cambiar una meta recalcula vía previsualizarMapeoComponente con el arreglo completo de metas', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({
+        contenido: { titulo: 'Mi cumplimiento', columnas: ['Tramo', 'Saldo', '% acumulado', 'Resultado'], filas: [], total: null },
+      })
+      renderSeccion({ componente: componenteCumplimiento() })
+      const campo = await screen.findByLabelText(`Meta mínima de tramo "${ETIQUETAS_TRAMOS_ACUMULADOS[0]}" de Mi cumplimiento`)
+
+      fireEvent.change(campo, { target: { value: '50' } })
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'cumplimiento_metas', titulo: 'Mi cumplimiento',
+        mapeo: {
+          disponible: true, calculo: 'cumplimiento_metas', columna_fecha: 'Fecha de Vencimiento', columna_valor: 'Saldo',
+          metas: [{ meta_min: 50 }, {}, {}, {}, {}, {}],
+        },
+      }))
+    })
+  })
+
+  describe('Zona Personal — calculo "concentracion"', () => {
+    function componenteConcentracion(extra = {}) {
+      return {
+        component_id: 'mi-concentracion', type: 'chart', chart_type: 'tabla',
+        content: { titulo: 'Mi concentración', columnas: ['Zona', 'Saldo', '% del total', '% acumulado'], filas: [], total: null },
+        mapeo: { disponible: true, calculo: 'concentracion', columna_id: 'Zona', columna_valor: 'Saldo', top_n: 5 },
+        ...extra,
+      }
+    }
+
+    it('precarga columna, valor y cantidad (top-N)', async () => {
+      renderSeccion({ componente: componenteConcentracion() })
+      expect(await screen.findByLabelText('Identidad de Mi concentración')).toHaveValue('Zona')
+      expect(screen.getByLabelText('Columna de valor de Mi concentración')).toHaveValue('Saldo')
+      expect(screen.getByLabelText('Cantidad (top-N) de Mi concentración')).toHaveValue(5)
+    })
+
+    it('cambiar la cantidad (top-N) recalcula vía previsualizarMapeoComponente', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({
+        contenido: { titulo: 'Mi concentración', columnas: ['Zona', 'Saldo', '% del total', '% acumulado'], filas: [], total: null },
+      })
+      renderSeccion({ componente: componenteConcentracion() })
+      const campo = await screen.findByLabelText('Cantidad (top-N) de Mi concentración')
+
+      fireEvent.change(campo, { target: { value: '10' } })
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'concentracion', titulo: 'Mi concentración',
+        mapeo: { disponible: true, calculo: 'concentracion', columna_id: 'Zona', columna_valor: 'Saldo', top_n: 10 },
+      }))
+    })
+  })
+
+  describe('Tabla — fuente de datos (actual vs. histórico)', () => {
+    function componenteTablaFija(componentId, extra = {}) {
+      return {
+        component_id: componentId,
+        content: { titulo: componentId, columnas: ['Zona', 'Saldo'], filas: [], total: null },
+        mapeo: { disponible: true, columna_id: 'Zona', columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }] },
+        ...extra,
+      }
+    }
+
+    it('tabla-1 (posición fija) muestra el selector "Fuente de datos"', async () => {
+      renderSeccion({ componente: componenteTablaFija('tabla-1') })
+      expect(await screen.findByLabelText('Fuente de datos de Tabla 1')).toHaveValue('actual')
+    })
+
+    it('tabla-3 (ya histórica por su propio mecanismo dedicado) no muestra el selector "Fuente de datos"', async () => {
+      renderSeccion({ componente: componenteTablaFija('tabla-3') })
+      await screen.findByLabelText('Identidad de fila de Tabla 3')
+      expect(screen.queryByLabelText('Fuente de datos de Tabla 3')).not.toBeInTheDocument()
+    })
+
+    it('elegir "Histórico" recalcula vía previsualizarMapeoPlantilla con usa_historico=true', async () => {
+      carteraService.previsualizarMapeoPlantilla.mockResolvedValue({
+        datos: {
+          'tabla-1': {
+            titulo: 'Tabla 1', columnas: ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'Saldo'], filas: [], total: null,
+          },
+        },
+      })
+      renderSeccion({ componente: componenteTablaFija('tabla-1') })
+      const selector = await screen.findByLabelText('Fuente de datos de Tabla 1')
+
+      await userEvent.selectOptions(selector, 'historico')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith('carga-1', {
+        'tabla-1': {
+          disponible: true, columna_id: 'Zona', columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }], usa_historico: true,
+        },
+      }))
+    })
+
+    it('en modo histórico no muestra la sección de filtro', async () => {
+      renderSeccion({
+        componente: componenteTablaFija('tabla-1', {
+          mapeo: { disponible: true, usa_historico: true, columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }] },
+        }),
+      })
+      await screen.findByLabelText('Fuente de datos de Tabla 1')
+      expect(screen.queryByText('Filtro (opcional)')).not.toBeInTheDocument()
+    })
+
+    it('fuera de modo histórico sigue mostrando la sección de filtro', async () => {
+      renderSeccion({ componente: componenteTablaFija('tabla-1') })
+      await screen.findByLabelText('Fuente de datos de Tabla 1')
+      expect(screen.getByText('Filtro (opcional)')).toBeInTheDocument()
+    })
+
+    it('Zona Personal: elegir "Histórico" recalcula vía previsualizarMapeoComponente con usa_historico=true', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({
+        contenido: {
+          titulo: 'Mi tabla', columnas: ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'Saldo'], filas: [], total: null,
+        },
+      })
+      renderSeccion({
+        componente: {
+          component_id: 'mi-tabla', type: 'chart', chart_type: 'tabla',
+          content: { titulo: 'Mi tabla', columnas: ['Zona', 'Saldo'], filas: [], total: null },
+          mapeo: {
+            disponible: true, calculo: 'tabla', columna_id: 'Zona',
+            columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }],
+          },
+        },
+      })
+      const selector = await screen.findByLabelText('Fuente de datos de Mi tabla')
+
+      await userEvent.selectOptions(selector, 'historico')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'tabla', titulo: 'Mi tabla',
+        mapeo: {
+          disponible: true, calculo: 'tabla', columna_id: 'Zona',
+          columnas_valor: [{ columna: 'Saldo', tipo_agregacion: 'suma' }], usa_historico: true,
+        },
+      }))
+    })
+  })
+
+  describe('KPI/Gráfico — fuente de datos (actual vs. histórico)', () => {
+    it('KPI (posición fija) muestra el selector "Fuente de datos"', async () => {
+      renderSeccion()
+      expect(await screen.findByLabelText('Fuente de datos de KPI 1')).toHaveValue('actual')
+    })
+
+    it('elegir "Histórico" en un KPI recalcula vía previsualizarMapeoPlantilla con usa_historico=true', async () => {
+      carteraService.previsualizarMapeoPlantilla.mockResolvedValue({
+        datos: { 'kpi-1': { titulo: 'KPI 1', valor: 500, formato: 'numero' } },
+      })
+      renderSeccion()
+      const selector = await screen.findByLabelText('Fuente de datos de KPI 1')
+
+      await userEvent.selectOptions(selector, 'historico')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith('carga-1', {
+        'kpi-1': { disponible: true, columna_valor: 'Saldo', usa_historico: true },
+      }))
+    })
+
+    it('en modo histórico, un KPI no muestra la sección de filtro', async () => {
+      renderSeccion({
+        componente: { component_id: 'kpi-1', mapeo: { disponible: true, columna_valor: 'Saldo', usa_historico: true } },
+      })
+      await screen.findByLabelText('Fuente de datos de KPI 1')
+      expect(screen.queryByText('Filtro (opcional)')).not.toBeInTheDocument()
+    })
+
+    it('Zona Personal: un Gráfico de una columna elegido "Histórico" oculta la categoría y recalcula con usa_historico=true', async () => {
+      carteraService.previsualizarMapeoComponente.mockResolvedValue({
+        contenido: { titulo: 'Mi gráfico', categorias: ['enero.xlsx'], valores: [300] },
+      })
+      renderSeccion({
+        componente: {
+          component_id: 'mi-grafico', type: 'chart', chart_type: 'barras_verticales',
+          content: { titulo: 'Mi gráfico', categorias: ['A'], valores: [1] },
+          mapeo: { disponible: true, calculo: 'chart', columna_categoria: 'Zona', columna_valor: 'Saldo' },
+        },
+      })
+      const selector = await screen.findByLabelText('Fuente de datos de Mi gráfico')
+
+      await userEvent.selectOptions(selector, 'historico')
+
+      await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith('carga-1', {
+        calculo: 'chart', titulo: 'Mi gráfico',
+        mapeo: { disponible: true, calculo: 'chart', columna_categoria: 'Zona', columna_valor: 'Saldo', usa_historico: true },
       }))
     })
   })

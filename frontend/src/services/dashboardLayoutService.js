@@ -6,12 +6,14 @@ export function obtenerLayout(dashboardId) {
   return api.get(`/${dashboardId}/layout`).then((r) => r.data)
 }
 
-export function guardarLayout(dashboardId, { version, components, changedBy }) {
-  return api.put(`/${dashboardId}/layout`, { version, components, changed_by: changedBy }).then((r) => r.data)
+/** El autor del cambio lo resuelve el backend desde el usuario autenticado (nunca se envía
+ * desde acá: era falsificable, ver `cartera/dashboard_views.py::_etiqueta_actor`). */
+export function guardarLayout(dashboardId, { version, components }) {
+  return api.put(`/${dashboardId}/layout`, { version, components }).then((r) => r.data)
 }
 
-export function restablecerLayout(dashboardId, { changedBy }) {
-  return api.post(`/${dashboardId}/layout/reset`, { changed_by: changedBy }).then((r) => r.data)
+export function restablecerLayout(dashboardId) {
+  return api.post(`/${dashboardId}/layout/reset`).then((r) => r.data)
 }
 
 /** Agrega un componente de solo presentación (título o separador, panel lateral de componentes)
@@ -49,6 +51,25 @@ export function obtenerPestanas(dashboardId) {
 
 export function crearPestana(dashboardId, { name }) {
   return api.post(`/${dashboardId}/pestanas`, { name }).then((r) => r.data)
+}
+
+/** Vista/procedimiento de la conexión externa "por defecto" configurada para ESTE dashboard/
+ * pestaña puntual (`Dashboard.fuente_bd_tipo`/`fuente_bd_nombre`, ver
+ * `backend/cartera/services/db_source.py`) — `{tipo: '', nombre: ''}` si no tiene ninguna. Separado
+ * de `actualizarDashboard` (nombre/área/contexto) a propósito, ver docstring de
+ * `DashboardFuenteBDView` en el backend. */
+export function obtenerFuenteBD(dashboardId) {
+  return api.get(`/${dashboardId}/fuente-bd`).then((r) => r.data)
+}
+
+export function actualizarFuenteBD(dashboardId, { tipo, nombre, parametros, fechaFormato, frecuenciaActualizacion }) {
+  return api.put(`/${dashboardId}/fuente-bd`, {
+    tipo, nombre, parametros, fecha_formato: fechaFormato, frecuencia_actualizacion: frecuenciaActualizacion,
+  }).then((r) => r.data)
+}
+
+export function borrarDatosDashboard(dashboardId, confirmationName) {
+  return api.post(`/${dashboardId}/borrar-datos`, { confirmation_name: confirmationName }).then((r) => r.data)
 }
 
 export function obtenerAcceso(dashboardId) {

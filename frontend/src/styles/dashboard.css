@@ -98,6 +98,8 @@ body {
 }
 
 .kpi-card {
+  display: flex;
+  flex-direction: column;
   background: var(--surface-1);
   border: 1.5px solid var(--border);
   border-radius: var(--border-radius);
@@ -135,6 +137,8 @@ body {
 }
 
 .chart-panel {
+  display: flex;
+  flex-direction: column;
   background: var(--surface-1);
   border: 1.5px solid var(--border);
   border-radius: var(--border-radius);
@@ -203,8 +207,12 @@ body {
   pointer-events: auto;
 }
 
+/* `margin-top: auto` (no un valor fijo) para que, dentro de `.kpi-card`/`.chart-panel`
+   (`display: flex; flex-direction: column`), quede siempre pegado al fondo del contenedor —
+   misma altura relativa en toda una fila de tarjetas, sin importar cuánto texto tenga el
+   contenido de arriba (título/descripción/filtro elegido). */
 .hallazgos-clave {
-  margin-top: 12px;
+  margin-top: auto;
   padding: 10px 12px;
   border: 1px solid var(--hallazgos-border);
   border-radius: 8px;
@@ -260,6 +268,25 @@ body {
 :root[data-theme='dark'] .recharts-tooltip-item,
 :root[data-theme='dark'] .recharts-tooltip-label {
   color: var(--text-primary) !important;
+}
+
+/* "Imprimir como PDF" (`DashboardAreaPage.jsx` + `utils/pdfExport.js`) NO usa el pipeline nativo
+   de impresión del navegador (`window.print()`/`@media print`) — se probó y se descartó: Recharts
+   mide su tamaño una sola vez con `ResizeObserver`, y la foto de impresión de Chrome la toma en un
+   instante intermedio antes de que ese observer termine de recalcular, dejando gráficos (sobre
+   todo los circulares, cuyo radio es un % del tamaño medido) reducidos a una fracción de su
+   tamaño real — ningún truco de CSS/timing lo resolvió de forma confiable. En cambio, el botón
+   captura con `html2canvas` el DOM tal cual ya está renderizado en pantalla (sin re-medir nada) y
+   arma el PDF con `jsPDF`.
+
+   Mientras se genera (clase `.generando-pdf` en `<html>`, agregada/sacada por
+   `pdfExport.js::generarPDFDesdeElemento`), el mismo chrome que ya se marcaba `d-print-none`
+   (sidebar, pestañas, botones, "Hallazgos clave") se oculta de VERDAD — no alcanza con
+   `@media print`, que no aplica acá, ni con el `ignoreElements` de html2canvas solo: la altura de
+   cada tarjeta se mide ANTES de capturar para decidir dónde cortar cada hoja sin partir ninguna a
+   la mitad, y esa medida tiene que coincidir exactamente con lo que después se captura. */
+.generando-pdf .d-print-none {
+  display: none !important;
 }
 
 .upload-dropzone {

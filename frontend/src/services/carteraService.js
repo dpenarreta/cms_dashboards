@@ -10,12 +10,32 @@ export function validarArchivo(archivo, hoja, dashboardId) {
   }).then((r) => r.data)
 }
 
+/** "Conectar vista de base de datos": ejecuta la vista/procedimiento ya configurado para este
+ * dashboard (`dashboardLayoutService.actualizarFuenteBD`) contra la conexión externa "por
+ * defecto" y arma una carga lista para el asistente — misma forma de respuesta que
+ * `validarArchivo`, para que `useGenericDashboardBuilder` pueda tratarla exactamente igual. */
+export function conectarFuenteBD(dashboardId) {
+  return api.post('/conectar-fuente-bd', { dashboard_id: dashboardId }).then((r) => r.data)
+}
+
+/** Ícono "Actualizar ahora" (solo dashboards con fuente configurada y sin frecuencia automática,
+ * ver `DashboardAreaPage.jsx`) — corre la MISMA actualización sin asistente que la programada
+ * (reaplica el último mapeo/aliases confirmados), en vez de pasar por `conectarFuenteBD` + todo el
+ * asistente de columnas. Nunca rechaza por un mapeo faltante: revisa `data.ok` en la respuesta. */
+export function actualizarFuenteBDAhora(dashboardId) {
+  return api.post('/actualizar-fuente-bd-ahora', { dashboard_id: dashboardId }).then((r) => r.data)
+}
+
 export function sugerirMapeoPlantilla(cargaId, aliases, valoresBlancos) {
   return api.post('/plantilla/sugerir', { carga_id: cargaId, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
 }
 
 export function previsualizarMapeoPlantilla(cargaId, mapeo, aliases, valoresBlancos) {
   return api.post('/plantilla/previsualizar', { carga_id: cargaId, mapeo, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
+}
+
+export function previsualizarMapeoComponente(cargaId, { calculo, titulo, mapeo }) {
+  return api.post('/plantilla/previsualizar-componente', { carga_id: cargaId, calculo, titulo, mapeo }).then((r) => r.data)
 }
 
 export function aplicarMapeoPlantilla(cargaId, mapeo, aliases, valoresBlancos, columnasHistoricas) {
@@ -26,6 +46,10 @@ export function aplicarMapeoPlantilla(cargaId, mapeo, aliases, valoresBlancos, c
 
 export function obtenerValoresColumnaPlantilla(cargaId, columna, aliases, valoresBlancos) {
   return api.post('/plantilla/valores-columna', { carga_id: cargaId, columna, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
+}
+
+export function obtenerDuplicadosColumna(cargaId, columna, aliases, valoresBlancos) {
+  return api.post('/plantilla/duplicados-columna', { carga_id: cargaId, columna, aliases, valores_blancos: valoresBlancos }).then((r) => r.data)
 }
 
 export function obtenerArchivoActualDashboard(dashboardId) {

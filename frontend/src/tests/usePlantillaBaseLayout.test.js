@@ -50,9 +50,11 @@ describe('usePlantillaBaseLayout', () => {
     act(() => result.current.activarEdicion())
     plantillaBaseService.guardarLayout.mockResolvedValue(layoutDePrueba(2))
 
-    await act(async () => { await result.current.guardar('Ana') })
+    await act(async () => { await result.current.guardar() })
 
-    expect(plantillaBaseService.guardarLayout).toHaveBeenCalledWith(expect.objectContaining({ version: 1, changedBy: 'Ana' }))
+    // Sin `changedBy`: lo resuelve el backend desde el usuario autenticado.
+    expect(plantillaBaseService.guardarLayout).toHaveBeenCalledWith(expect.objectContaining({ version: 1 }))
+    expect(plantillaBaseService.guardarLayout.mock.calls[0][0]).not.toHaveProperty('changedBy')
     expect(result.current.layoutGuardado.version).toBe(2)
     expect(result.current.modoEdicion).toBe(false)
   })

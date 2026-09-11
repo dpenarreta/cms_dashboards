@@ -5,6 +5,8 @@ de negocio fijo (cliente/saldo/causal/...): se aplica a cualquier archivo subido
 dashboard. Flujo: cargar archivo → analizar columnas (con alias editables en el frontend) →
 recomendar gráficas → el usuario agrega, una por una, las que le sirven."""
 
+from datetime import date
+
 import pandas as pd
 
 CARDINALIDAD_MAXIMA_CATEGORIA = 50
@@ -272,13 +274,17 @@ def calcular_datos_recomendaciones(df, recomendaciones):
 
 
 def _agrupar_top_n(agrupado, limite=LIMITE_CATEGORIAS_EN_GRAFICA):
+    """Conserva las `limite` categorías de mayor valor y colapsa el resto en una única 'Otras'.
+
+    La barra 'Otras' se agrega siempre que haya categorías fuera del top, INCLUSO si su suma da
+    exactamente 0 (dos categorías que se cancelan, +50 y −50). Antes un `if resto:` la omitía en
+    ese caso y esas categorías desaparecían del gráfico sin ninguna señal de que existían.
+    """
     if len(agrupado) <= limite:
         return agrupado
     top = agrupado.iloc[:limite]
     resto = float(agrupado.iloc[limite:].sum())
-    if resto:
-        top = pd.concat([top, pd.Series({'Otras': resto})])
-    return top
+    return pd.concat([top, pd.Series({'Otras': resto})])
 
 
 def generar_conteo_valores_unicos(df, columna):
@@ -293,13 +299,23 @@ def generar_conteo_valores_unicos(df, columna):
 
 def generar_promedio_columna(df, columna):
     """Promedio (media aritmética) de una columna numérica — para un KPI de "promedio" en vez de
-    "suma" (p. ej. saldo promedio o días de crédito promedio). `None` si la columna no existe o no
-    tiene ningún valor numérico, igual que el resto de agregaciones de KPI."""
+    "suma" (p. ej. saldo promedio o días de crédito promedio).
+
+    `None` SOLO si la columna no existe: eso es lo que los llamadores interpretan como "la columna
+    ya no está en el archivo". Si la columna existe pero no queda ningún valor numérico que
+    promediar (columna de texto, o un filtro que no dejó filas) devuelve `0.0`, igual que la suma
+    (`generar_datos_grafica`) y el conteo de únicos (`generar_conteo_valores_unicos`) sobre esa
+    misma columna — antes devolvía `None` también en ese caso y cada llamador lo malinterpretaba a
+    su manera: `plantilla.calcular_datos_mapeo` caía al dato ficticio (el KPI mostraba un número
+    inventado con la descripción "Dato de ejemplo — se reemplaza al cargar un archivo", con un
+    archivo ya cargado y mapeado) y `views.AgregarGraficaView` levantaba
+    "La columna elegida ya no existe en el archivo", que no era la causa.
+    """
     if columna not in df.columns:
         return None
     valores = pd.to_numeric(df[columna], errors='coerce').dropna()
     if valores.empty:
-        return None
+        return {'tipo': 'kpi', 'valor': 0.0}
     return {'tipo': 'kpi', 'valor': round(float(valores.mean()), 2)}
 
 
@@ -315,6 +331,21 @@ def valores_unicos_de_columna(df, columna, limite=LIMITE_VALORES_UNICOS_FILTRO):
         return None
     valores = sorted(str(v) for v in df[columna].dropna().unique())
     return {'valores': valores[:limite], 'total': len(valores)}
+
+
+def valores_duplicados_de_columna(df, columna, cantidad_ejemplos=3):
+    """Valores de una columna que aparecen más de una vez (no nulos), con su cantidad de
+    repeticiones — para avisar, al elegir una columna de categoría de un gráfico o de identidad de
+    fila de una tabla, que filas distintas van a agruparse bajo el mismo valor (comportamiento
+    normal de "agrupar por categoría", pero puede no ser lo que el usuario esperaba). Ordenado por
+    cantidad descendente (los ejemplos más repetidos primero) — a diferencia de
+    `valores_unicos_de_columna`, que ordena alfabético y no cuenta repeticiones."""
+    if columna not in df.columns:
+        return None
+    conteos = df[columna].dropna().astype(str).value_counts()
+    duplicados = conteos[conteos > 1]
+    ejemplos = [{'valor': valor, 'cantidad': int(cantidad)} for valor, cantidad in duplicados.head(cantidad_ejemplos).items()]
+    return {'cantidad_valores_duplicados': int(len(duplicados)), 'ejemplos': ejemplos}
 
 
 def generar_datos_grafica(df, columna_valor, columna_categoria=None):
@@ -372,9 +403,18 @@ def generar_datos_multiserie(df, columna_valor, columna_categoria, columna_serie
     else:
         tabla = tabla_completa
 
+    # Las series fuera del top se colapsan en una serie 'Otras' en vez de descartarse. Antes se
+    # recortaban a secas, así que los segmentos de una categoría dejaban de sumar su total (en un
+    # caso con 8 series el gráfico mostraba 330 de 360) sin ninguna indicación — al revés que las
+    # categorías, que sí tenían su barra 'Otras'.
     totales_serie = tabla.sum(axis=0).sort_values(ascending=False)
     series_incluidas = totales_serie.index[:MAX_SERIES_EN_GRAFICA]
-    tabla = tabla[series_incluidas]
+    resto_series = tabla.drop(columns=series_incluidas)
+    # Se reordena siempre por total descendente (comportamiento de siempre) y, solo si algo quedó
+    # afuera, se agrega la serie 'Otras' al final.
+    tabla = tabla[series_incluidas].copy()
+    if not resto_series.empty:
+        tabla['Otras'] = resto_series.sum(axis=1)
 
     return {
         'tipo': 'multiserie',
@@ -426,7 +466,11 @@ def generar_datos_multivalor(df, columna_categoria, columnas_valor):
     categorias = df[columna_categoria].fillna('Sin dato').astype(str)
     agrupados = {c: pd.to_numeric(df[c], errors='coerce').groupby(categorias).sum() for c in columnas_valor}
 
-    totales_categoria = agrupados[columnas_valor[0]].sort_values(ascending=False)
+    # Qué categorías entran al top se decide por la suma de TODAS las columnas de valor, no por la
+    # primera. Rankeando por la primera, en un "Ingresos vs Gastos por mes" con 20 meses donde uno
+    # solo tiene gastos altos, ese mes ocupaba el gráfico y los otros diecinueve —los de ingresos
+    # altos— se colapsaban en "Otras": el gráfico mostraba justo lo que no interesaba comparar.
+    totales_categoria = sum(agrupados.values()).sort_values(ascending=False)
     hay_resto = len(totales_categoria) > LIMITE_CATEGORIAS_EN_GRAFICA
     categorias_incluidas = totales_categoria.index[:LIMITE_CATEGORIAS_EN_GRAFICA] if hay_resto else totales_categoria.index
 
@@ -454,7 +498,17 @@ def normalizar_columna_valor_tabla(columna_valor):
     'conteo_unicos'|'valor_celda'}` (sección 23) — también acepta el string plano de antes de esa
     sección (tratado como 'suma'), para que una tabla mapeada antes de este cambio se siga pudiendo
     recalcular sin que el usuario tenga que rehacer el mapeo. Público (no `_`): también lo usa
-    `services/historico.py` para normalizar las columnas de una tabla histórica (sección 28)."""
+    `services/historico.py` para normalizar las columnas de una tabla histórica (sección 28).
+
+    `{'manual': True, 'titulo': str, 'valores': [...], 'total': valor|None}` (sección 29) es una
+    forma distinta, NO una columna real del archivo: sus valores los escribe el usuario a mano, uno
+    por fila resultante, alineados por posición (no por identidad de `columna_id`) — se devuelve
+    tal cual, sin intentar resolverla contra ninguna columna real."""
+    if isinstance(columna_valor, dict) and columna_valor.get('manual'):
+        return {
+            'manual': True, 'titulo': columna_valor.get('titulo') or '',
+            'valores': list(columna_valor.get('valores') or []), 'total': columna_valor.get('total'),
+        }
     if columna_valor is None:
         return {'columna': None, 'tipo_agregacion': 'suma'}
     if isinstance(columna_valor, str):
@@ -494,7 +548,7 @@ def valor_agregado(serie, tipo_agregacion):
 
 def generar_datos_tabla(df, columna_id, columnas_valor, limite=LIMITE_FILAS_TABLA):
     """Arma una tabla con una fila por cada valor de `columna_id` (las `limite` de mayor total en
-    la primera columna de valor — un tope de seguridad alto, no la cantidad a mostrar: eso lo
+    la primera columna de valor REAL — un tope de seguridad alto, no la cantidad a mostrar: eso lo
     decide el frontend con su propio paginador, sección 24), una columna por cada entrada de
     `columnas_valor` — cada una agregada con el tipo de cálculo que el usuario haya elegido para
     esa columna (`suma`, `promedio`, `conteo_unicos` o `valor_celda`, sección 23) —, una columna
@@ -505,14 +559,24 @@ def generar_datos_tabla(df, columna_id, columnas_valor, limite=LIMITE_FILAS_TABL
     una dimensión de tiempo en el archivo.
 
     `valor_celda` es la excepción a "todo es una cantidad": es texto/categoría, no algo que se
-    pueda sumar ni rankear numéricamente. Si la PRIMERA columna de valor es `valor_celda`, el orden
-    de las filas queda alfabético (no por magnitud) y "% del total" queda en 0 para todas las filas
-    (no hay total numérico contra el cual repartir un porcentaje); si cualquier otra columna lo es,
-    su celda en la fila de "Total" queda vacía (`None`) en vez de intentar sumar texto."""
+    pueda sumar ni rankear numéricamente. Si la PRIMERA columna de valor REAL es `valor_celda`, el
+    orden de las filas queda alfabético (no por magnitud) y "% del total" queda en 0 para todas las
+    filas (no hay total numérico contra el cual repartir un porcentaje); si cualquier otra columna
+    lo es, su celda en la fila de "Total" queda vacía (`None`) en vez de intentar sumar texto.
+
+    Cualquier entrada `{'manual': True, ...}` (sección 29, ver `normalizar_columna_valor_tabla`) es
+    una columna cuyos valores el usuario escribe a mano, uno por fila, alineados por POSICIÓN (no
+    por identidad de `columna_id`) — nunca decide la cantidad/orden de filas ni participa del "%
+    del total" (eso siempre lo deciden las columnas reales; si no hay ninguna, el orden queda
+    alfabético por `columna_id` y el "% del total" en 0, igual que el caso `valor_celda` como
+    primaria). Si `valores` trae menos elementos que filas resultantes, las filas sin valor quedan
+    en `None`; si trae de más, los sobrantes se ignoran acá (ajustar lo persistido es
+    responsabilidad de quien arma el mapeo, no de este cálculo)."""
     if columna_id not in df.columns or not columnas_valor:
         return None
     entradas = [normalizar_columna_valor_tabla(c) for c in columnas_valor]
-    if any(e['columna'] not in df.columns for e in entradas):
+    entradas_reales = [(i, e) for i, e in enumerate(entradas) if not e.get('manual')]
+    if any(e['columna'] not in df.columns for _, e in entradas_reales):
         return None
 
     identidad = df[columna_id].fillna('Sin dato').astype(str)
@@ -526,41 +590,286 @@ def generar_datos_tabla(df, columna_id, columnas_valor, limite=LIMITE_FILAS_TABL
         numerica = pd.to_numeric(df[nombre_columna], errors='coerce')
         return numerica.groupby(identidad).mean() if tipo == 'promedio' else numerica.groupby(identidad).sum()
 
-    # Listas posicionales (no un dict por nombre de columna): la misma columna origen puede
-    # aparecer más de una vez con un tipo de agregación distinto en cada una (p. ej. "Ventas -
-    # Suma" y "Ventas - Promedio" como dos columnas separadas de la tabla) y cada aparición debe
-    # mantener su propio cálculo, no fundirse con las demás.
-    agrupados = [agrupado(e) for e in entradas]
+    # Diccionario por índice en `entradas` (no una lista posicional 1:1): las entradas manuales no
+    # tienen serie agrupada, así que el índice de `entradas_reales` ya no coincide con el índice en
+    # `entradas` apenas hay una manual antes de alguna real.
+    agrupados_por_indice = {i: agrupado(e) for i, e in entradas_reales}
 
-    primaria_numerica = entradas[0]['tipo_agregacion'] != 'valor_celda'
-    principal = agrupados[0]
-    top_ids = principal.sort_values(ascending=False).index[:limite]
-    total_general = float(valor_agregado(df[entradas[0]['columna']], entradas[0]['tipo_agregacion'])) if primaria_numerica else 0.0
+    if entradas_reales:
+        indice_principal, entrada_principal = entradas_reales[0]
+        primaria_numerica = entrada_principal['tipo_agregacion'] != 'valor_celda'
+        principal = agrupados_por_indice[indice_principal]
+        ids_ordenados = list(principal.sort_values(ascending=False).index[:limite])
+    else:
+        indice_principal = None
+        primaria_numerica = False
+        principal = None
+        ids_ordenados = sorted(identidad.unique())[:limite]
 
     filas = []
-    totales_por_columna = [(0.0 if e['tipo_agregacion'] != 'valor_celda' else None) for e in entradas]
-    for nombre_id in top_ids:
+    totales_por_columna = [
+        (None if e.get('manual') else (0.0 if e['tipo_agregacion'] != 'valor_celda' else None))
+        for e in entradas
+    ]
+    for fila_idx, nombre_id in enumerate(ids_ordenados):
         fila = [str(nombre_id)]
-        for i, (entrada, serie_agrupada) in enumerate(zip(entradas, agrupados)):
-            valor_bruto = serie_agrupada.get(nombre_id)
+        for i, entrada in enumerate(entradas):
+            if entrada.get('manual'):
+                valores = entrada['valores']
+                fila.append(valores[fila_idx] if fila_idx < len(valores) else None)
+                continue
+            valor_bruto = agrupados_por_indice[i].get(nombre_id)
             if entrada['tipo_agregacion'] == 'valor_celda':
                 fila.append(valor_bruto if pd.notna(valor_bruto) else None)
             else:
                 valor = float(valor_bruto) if pd.notna(valor_bruto) else 0.0
                 fila.append(round(valor, 2))
                 totales_por_columna[i] += valor
-        valor_principal = float(principal.get(nombre_id, 0.0)) if primaria_numerica else 0.0
-        porcentaje = round((valor_principal / total_general * 100) if (primaria_numerica and total_general) else 0.0, 2)
-        fila.append(porcentaje)
         filas.append(fila)
 
-    fila_total = ['Total'] + [(round(total, 2) if total is not None else None) for total in totales_por_columna]
-    porcentaje_total = round((totales_por_columna[0] / total_general * 100) if (primaria_numerica and total_general) else 0.0, 2)
-    fila_total.append(porcentaje_total)
+    # El "% del total" se calcula recién acá, cuando ya se conoce el total de la columna primaria
+    # TAL COMO SE MUESTRA en la fila "Total" (la suma de las filas listadas). Antes el denominador
+    # era la columna completa reagregada con el mismo tipo de cálculo, lo que solo tiene sentido
+    # para 'suma': con 'promedio' dividía la media de cada grupo por la media global y la columna
+    # llegaba a mostrar 166% con un total de 333%; con 'conteo_unicos' un mismo valor presente en
+    # dos grupos se contaba dos veces arriba y una sola abajo, y los porcentajes cerraban en 125%.
+    # Dividir por la fila "Total" es la única regla que queda bien definida para los cuatro tipos
+    # de agregación, y hace que el porcentaje coincida con el total que el lector tiene a la vista.
+    base_porcentaje = totales_por_columna[indice_principal] if primaria_numerica else None
+    for fila in filas:
+        # +1 por la columna de identidad que va primero.
+        valor_principal = fila[indice_principal + 1] if primaria_numerica else 0.0
+        fila.append(round((valor_principal / base_porcentaje * 100) if base_porcentaje else 0.0, 2))
+
+    fila_total = ['Total']
+    for i, entrada in enumerate(entradas):
+        if entrada.get('manual'):
+            fila_total.append(entrada.get('total'))
+        else:
+            total = totales_por_columna[i]
+            fila_total.append(round(total, 2) if total is not None else None)
+    # Por construcción da 100% cuando hay una columna primaria numérica con algún valor: es la
+    # suma de los porcentajes de las filas, que ahora se reparten sobre ese mismo total.
+    fila_total.append(round(100.0 if base_porcentaje else 0.0, 2))
+
+    nombres_columna = [(e.get('titulo') or 'Manual') if e.get('manual') else str(e['columna']) for e in entradas]
+    return {
+        'tipo': 'tabla_multi',
+        'columnas': [str(columna_id)] + nombres_columna + ['% del total'],
+        'filas': filas,
+        'total': fila_total,
+    }
+
+
+# Tramos de antigüedad (días transcurridos entre una fecha y HOY) — mismos cortes que usa el
+# filtro `dias_vencidos` de KPI (`plantilla.py::_aplicar_filtro_dias_vencidos`): 0 días (vence
+# hoy) todavía cuenta como "Anticipada", no como vencido. Discretos para el gráfico de
+# antigüedad; acumulados (cada tramo incluye los anteriores, EXCEPTO el último) para la tabla de
+# cumplimiento de metas — alineados posicionalmente 1 a 1 con `ETIQUETAS_TRAMOS_ANTIGUEDAD`
+# (`generar_datos_cumplimiento_tramos` usa el índice para leer el tramo discreto correspondiente
+# a cada fila acumulada, ya que sus textos difieren). El último tramo ("Más de 120 días") NO es
+# una fila de cierre al 100%: es la cola ">120 días" sola, igual valor que el último tramo
+# discreto — ver `generar_datos_cumplimiento_tramos`.
+ETIQUETAS_TRAMOS_ANTIGUEDAD = ['Anticipada', '30 días', '60 días', '90 días', '120 días', '+120 días']
+ETIQUETAS_TRAMOS_ACUMULADOS = [
+    'Corriente', 'Vencido ≤ 30 días (acum.)', 'Vencido ≤ 60 días (acum.)',
+    'Vencido ≤ 90 días (acum.)', 'Vencido ≤ 120 días (acum.)', 'Más de 120 días',
+]
+
+
+def dias_transcurridos_desde(serie_fecha, fecha_referencia=None):
+    """Días transcurridos entre cada fecha de `serie_fecha` (columna cruda, sin parsear) y
+    `fecha_referencia` — positivo si la fecha ya pasó, negativo si todavía no llega, `NaN` si el
+    valor no parsea como fecha. Único punto de verdad para este cálculo: lo usa tanto el filtro
+    `dias_vencidos` de KPI como los tramos de antigüedad de acá — nunca lo recalcules inline en
+    otro lado.
+
+    `fecha_referencia` es la FECHA DE CORTE de la carga (`CargaArchivo.fecha_corte`), no el día en
+    que se mira el dashboard. Antes esta función usaba siempre `date.today()`, con dos
+    consecuencias: la antigüedad de un archivo de junio seguía envejeciendo en septiembre aunque el
+    archivo no hubiera cambiado (los tramos se vaciaban hacia "+120 días" solos y un "Cumple" del
+    cumplimiento de metas podía darse vuelta de un día para el otro), y convivían dos nociones de
+    "vencido" en la misma pantalla, porque los KPIs de cartera (`calculator.anotar_estado_y_mora`)
+    siempre midieron contra la fecha de corte. Se cae a hoy solo si la carga no tiene fecha de
+    corte registrada, que es el comportamiento anterior.
+    """
+    fechas = pd.to_datetime(serie_fecha, errors='coerce', format='mixed')
+    return (pd.Timestamp(fecha_referencia or date.today()) - fechas).dt.days
+
+
+def _tramo_antiguedad(dias):
+    """El tramo (uno de `ETIQUETAS_TRAMOS_ANTIGUEDAD`) al que corresponde una cantidad de días
+    transcurridos — 0 o menos (fecha hoy o en el futuro) es "Anticipada", igual criterio que
+    "mayor que 0 días" = vencido en el filtro de KPI. `None` si `dias` es `NaN` (fecha inválida):
+    no cuenta en ningún tramo, ni siquiera en "Anticipada"."""
+    if pd.isna(dias):
+        return None
+    if dias <= 0:
+        return 'Anticipada'
+    if dias <= 30:
+        return '30 días'
+    if dias <= 60:
+        return '60 días'
+    if dias <= 90:
+        return '90 días'
+    if dias <= 120:
+        return '120 días'
+    return '+120 días'
+
+
+def generar_datos_tramos_antiguedad(df, columna_fecha, columna_valor, fecha_referencia=None):
+    """Suma `columna_valor` agrupada por tramo de antigüedad (`ETIQUETAS_TRAMOS_ANTIGUEDAD`,
+    calculado desde `columna_fecha` vs. HOY) — a diferencia de `generar_datos_grafica`, el eje de
+    categorías es siempre esas 6 etiquetas fijas, en ese orden, sin importar cuáles tengan datos
+    (un tramo sin ninguna fila aparece con `0`, nunca desaparece del gráfico). Filas cuya fecha no
+    parsea quedan fuera de todos los tramos. `None` si falta alguna columna."""
+    if columna_fecha not in df.columns or columna_valor not in df.columns:
+        return None
+    tramos = dias_transcurridos_desde(df[columna_fecha], fecha_referencia).map(_tramo_antiguedad)
+    valores = pd.to_numeric(df[columna_valor], errors='coerce')
+    sumas_por_tramo = valores.groupby(tramos).sum()
+    return {
+        'tipo': 'chart',
+        'categorias': list(ETIQUETAS_TRAMOS_ANTIGUEDAD),
+        'valores': [round(float(sumas_por_tramo.get(etiqueta, 0.0)), 2) for etiqueta in ETIQUETAS_TRAMOS_ANTIGUEDAD],
+    }
+
+
+def evaluar_meta(valor, meta_min, meta_max):
+    """Evalúa `valor` contra una meta opcional de mínimo y/o máximo — `None` si ambos vienen
+    vacíos (`None`/`''`, "sin meta configurada"). Si no, devuelve `{'meta_min', 'meta_max',
+    'cumple': bool, 'motivos': [str, ...]}` (0, 1 o 2 motivos según qué condición se incumpla).
+    Agnóstica de unidad: el llamador decide si `valor` es un monto bruto o un porcentaje, acá solo
+    se comparan números."""
+    tiene_min = meta_min not in (None, '')
+    tiene_max = meta_max not in (None, '')
+    if not tiene_min and not tiene_max:
+        return None
+    meta_min_num = float(meta_min) if tiene_min else None
+    meta_max_num = float(meta_max) if tiene_max else None
+    motivos = []
+    if meta_min_num is not None and valor < meta_min_num:
+        motivos.append(f'menor al mínimo ({meta_min_num})')
+    if meta_max_num is not None and valor > meta_max_num:
+        motivos.append(f'mayor al máximo ({meta_max_num})')
+    return {'meta_min': meta_min_num, 'meta_max': meta_max_num, 'cumple': not motivos, 'motivos': motivos}
+
+
+def etiqueta_cumplimiento(meta):
+    """Texto corto de una sola celda (compatible con cualquier tabla) para el resultado de
+    `evaluar_meta`: `'Sin meta'` si `meta is None`, `'Cumple'` si cumple, o `'No cumple
+    (<motivos unidos con "; ">)'` si no."""
+    if meta is None:
+        return 'Sin meta'
+    if meta['cumple']:
+        return 'Cumple'
+    return f"No cumple ({'; '.join(meta['motivos'])})"
+
+
+def generar_datos_cumplimiento_tramos(df, columna_fecha, columna_valor, metas=None, fecha_referencia=None):
+    """Tabla de cumplimiento de metas por tramo de antigüedad — las primeras 5 filas son
+    ACUMULADAS ("Vencido ≤ 30 días (acum.)" incluye "Corriente"+"30 días", "≤ 60 días" incluye
+    además "60 días", ...), pero la 6ª fila ("Más de 120 días") NO es una fila de cierre al 100%:
+    es la cola ">120 días" SOLA, igual valor que el último tramo del gráfico de antigüedad
+    discreto (`generar_datos_tramos_antiguedad`).
+
+    El invariante real es que la 5ª fila (acumulado ≤120) más la 6ª (cola >120) dan 100%; las 6
+    filas NO suman 100% entre sí y nunca podrían, porque las primeras 5 se contienen unas a otras
+    (Corriente 10% + ≤30 30% + ≤60 50% + ≤90 70% + ≤120 90% + >120 10% = 260%). La versión
+    anterior de este docstring afirmaba lo contrario.
+
+    La base del porcentaje es el total de las filas QUE ENTRARON en algún tramo, no el total del
+    archivo: una fila cuya fecha no parsea queda fuera de todos los tramos (igual que en
+    `generar_datos_tramos_antiguedad`), así que incluirla en el denominador hacía que los
+    porcentajes no cerraran —≤120 + >120 daba menos de 100%— sin ninguna señal de por qué. Como
+    las metas se evalúan contra estos porcentajes, un archivo con fechas sucias podía reportar
+    "No cumple" por filas que en realidad no se estaban clasificando.
+
+    `metas` es una lista de hasta 6
+    `{'meta_min', 'meta_max'}` alineada por posición con `ETIQUETAS_TRAMOS_ACUMULADOS` (entrada
+    faltante o vacía = sin meta para ese tramo). Cada fila evalúa su meta contra el `%` de esa
+    fila (acumulado para las primeras 5, de la cola sola para la última), NO contra el valor
+    bruto — así las metas se expresan en porcentaje (ej. "≥ 50%"), coherente con cómo se
+    documentan habitualmente los cumplimientos de cartera. `total: None` a propósito: las 6 filas
+    ya suman el 100% entre sí, no hace falta una fila de cierre aparte. `None` si falta alguna
+    columna."""
+    if columna_fecha not in df.columns or columna_valor not in df.columns:
+        return None
+    tramos = dias_transcurridos_desde(df[columna_fecha], fecha_referencia).map(_tramo_antiguedad)
+    valores = pd.to_numeric(df[columna_valor], errors='coerce')
+    sumas_por_tramo = valores.groupby(tramos).sum()
+    # Base del porcentaje: lo que de verdad quedó clasificado en algún tramo. `groupby` descarta
+    # las filas con clave nula, así que las de fecha inválida no están en `sumas_por_tramo`;
+    # usar `valores.sum()` (el total del archivo) las metía en el denominador y solo en el
+    # denominador — ver el docstring.
+    total_general = float(sumas_por_tramo.sum())
+    metas = metas or []
+
+    filas = []
+    acumulado = 0.0
+    ultimo_indice = len(ETIQUETAS_TRAMOS_ANTIGUEDAD) - 1
+    for i, etiqueta_discreta in enumerate(ETIQUETAS_TRAMOS_ANTIGUEDAD):
+        etiqueta_fila = ETIQUETAS_TRAMOS_ACUMULADOS[i]
+        valor_tramo = float(sumas_por_tramo.get(etiqueta_discreta, 0.0))
+        if i == ultimo_indice:
+            valor_fila = valor_tramo  # cola ">120 días" sola, no acumulada
+        else:
+            acumulado += valor_tramo
+            valor_fila = acumulado
+        porcentaje = round((valor_fila / total_general * 100) if total_general else 0.0, 2)
+        meta_entrada = metas[i] if i < len(metas) else None
+        meta = evaluar_meta(porcentaje, (meta_entrada or {}).get('meta_min'), (meta_entrada or {}).get('meta_max'))
+        filas.append([etiqueta_fila, round(valor_fila, 2), porcentaje, etiqueta_cumplimiento(meta)])
 
     return {
         'tipo': 'tabla_multi',
-        'columnas': [str(columna_id)] + [str(e['columna']) for e in entradas] + ['% del total'],
+        'columnas': ['Tramo', str(columna_valor), '% acumulado', 'Resultado'],
         'filas': filas,
-        'total': fila_total,
+        'total': None,
+    }
+
+
+def generar_datos_concentracion(df, columna_id, columna_valor, top_n):
+    """Top-N + "Resto" — agrupa por `columna_id`, suma `columna_valor`, ordena descendente,
+    conserva las `top_n` filas de mayor valor y colapsa el resto en una fila `'Resto (N)'` (`N` =
+    cantidad de identidades agrupadas ahí, ausente si no sobra nada). Generaliza el algoritmo de
+    `aggregations.py::pareto_ciudades`/`top_clientes` (mismo criterio de `%`/`% acumulado` vía
+    `cumsum`) de forma agnóstica de esquema — cualquier columna identificadora + cualquier columna
+    numérica, no solo cliente/ciudad de cartera. `top_n` no numérico o menor a 1 se trata como
+    `1` (de mejor esfuerzo: la validación estricta vive en `dashboard_layout.validar_componentes`,
+    esta función nunca debe romper una vista previa en vivo). `None` si falta alguna columna."""
+    if columna_id not in df.columns or columna_valor not in df.columns:
+        return None
+    try:
+        top_n = max(1, int(top_n)) if top_n not in (None, '') else 1
+    except (TypeError, ValueError):
+        top_n = 1
+
+    identidad = df[columna_id].fillna('Sin dato').astype(str)
+    valores = pd.to_numeric(df[columna_valor], errors='coerce')
+    agrupado = valores.groupby(identidad).sum().sort_values(ascending=False)
+    total_general = float(agrupado.sum())
+
+    principales = agrupado.iloc[:top_n]
+    resto = agrupado.iloc[top_n:]
+
+    filas = []
+    acumulado = 0.0
+    for nombre, valor in principales.items():
+        valor = float(valor)
+        acumulado += valor
+        porcentaje = round((valor / total_general * 100) if total_general else 0.0, 2)
+        porcentaje_acumulado = round((acumulado / total_general * 100) if total_general else 0.0, 2)
+        filas.append([nombre, round(valor, 2), porcentaje, porcentaje_acumulado])
+
+    if len(resto) > 0:
+        valor_resto = float(resto.sum())
+        porcentaje_resto = round((valor_resto / total_general * 100) if total_general else 0.0, 2)
+        filas.append([f'Resto ({len(resto)})', round(valor_resto, 2), porcentaje_resto, 100.0])
+
+    return {
+        'tipo': 'tabla_multi',
+        'columnas': [str(columna_id), str(columna_valor), '% del total', '% acumulado'],
+        'filas': filas,
+        'total': ['Total', round(total_general, 2), 100.0, 100.0],
     }

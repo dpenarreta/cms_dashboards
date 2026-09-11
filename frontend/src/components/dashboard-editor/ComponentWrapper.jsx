@@ -12,9 +12,17 @@ import MoveButtons from './MoveButtons'
  */
 export default function ComponentWrapper({
   componente, esPrimero, esUltimo, seleccionado,
-  onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, permiteEstilo, permiteEliminar,
+  onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, permiteEstilo, permiteEliminar, esSuperusuario,
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: componente.component_id })
+  // Componentes sembrados como estructura fija de un dashboard puntual (ej. Dashboard Directorio,
+  // `config.bloqueado`, ver `services/dashboard_layout.py::validar_componentes`) no se pueden
+  // mover/redimensionar/ocultar/eliminar salvo que el usuario sea superusuario — la protección
+  // REAL está en el backend (`COMPONENTE_BLOQUEADO`), esto es solo para no invitar a intentar algo
+  // que el servidor va a rechazar.
+  const bloqueado = Boolean(componente.config?.bloqueado) && !esSuperusuario
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: componente.component_id, disabled: bloqueado,
+  })
   const [confirmandoEliminar, setConfirmandoEliminar] = useState(false)
 
   const style = {
@@ -38,17 +46,18 @@ export default function ComponentWrapper({
             type="button"
             className="btn btn-sm btn-outline-secondary"
             aria-label={`Arrastrar para reordenar ${componente.component_id}`}
-            title="Arrastrar para reordenar"
+            title={bloqueado ? 'Componente bloqueado: no se puede reordenar' : 'Arrastrar para reordenar'}
+            disabled={bloqueado}
             {...attributes}
             {...listeners}
-            style={{ cursor: 'grab' }}
+            style={{ cursor: bloqueado ? 'not-allowed' : 'grab' }}
           >
             ⠿
           </button>
           <MoveButtons
             onMover={(direccion) => onMover(componente.component_id, direccion)}
-            deshabilitarArriba={esPrimero}
-            deshabilitarAbajo={esUltimo}
+            deshabilitarArriba={esPrimero || bloqueado}
+            deshabilitarAbajo={esUltimo || bloqueado}
           />
           <div className="d-flex gap-1">
             {permiteEstilo && (
@@ -62,7 +71,7 @@ export default function ComponentWrapper({
                 ⚙
               </Button>
             )}
-            {componente.is_visible ? (
+            {!bloqueado && (componente.is_visible ? (
               <Button size="sm" variant="outline-secondary" onClick={() => onOcultar(componente.component_id)} title="Ocultar">
                 Ocultar
               </Button>
@@ -70,8 +79,8 @@ export default function ComponentWrapper({
               <Button size="sm" variant="outline-primary" onClick={() => onMostrar(componente.component_id)} title="Mostrar">
                 Mostrar
               </Button>
-            )}
-            {permiteEliminar && (
+            ))}
+            {permiteEliminar && !bloqueado && (
               confirmandoEliminar ? (
                 <div className="d-flex gap-1 align-items-center">
                   <span className="text-danger" style={{ fontSize: '0.8rem' }}>¿Eliminar?</span>

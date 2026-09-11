@@ -79,11 +79,19 @@ def pareto_ciudades(df, fecha_corte, agrupar_otras=False):
     if agrupar_otras and len(detalle) > TOP_CIUDADES_VISIBLES:
         principales = detalle[:TOP_CIUDADES_VISIBLES]
         resto = detalle[TOP_CIUDADES_VISIBLES:]
+        # El saldo y el porcentaje de "OTRAS CIUDADES" se calculan desde los valores SIN redondear
+        # y se redondean una sola vez al final. Antes se sumaban los ya redondeados a 2 decimales,
+        # así que con muchas ciudades en el resto la deriva podía llegar a varias décimas — y el
+        # porcentaje del grupo no coincidía con su propio saldo.
+        saldo_otras = float(grupos['saldo_vencido'].iloc[TOP_CIUDADES_VISIBLES:].sum())
         otras = {
             'ciudad': OTRAS_CIUDADES,
-            'saldo_vencido': round(sum(c['saldo_vencido'] for c in resto), 2),
-            'porcentaje': round(sum(c['porcentaje'] for c in resto), 2),
+            'saldo_vencido': round(saldo_otras, 2),
+            'porcentaje': round((saldo_otras / total_vencida * 100) if total_vencida else 0.0, 2),
             'porcentaje_acumulado': 100.0,
+            # Documentos y clientes sí se suman: son `nunique` por ciudad, enteros exactos, sin
+            # redondeo que pueda derivar. Un mismo documento o cliente presente en dos ciudades se
+            # cuenta en ambas, igual que en las filas individuales que este grupo resume.
             'documentos': sum(c['documentos'] for c in resto),
             'clientes': sum(c['clientes'] for c in resto),
             'ciudades_incluidas': [c['ciudad'] for c in resto],
@@ -122,6 +130,17 @@ def recuperadores(df, fecha_corte):
 
 
 def causales(df, agrupar_otras=False):
+    """Saldo y cantidad de documentos por causal de gestión.
+
+    `porcentaje_documentos` se reparte sobre la SUMA de los documentos contados por causal, no
+    sobre los documentos distintos del archivo: un mismo `numero_documento` con dos filas de
+    causales distintas se cuenta en las dos (es correcto: ese documento tiene ambas causales),
+    así que usar el `nunique` global como denominador hacía que la columna sumara más de 100% sin
+    ninguna explicación. Con la suma de las partes como base, los porcentajes cierran en 100% y
+    siguen respondiendo la pregunta "de todo lo gestionado, qué porción corresponde a esta
+    causal". `documentos_total` se conserva como el conteo real de documentos distintos del
+    archivo — es un dato del encabezado, no la base del porcentaje.
+    """
     if df.empty:
         return {'causales': [], 'saldo_total': 0.0, 'documentos_total': 0}
 
@@ -134,6 +153,8 @@ def causales(df, agrupar_otras=False):
     ).reset_index()
     grupos['saldo'] = grupos['saldo'].astype(float)
     grupos = grupos.sort_values('saldo', ascending=False).reset_index(drop=True)
+    # Base del porcentaje de documentos: la suma de los conteos por causal (ver docstring).
+    base_documentos = int(grupos['documentos'].sum())
 
     detalle = [
         {
@@ -141,7 +162,7 @@ def causales(df, agrupar_otras=False):
             'saldo': round(row.saldo, 2),
             'porcentaje_monetario': round((row.saldo / saldo_total * 100) if saldo_total else 0.0, 2),
             'documentos': int(row.documentos),
-            'porcentaje_documentos': round((row.documentos / documentos_total * 100) if documentos_total else 0.0, 2),
+            'porcentaje_documentos': round((row.documentos / base_documentos * 100) if base_documentos else 0.0, 2),
         }
         for row in grupos.itertuples()
     ]
@@ -151,12 +172,16 @@ def causales(df, agrupar_otras=False):
     if agrupar_otras and len(detalle) > TOP_CAUSALES_VISIBLES:
         principales = detalle[:TOP_CAUSALES_VISIBLES]
         resto = detalle[TOP_CAUSALES_VISIBLES:]
+        # Igual que en `pareto_ciudades`: los porcentajes de "OTRAS" se recalculan desde los
+        # valores sin redondear en vez de sumar los ya redondeados de cada fila del resto.
+        saldo_otras = float(grupos['saldo'].iloc[TOP_CAUSALES_VISIBLES:].sum())
+        documentos_otras = int(grupos['documentos'].iloc[TOP_CAUSALES_VISIBLES:].sum())
         otras = {
             'causal': 'OTRAS',
-            'saldo': round(sum(c['saldo'] for c in resto), 2),
-            'porcentaje_monetario': round(sum(c['porcentaje_monetario'] for c in resto), 2),
-            'documentos': sum(c['documentos'] for c in resto),
-            'porcentaje_documentos': round(sum(c['porcentaje_documentos'] for c in resto), 2),
+            'saldo': round(saldo_otras, 2),
+            'porcentaje_monetario': round((saldo_otras / saldo_total * 100) if saldo_total else 0.0, 2),
+            'documentos': documentos_otras,
+            'porcentaje_documentos': round((documentos_otras / base_documentos * 100) if base_documentos else 0.0, 2),
             'causales_incluidas': [c['causal'] for c in resto],
         }
         resultado['causales_agrupadas'] = principales + [otras]
@@ -201,26 +226,33 @@ def recuperador_causal(df, metrica='saldo'):
     recuperadores_unicos = sorted(base['recuperador'].unique().tolist())
     causales_unicas = sorted(base['causal'].unique().tolist())
 
+    # `redondear` aplica el mismo criterio a las celdas y a los totales: dos decimales cuando la
+    # métrica es monetaria, el entero tal cual cuando son documentos o clientes. Antes solo se
+    # redondeaban los totales, así que una celda podía mostrarse como 1234.5600000000001 al lado de
+    # un total de 1234.56.
+    def redondear(valor):
+        return round(valor, 2) if metrica == 'saldo' else valor
+
     celdas = {}
     totales_fila = {}
     totales_columna = {c: 0 for c in causales_unicas}
     total_general = 0
     gestionado_por_fila = {}
-    total_por_fila = {}
 
     for row in base.itertuples():
         valor = getattr(row, columna_valor)
-        celdas.setdefault(row.recuperador, {})[row.causal] = valor
+        celdas.setdefault(row.recuperador, {})[row.causal] = redondear(valor)
+        # `totales_fila` es también el total por recuperador que usa el cálculo de % de gestión de
+        # más abajo — antes se acumulaba dos veces en dos diccionarios idénticos.
         totales_fila[row.recuperador] = totales_fila.get(row.recuperador, 0) + valor
         totales_columna[row.causal] = totales_columna.get(row.causal, 0) + valor
         total_general += valor
-        total_por_fila[row.recuperador] = total_por_fila.get(row.recuperador, 0) + valor
         if row.causal != SIN_GESTION:
             gestionado_por_fila[row.recuperador] = gestionado_por_fila.get(row.recuperador, 0) + valor
 
     porcentajes_gestion = {}
     for recuperador in recuperadores_unicos:
-        total = total_por_fila.get(recuperador, 0)
+        total = totales_fila.get(recuperador, 0)
         gestionado = gestionado_por_fila.get(recuperador, 0)
         pct_gestionado = (gestionado / total * 100) if total else 0.0
         porcentajes_gestion[recuperador] = {
@@ -232,9 +264,9 @@ def recuperador_causal(df, metrica='saldo'):
         'filas': recuperadores_unicos,
         'columnas': causales_unicas,
         'celdas': celdas,
-        'totales_fila': {k: (round(v, 2) if metrica == 'saldo' else v) for k, v in totales_fila.items()},
-        'totales_columna': {k: (round(v, 2) if metrica == 'saldo' else v) for k, v in totales_columna.items()},
-        'total_general': round(total_general, 2) if metrica == 'saldo' else total_general,
+        'totales_fila': {k: redondear(v) for k, v in totales_fila.items()},
+        'totales_columna': {k: redondear(v) for k, v in totales_columna.items()},
+        'total_general': redondear(total_general),
         'porcentajes_gestion': porcentajes_gestion,
     }
 

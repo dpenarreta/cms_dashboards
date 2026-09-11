@@ -23,6 +23,14 @@ DASHBOARD_COMPONENT_DELETE = 'dashboard.component.delete'
 DASHBOARD_CONFIGURATION_RESET = 'dashboard.configuration.reset'
 DASHBOARD_INTERPRETAR = 'dashboard.interpretar'
 DASHBOARD_HALLAZGOS_IA = 'dashboard.hallazgos_ia'
+DASHBOARD_FUENTE_BD_CONFIGURAR = 'dashboard.fuente_bd.configurar'
+DASHBOARD_FUENTE_BD_ACTUALIZAR = 'dashboard.fuente_bd.actualizar'
+DASHBOARD_ARCHIVO_CARGAR = 'dashboard.archivo.cargar'
+# Mutar los datos YA cargados (procesar, reprocesar, borrar la carga, reaplicar el mapeo,
+# incluir/excluir del histórico). Separado de `DASHBOARD_VIEW`: esas acciones caían antes al
+# genérico "quien puede ver, puede mutar", así que en un dashboard sin ACL propia bastaba
+# `dashboard.view` para borrar la carga entera.
+DASHBOARD_DATOS_EDITAR = 'dashboard.datos.editar'
 
 TODOS_LOS_PERMISOS = [
     DASHBOARD_CREAR,
@@ -37,6 +45,10 @@ TODOS_LOS_PERMISOS = [
     DASHBOARD_CONFIGURATION_RESET,
     DASHBOARD_INTERPRETAR,
     DASHBOARD_HALLAZGOS_IA,
+    DASHBOARD_FUENTE_BD_CONFIGURAR,
+    DASHBOARD_FUENTE_BD_ACTUALIZAR,
+    DASHBOARD_ARCHIVO_CARGAR,
+    DASHBOARD_DATOS_EDITAR,
 ]
 
 
@@ -55,13 +67,32 @@ def tiene_permiso(request, permiso):
 
 def _dashboard_o_none(dashboard_id):
     try:
-        return Dashboard.objects.get(dashboard_id=dashboard_id)
+        return Dashboard.objects.prefetch_related('roles_editores', 'roles_lectores').get(
+            dashboard_id=dashboard_id,
+        )
     except Dashboard.DoesNotExist:
         return None
 
 
+def _resolver_dashboard(dashboard_id, dashboard=None):
+    """Devuelve el `Dashboard` a evaluar, sin volver a consultarlo si el llamador ya lo tiene.
+
+    `dashboard_registry.dashboards_autorizados` itera sobre dashboards ya cargados y llamaba a
+    `tiene_acceso_dashboard` + `puede_administrar_acceso` por cada uno: dos `SELECT` por dashboard
+    para traer un objeto que estaba a mano, más los `exists()` de la ACL. Con el objeto pasado por
+    parámetro, el listado completo baja a una consulta por los dashboards y una por cada relación
+    prefetcheada.
+    """
+    if dashboard is not None:
+        return dashboard
+    return _dashboard_o_none(dashboard_id)
+
+
 def _acl_configurada(dashboard):
-    return dashboard.roles_editores.exists() or dashboard.roles_lectores.exists()
+    # `all()` y no `exists()`: con `prefetch_related` ya están en memoria, así que evaluar la
+    # lista no consulta la base — `exists()` en cambio siempre emite un SELECT y desperdicia el
+    # prefetch.
+    return bool(dashboard.roles_editores.all() or dashboard.roles_lectores.all())
 
 
 def _es_dueno_o_superusuario(request, dashboard):
@@ -71,15 +102,17 @@ def _es_dueno_o_superusuario(request, dashboard):
     return bool(usuario.is_superuser or (dashboard.owner_id and dashboard.owner_id == usuario.id))
 
 
-def tiene_acceso_dashboard(request, dashboard_id, *, permiso_global, requiere_edicion=False):
+def tiene_acceso_dashboard(request, dashboard_id, *, permiso_global, requiere_edicion=False, dashboard=None):
     """Punto único de autorización por dashboard (control de acceso por roles editores/lectores +
     dueño). Si el dashboard no existe o no tiene ACL propia configurada (sin roles asignados a
     ninguno de los 2 grupos — el caso de todo dashboard hoy y por defecto), se comporta exactamente
     igual que siempre: `tiene_permiso(request, permiso_global)`. En cuanto se le asignan roles a
     cualquiera de los 2 grupos, ese dashboard queda restringido a su dueño, al superusuario, o a
     quien tenga uno de esos roles — `roles_editores` alcanza para ver Y editar; `roles_lectores`
-    solo para ver."""
-    dashboard = _dashboard_o_none(dashboard_id)
+    solo para ver.
+
+    `dashboard`: instancia ya cargada, para no volver a consultarla (ver `_resolver_dashboard`)."""
+    dashboard = _resolver_dashboard(dashboard_id, dashboard)
     if dashboard is None or not _acl_configurada(dashboard):
         return tiene_permiso(request, permiso_global)
 
@@ -90,17 +123,55 @@ def tiene_acceso_dashboard(request, dashboard_id, *, permiso_global, requiere_ed
     if not usuario or not usuario.is_authenticated:
         return False
 
-    grupos_permitidos = dashboard.roles_editores.all()
+    # Los ids salen del prefetch (en memoria) y la pertenencia se compara contra los grupos del
+    # usuario, que Django ya cachea por instancia — antes esto armaba un queryset combinado con
+    # una subconsulta y emitía un SELECT por cada dashboard evaluado.
+    ids_permitidos = {rol.pk for rol in dashboard.roles_editores.all()}
     if not requiere_edicion:
-        grupos_permitidos = grupos_permitidos | dashboard.roles_lectores.all()
-    return usuario.groups.filter(pk__in=grupos_permitidos.values('pk')).exists()
+        ids_permitidos |= {rol.pk for rol in dashboard.roles_lectores.all()}
+    return any(grupo.pk in ids_permitidos for grupo in usuario.groups.all())
 
 
-def puede_administrar_acceso(request, dashboard_id):
+def registrar_acceso_denegado(request, dashboard_id, permiso):
+    """Escribe un `ACCESS_DENIED` cuando se rechaza el acceso a un dashboard.
+
+    `apps.permissions.permissions.HasModulePermission` ya audita los rechazos de los endpoints
+    administrativos, pero los de `cartera` se resolvían con un `Response(..., 403)` inline y no
+    escribían nada. Es decir que los intentos contra los dashboards protegidos por ACL —
+    justamente los que alguien configuró para restringir — eran los únicos invisibles en la
+    auditoría, y un sondeo sistemático de dashboards ajenos no aparecía en ninguna pantalla.
+
+    Se centraliza acá para que los ~30 puntos de rechazo de `views.py` y `dashboard_views.py`
+    queden cubiertos sin repetir la llamada en cada uno. Como todo `log_event`, nunca lanza.
+    """
+    from apps.audit.models import AuditEvent
+    from apps.audit.services import log_event
+
+    usuario = getattr(request, 'user', None)
+    log_event(
+        domain=AuditEvent.Domain.SECURITY,
+        action='ACCESS_DENIED',
+        result=AuditEvent.Result.DENIED,
+        actor=usuario if (usuario and getattr(usuario, 'is_authenticated', False)) else None,
+        entity_type='dashboard',
+        entity_id=dashboard_id or '',
+        dashboard_id=dashboard_id or '',
+        metadata={
+            'required_permission': permiso,
+            'method': getattr(request, 'method', ''),
+            'path': getattr(request, 'path', ''),
+        },
+        request=request,
+    )
+
+
+def puede_administrar_acceso(request, dashboard_id, dashboard=None):
     """Editar la configuración de acceso de un dashboard (sus 2 grupos de roles) o reasignar su
     dueño está reservado al dueño actual o al superusuario — a propósito no cae a ningún permiso
-    global del catálogo, ni siquiera `dashboard.editar`."""
-    dashboard = _dashboard_o_none(dashboard_id)
+    global del catálogo, ni siquiera `dashboard.editar`.
+
+    `dashboard`: instancia ya cargada, para no volver a consultarla (ver `_resolver_dashboard`)."""
+    dashboard = _resolver_dashboard(dashboard_id, dashboard)
     if dashboard is None:
         return False
     return _es_dueno_o_superusuario(request, dashboard)

@@ -58,4 +58,31 @@ describe('GenericChartRenderer — pastel/dona sobre posiciones de 2+ columnas (
     expect(screen.getByText(/Se comparan/)).toBeInTheDocument()
     expect(screen.getAllByText('Ingresos').length).toBeGreaterThan(0)
   })
+
+  it('con barras_verticales y datosMultiserie (sin datos), colapsa las series sumadas por categoría', () => {
+    render(<GenericChartRenderer tipoVisualizacion="barras_verticales" datosMultiserie={MULTISERIE} />)
+    // Mismo criterio que pastel/dona: el hallazgo "categórico" confirma que sumó Ingresos+Gastos
+    // por categoría (100+20 Ene, 50+10 Feb = 180 en total) en vez de quedarse sin dibujar nada.
+    expect(screen.getByText(/Hay 2 categorías, con un total de/)).toBeInTheDocument()
+    expect(screen.getByText('180')).toBeInTheDocument()
+  })
+
+  it('con barras_horizontales y datosMultiserie (sin datos), colapsa las series sumadas por categoría', () => {
+    render(<GenericChartRenderer tipoVisualizacion="barras_horizontales" datosMultiserie={MULTISERIE} />)
+    expect(screen.getByText(/Hay 2 categorías, con un total de/)).toBeInTheDocument()
+    expect(screen.getByText('180')).toBeInTheDocument()
+  })
+
+  it('barras_verticales con `datos` ya presente (posición de una sola columna) lo usa directo, sin tocar datosMultiserie', () => {
+    render(
+      <GenericChartRenderer
+        tipoVisualizacion="barras_verticales"
+        datos={{ categorias: ['A', 'B'], valores: [7, 3] }}
+        datosMultiserie={MULTISERIE}
+      />,
+    )
+    expect(screen.getByText(/Hay 2 categorías, con un total de/)).toBeInTheDocument()
+    expect(screen.getByText('10')).toBeInTheDocument()
+    expect(screen.queryByText('180')).not.toBeInTheDocument()
+  })
 })

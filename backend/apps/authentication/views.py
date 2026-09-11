@@ -17,11 +17,21 @@ from .serializers import (
     LoginSerializer, MeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer,
     PasswordResetValidateSerializer, RefreshSerializer, UpdateMyProfileSerializer,
 )
-from .services import AuthenticationService, PasswordResetService
+from .services import AuthenticationService, PasswordResetService, SessionService
 
 
 class LoginView(APIView):
+    """`POST /api/auth/login`.
+
+    `ScopedRateThrottle` limita la TASA de intentos por IP; `BruteForceProtectionService` (dentro
+    de `AuthenticationService.login`) limita el TOTAL acumulado, por cuenta y por IP, en la
+    ventana de bloqueo. Son complementarios: el throttle frena una ráfaga, el bloqueo frena un
+    goteo sostenido.
+    """
+
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -109,10 +119,20 @@ class MyAvatarView(APIView):
 
 
 class ChangeOwnPasswordView(APIView):
+    """`POST /api/auth/me/password` — cambio de contraseña propio.
+
+    Revoca las demás sesiones del usuario, igual que ya hacían el restablecimiento por admin
+    (`UserAdminService.reset_password`) y la recuperación por correo
+    (`PasswordResetService.confirmar`). Era la única de las tres que no lo hacía, y es la más
+    importante para este caso: quien cambia su clave porque sospecha que le robaron el acceso
+    esperaba invalidar la sesión del atacante, y en cambio el refresh robado seguía sirviendo
+    hasta 7 días. Se conserva la sesión actual para no expulsar a quien acaba de cambiarla.
+    """
+
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = ChangeOwnPasswordSerializer(data=request.data)
+        serializer = ChangeOwnPasswordSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         usuario = request.user
 
@@ -122,9 +142,16 @@ class ChangeOwnPasswordView(APIView):
         usuario.set_password(serializer.validated_data['new_password'])
         usuario.must_change_password = False
         usuario.save(update_fields=['password', 'must_change_password'])
+
+        # `sid` viene del token con el que se autenticó esta misma petición (ver
+        # `apps.authentication.authentication.SessionAuthentication`).
+        sesion_actual = getattr(request.auth, 'payload', {}).get('sid') if request.auth else None
+        SessionService.revocar_todas_menos(usuario, sesion_actual)
+
         log_event(
             domain=AuditEvent.Domain.AUTHENTICATION, action='PASSWORD_CHANGED_SELF',
             actor=usuario, entity_type='user', entity_id=usuario.id, request=request,
+            metadata={'otras_sesiones_revocadas': True},
         )
         return Response(status=204)
 

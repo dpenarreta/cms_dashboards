@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Form } from 'react-bootstrap'
+import { Alert, Button } from 'react-bootstrap'
 import { PERMISOS, usePermisos } from '../../hooks/usePermisos'
 import ConfirmModal from './ConfirmModal'
 
@@ -12,7 +12,6 @@ export default function EditModeToolbar({
   restablecerDescripcion = 'Esta acción vuelve a mostrar cualquier componente que hayas ocultado, para todos los usuarios. No se puede deshacer (aunque queda registrada en el historial).',
 }) {
   const permisos = usePermisos()
-  const [nombreEditor, setNombreEditor] = useState('Anónimo')
   const [confirmando, setConfirmando] = useState(null) // 'cancelar' | 'restablecer' | null
 
   if (!permisos.tiene(PERMISOS.DASHBOARD_VIEW)) return null
@@ -31,16 +30,13 @@ export default function EditModeToolbar({
     else onCancelar()
   }
 
+  // Antes había en esta barra un campo "Tu nombre (auditoría)" que el usuario tipeaba a mano y
+  // viajaba al backend como `changed_by`. Se retiró: el autor del cambio se resuelve ahora del
+  // usuario autenticado (`cartera/dashboard_views.py::_etiqueta_actor`), porque un nombre escrito
+  // por quien guarda el layout permitía firmar el cambio con el nombre de otra persona — y era
+  // esa la atribución que mostraba el historial de versiones.
   return (
     <div className="d-flex flex-wrap align-items-center gap-2" role="toolbar" aria-label="Herramientas de edición del dashboard">
-      <Form.Control
-        size="sm"
-        style={{ width: 160 }}
-        placeholder="Tu nombre (auditoría)"
-        value={nombreEditor}
-        onChange={(e) => setNombreEditor(e.target.value)}
-        aria-label="Nombre para el registro de auditoría"
-      />
       <Button size="sm" variant="outline-secondary" onClick={onAlternarVistaPrevia}>
         {vistaPrevia ? 'Volver a editar' : 'Vista previa'}
       </Button>
@@ -52,7 +48,7 @@ export default function EditModeToolbar({
       <Button size="sm" variant="outline-secondary" onClick={pedirCancelar} disabled={cargando}>
         Cancelar
       </Button>
-      <Button size="sm" variant="primary" onClick={() => onGuardar(nombreEditor)} disabled={cargando}>
+      <Button size="sm" variant="primary" onClick={onGuardar} disabled={cargando}>
         Guardar cambios
       </Button>
 
@@ -70,7 +66,7 @@ export default function EditModeToolbar({
         show={confirmando === 'restablecer'}
         title={restablecerTitulo}
         confirmLabel="Restablecer"
-        onConfirm={() => { setConfirmando(null); onRestablecer(nombreEditor) }}
+        onConfirm={() => { setConfirmando(null); onRestablecer() }}
         onCancel={() => setConfirmando(null)}
       >
         <Alert variant="warning" className="mb-0">

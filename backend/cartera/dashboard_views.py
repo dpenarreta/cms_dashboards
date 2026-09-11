@@ -1,4 +1,5 @@
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.audit.models import AuditEvent
@@ -15,17 +16,43 @@ def _permisos_respuesta(request):
     return permisos.permisos_del_usuario(request)
 
 
+def _denegado(request, dashboard_id, permiso, mensaje):
+    """Respuesta 403 + registro de auditoría, en un solo lugar.
+
+    Antes cada vista de este archivo devolvía su `Response(..., 403)` sin auditar nada, así que
+    los rechazos sobre dashboards con ACL no dejaban rastro (ver
+    `permisos.registrar_acceso_denegado`).
+    """
+    permisos.registrar_acceso_denegado(request, dashboard_id, permiso)
+    return Response({'error': 'PERMISO_DENEGADO', 'mensaje': mensaje}, status=403)
+
+
+def _etiqueta_actor(request):
+    """Nombre a mostrar en el historial de versiones del layout.
+
+    Se deriva de `request.user`, nunca del cuerpo de la petición. Antes venía en
+    `request.data['changed_by']` y `DashboardVersionsView` lo mostraba ANTES que `actor_username`,
+    así que cualquiera que pudiera guardar un layout podía firmarlo con el nombre de otra persona
+    y esa era la atribución que veía quien consultaba el historial.
+    """
+    usuario = getattr(request, 'user', None)
+    if not usuario or not getattr(usuario, 'is_authenticated', False):
+        return 'Anónimo'
+    nombre = (usuario.get_full_name() or '').strip()
+    return (nombre or usuario.username)[:150]
+
+
 class DashboardLayoutView(APIView):
     def get(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
 
         layout = dl.obtener_o_crear_layout(dashboard_id)
         return Response({**dl.serializar_layout(layout), 'permisos': _permisos_respuesta(request)})
 
     def put(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_LAYOUT_EDIT, requiere_edicion=True):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para editar el layout.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_LAYOUT_EDIT, 'No tiene permiso para editar el layout.')
 
         version_recibida = request.data.get('version')
         if version_recibida is None:
@@ -39,8 +66,10 @@ class DashboardLayoutView(APIView):
                 **dl.serializar_layout(layout_actual),
             }, status=409)
 
-        componentes = dl.validar_componentes(dashboard_id, request.data.get('components') or [])
-        changed_by = (request.data.get('changed_by') or 'Anónimo')[:150]
+        componentes = dl.validar_componentes(
+            dashboard_id, request.data.get('components') or [], es_superusuario=request.user.is_superuser,
+        )
+        changed_by = _etiqueta_actor(request)
         layout = dl.aplicar_layout(dashboard_id, componentes, changed_by, actor=request.user, request=request)
 
         return Response(dl.serializar_layout(layout))
@@ -54,7 +83,7 @@ class DashboardComponentePresentacionalView(APIView):
 
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_LAYOUT_EDIT, requiere_edicion=True):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para editar el layout.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_LAYOUT_EDIT, 'No tiene permiso para editar el layout.')
 
         tipo = request.data.get('tipo')
         ancho_columnas = request.data.get('ancho_columnas') or None
@@ -68,9 +97,9 @@ class DashboardComponentePresentacionalView(APIView):
 class DashboardLayoutResetView(APIView):
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_CONFIGURATION_RESET, requiere_edicion=True):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para restablecer el diseño.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_CONFIGURATION_RESET, 'No tiene permiso para restablecer el diseño.')
 
-        changed_by = (request.data.get('changed_by') or 'Anónimo')[:150]
+        changed_by = _etiqueta_actor(request)
         layout = dl.restablecer_layout(dashboard_id, changed_by, actor=request.user, request=request)
         return Response(dl.serializar_layout(layout))
 
@@ -107,11 +136,21 @@ class DashboardCreateView(APIView):
 
 class DashboardDetailView(APIView):
     """`PATCH`/`DELETE /api/dashboards/<dashboard_id>/` — edición (nombre/área) y eliminación de
-    un dashboard por área."""
+    un dashboard por área.
+
+    Ambos métodos combinan el permiso global del catálogo CON el control de acceso por dashboard
+    (`tiene_acceso_dashboard(..., requiere_edicion=True)`), igual que el resto de las mutaciones
+    de este archivo. Antes consultaban solo `tiene_permiso`, así que eran la única excepción: quien
+    tuviera `dashboard.eliminar` global podía borrar un dashboard cuya ACL lo excluía
+    explícitamente — el dueño configuraba el acceso para restringirlo y la restricción no aplicaba
+    justo a la acción más destructiva.
+    """
 
     def patch(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_EDITAR):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para editar dashboards.'}, status=403)
+        if not permisos.tiene_acceso_dashboard(
+            request, dashboard_id, permiso_global=permisos.DASHBOARD_EDITAR, requiere_edicion=True,
+        ):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_EDITAR, 'No tiene permiso para editar dashboards.')
 
         dashboard = dashboards_service.actualizar_dashboard(
             dashboard_id, nombre=request.data.get('name'), area=request.data.get('area', ''),
@@ -123,8 +162,10 @@ class DashboardDetailView(APIView):
         })
 
     def delete(self, request, dashboard_id):
-        if not permisos.tiene_permiso(request, permisos.DASHBOARD_ELIMINAR):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para eliminar dashboards.'}, status=403)
+        if not permisos.tiene_acceso_dashboard(
+            request, dashboard_id, permiso_global=permisos.DASHBOARD_ELIMINAR, requiere_edicion=True,
+        ):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_ELIMINAR, 'No tiene permiso para eliminar dashboards.')
 
         dashboards_service.eliminar_dashboard(
             dashboard_id, confirmacion_nombre=request.data.get('confirmation_name', ''),
@@ -142,24 +183,85 @@ class DashboardTabsView(APIView):
 
     def get(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
         # La familia completa puede incluir pestañas con su propia ACL más restrictiva que la de
         # esta — no tendría sentido que la barra de pestañas enlace a una a la que el usuario no
-        # tiene acceso.
-        familia = dashboards_service.listar_pestanas(dashboard_id)
+        # tiene acceso. Se piden las instancias (no los dicts) y se pasa cada una a
+        # `tiene_acceso_dashboard`, para no volver a consultar por pestaña al evaluar la ACL.
+        familia = dashboards_service.listar_pestanas_objetos(dashboard_id)
         visibles = [
-            p for p in familia
-            if permisos.tiene_acceso_dashboard(request, p['dashboard_id'], permiso_global=permisos.DASHBOARD_VIEW)
+            dashboards_service.serializar_pestana(d) for d in familia
+            if permisos.tiene_acceso_dashboard(
+                request, d.dashboard_id, permiso_global=permisos.DASHBOARD_VIEW, dashboard=d,
+            )
         ]
         return Response(visibles)
 
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_CREAR, requiere_edicion=True):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para crear dashboards.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_CREAR, 'No tiene permiso para crear dashboards.')
         dashboard = dashboards_service.crear_pestana(
             dashboard_id, nombre=request.data.get('name'), actor=request.user, request=request,
         )
         return Response({'dashboard_id': dashboard.dashboard_id, 'name': dashboard.name, 'orden': dashboard.orden}, status=201)
+
+
+class DashboardFuenteBDView(APIView):
+    """`GET`/`PUT /api/dashboards/<dashboard_id>/fuente-bd` — la vista o stored procedure de la
+    conexión externa "por defecto" (`EXTERNAL_DB_*`, ver `services/db_source.py`) que alimenta a
+    ESTE dashboard/pestaña puntual, si tiene una configurada — incluye `frecuencia_actualizacion`
+    ('', 'semanal' o 'mensual', ver `services/fuente_bd_scheduler.py`) y `fecha_formato` (uno de
+    `Dashboard.FuenteBDFechaFormato`, cómo se envía el valor de `FechaCorte` al procedimiento).
+    `GET` solo requiere poder
+    ver el dashboard (lo usa `DashboardAreaPage.jsx` para decidir si habilitar el botón "Conectar
+    vista de base de datos"); `PUT` requiere `dashboard.fuente_bd.configurar` (permiso dedicado,
+    separado de `dashboard.editar` porque expone a qué vista/procedimiento de la base productiva
+    apunta el dashboard, no solo su nombre/área) y respeta el control de acceso por-dashboard
+    (`tiene_acceso_dashboard(..., requiere_edicion=True)`), igual que el resto de las mutaciones
+    de datos — antes caía solo a un permiso global ciego al ACL, inconsistente con
+    `ConectarFuenteBDView`/`ActualizarFuenteBDAhoraView`."""
+
+    def get(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
+        return Response(dashboards_service.obtener_fuente_bd(dashboard_id))
+
+    def put(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(
+            request, dashboard_id, permiso_global=permisos.DASHBOARD_FUENTE_BD_CONFIGURAR, requiere_edicion=True,
+        ):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_FUENTE_BD_CONFIGURAR, 'No tiene permiso para configurar la fuente de base de datos.')
+        return Response(dashboards_service.actualizar_fuente_bd(
+            dashboard_id, tipo=request.data.get('tipo', ''), nombre=request.data.get('nombre', ''),
+            parametros=request.data.get('parametros'), fecha_formato=request.data.get('fecha_formato', ''),
+            frecuencia_actualizacion=request.data.get('frecuencia_actualizacion', ''),
+            actor=request.user, request=request,
+        ))
+
+
+class DashboardBorrarDatosView(APIView):
+    """`POST /api/dashboards/<dashboard_id>/borrar-datos` — borra TODA la información con datos
+    reales de este dashboard/pestaña puntual (cargas de Excel, histórico, conexión a base de
+    datos, componentes de "Zona Personal") y vuelve a sembrar las 13 posiciones fijas con datos de
+    ejemplo, como un dashboard recién creado (`services/dashboards.py::borrar_datos_dashboard`). El
+    `Dashboard` en sí (nombre/área/permisos/pestañas) no se toca. Gatillado desde "Conectar vista
+    de base de datos" (`ConectarFuenteBDModal.jsx`) — reusa `dashboard.configuration.reset`, el
+    mismo permiso ya dedicado a acciones de "restablecer" destructivas de este dashboard (hoy solo
+    usado por "Restablecer diseño"), en vez de introducir uno nuevo. Requiere escribir el nombre
+    exacto del dashboard como confirmación (`confirmation_name`), igual que
+    `DashboardDetailView.delete` — es más destructivo que "Restablecer diseño" (que solo cambia
+    visibilidad), así que un clic accidental no debe alcanzar para dispararlo."""
+
+    def post(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(
+            request, dashboard_id, permiso_global=permisos.DASHBOARD_CONFIGURATION_RESET, requiere_edicion=True,
+        ):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_CONFIGURATION_RESET, 'No tiene permiso para borrar los datos de este dashboard.')
+        dashboards_service.borrar_datos_dashboard(
+            dashboard_id, confirmacion_nombre=request.data.get('confirmation_name', ''),
+            actor=request.user, request=request,
+        )
+        return Response(status=204)
 
 
 class DashboardAccesoView(APIView):
@@ -171,12 +273,12 @@ class DashboardAccesoView(APIView):
 
     def get(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
         return Response(dashboards_service.obtener_acceso(dashboard_id))
 
     def put(self, request, dashboard_id):
         if not permisos.puede_administrar_acceso(request, dashboard_id):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'Solo el dueño o un superusuario pueden editar el acceso de este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, 'dashboard.acceso.administrar', 'Solo el dueño o un superusuario pueden editar el acceso de este dashboard.')
         return Response(dashboards_service.actualizar_acceso(
             dashboard_id, roles_editores_ids=request.data.get('roles_editores') or [],
             roles_lectores_ids=request.data.get('roles_lectores') or [],
@@ -205,13 +307,19 @@ class DashboardInterpretacionView(APIView):
     (`tiene_acceso_dashboard`, respeta ACL por-dashboard) y además el permiso global dedicado
     `dashboard.interpretar` — separado de `DASHBOARD_VIEW` a propósito, para poder otorgar/quitar
     el uso de IA sin tocar quién puede ver el dashboard (control de costo del LLM). Ver
-    `services/dashboard_interpretation.py`."""
+    `services/dashboard_interpretation.py`.
+
+    `ScopedRateThrottle` con el scope `ia`: cada llamada cuesta dinero y ocupa un hilo del
+    servidor hasta 45 segundos, así que tener el permiso no debería habilitar un uso ilimitado."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ia'
 
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
         if not permisos.tiene_permiso(request, permisos.DASHBOARD_INTERPRETAR):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para generar interpretaciones con IA.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_INTERPRETAR, 'No tiene permiso para generar interpretaciones con IA.')
 
         texto = dashboard_interpretation.generar_interpretacion(dashboard_id)
         return Response({'interpretacion': texto})
@@ -224,13 +332,20 @@ class DashboardHallazgosIAView(APIView):
     primero, y además el permiso dedicado `dashboard.hallazgos_ia` (distinto de
     `dashboard.interpretar` — esta llamada se dispara automáticamente al abrir/guardar el
     dashboard, no por una acción explícita, así que conviene poder controlarla aparte). Ver
-    `services/dashboard_interpretation.py::generar_hallazgos_ia`."""
+    `services/dashboard_interpretation.py::generar_hallazgos_ia`.
+
+    Mismo tope de tasa (`ia`) que `DashboardInterpretacionView`, y con más razón: esta llamada la
+    dispara la propia pantalla al abrirse, no un clic. El servicio además cachea el resultado por
+    versión de layout, así que recargar el dashboard ya no repite la llamada externa."""
+
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'ia'
 
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
         if not permisos.tiene_permiso(request, permisos.DASHBOARD_HALLAZGOS_IA):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para generar hallazgos con IA.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_HALLAZGOS_IA, 'No tiene permiso para generar hallazgos con IA.')
 
         hallazgos = dashboard_interpretation.generar_hallazgos_ia(dashboard_id)
         return Response({'hallazgos': hallazgos})
@@ -239,9 +354,9 @@ class DashboardHallazgosIAView(APIView):
 class DashboardVersionsView(APIView):
     def get(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
-            return Response({'error': 'PERMISO_DENEGADO', 'mensaje': 'No tiene permiso para ver este dashboard.'}, status=403)
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
 
-        entradas = AuditEvent.objects.filter(
+        entradas = AuditEvent.objects.select_related('actor').filter(
             domain__in=[AuditEvent.Domain.DASHBOARD_LAYOUT, AuditEvent.Domain.DASHBOARD_CONFIGURATION],
             dashboard_id=dashboard_id,
         )[:50]
@@ -249,7 +364,11 @@ class DashboardVersionsView(APIView):
             {
                 'component_id': e.component_id,
                 'change_type': e.action,
-                'changed_by': e.metadata.get('changed_by_label') or e.actor_username or 'Anónimo',
+                # El actor real (resuelto por la clave foránea) manda sobre la etiqueta guardada
+                # en `metadata`. Se invirtió la precedencia: antes la etiqueta ganaba, y hasta
+                # esta corrección la mandaba el cliente en el cuerpo de la petición, así que las
+                # filas históricas pueden traer un nombre elegido por quien guardó el layout.
+                'changed_by': e.actor_username_actual or e.metadata.get('changed_by_label') or 'Anónimo',
                 'changed_at': e.created_at.isoformat(),
                 'version': e.metadata.get('version'),
             }

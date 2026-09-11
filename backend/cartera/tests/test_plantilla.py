@@ -2,6 +2,7 @@
 automático de columnas de un archivo a las 13 posiciones fijas, y aplicación de ese mapeo."""
 
 import os
+from datetime import date, timedelta
 
 import pandas as pd
 from django.contrib.auth import get_user_model
@@ -9,7 +10,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from cartera.models import CargaArchivo, Dashboard, DashboardComponent, FilaArchivoHistorico
-from cartera.services import plantilla
+from cartera.services import generic_charts, historico, plantilla
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
 User = get_user_model()
@@ -153,6 +154,25 @@ class CalcularDatosMapeoServiceTests(TestCase):
         self.assertEqual(datos['kpi-1']['valor'], 350.0)
         self.assertIn('Suma de', datos['kpi-1']['descripcion'])
 
+    def test_kpi_sin_formato_elegido_cae_a_numero_por_defecto(self):
+        df = pd.DataFrame({'ventas': [100, 200, 50]})
+        mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'ventas'}}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['formato'], 'numero')
+
+    def test_kpi_con_formato_moneda_elegido_lo_usa_en_vez_de_numero(self):
+        df = pd.DataFrame({'saldo': [100, 200, 50]})
+        mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'saldo', 'formato': 'moneda'}}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['formato'], 'moneda')
+
+    def test_kpi_con_formato_se_respeta_tambien_con_promedio_y_conteo_unicos(self):
+        df = pd.DataFrame({'saldo': [100, 200, 300]})
+        mapeo_promedio = {'kpi-1': {'disponible': True, 'columna_valor': 'saldo', 'tipo_agregacion': 'promedio', 'formato': 'moneda'}}
+        self.assertEqual(plantilla.calcular_datos_mapeo(df, mapeo_promedio)['kpi-1']['formato'], 'moneda')
+        mapeo_conteo = {'kpi-1': {'disponible': True, 'columna_valor': 'saldo', 'tipo_agregacion': 'conteo_unicos', 'formato': 'porcentaje'}}
+        self.assertEqual(plantilla.calcular_datos_mapeo(df, mapeo_conteo)['kpi-1']['formato'], 'porcentaje')
+
     def test_kpi_con_filtro_solo_suma_las_filas_que_coinciden(self):
         df = pd.DataFrame({
             'saldo': [100, 200, 50, 300],
@@ -202,6 +222,135 @@ class CalcularDatosMapeoServiceTests(TestCase):
         datos = plantilla.calcular_datos_mapeo(df, mapeo)
         self.assertNotIn('donde', datos['kpi-1']['descripcion'])
 
+    def test_kpi_con_filtro_dias_vencidos_mayor_solo_suma_filas_vencidas_hace_mas_de_n_dias(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 200, 300],
+            'vencimiento': [
+                (hoy - timedelta(days=45)).isoformat(),  # 45 días vencido -> pasa (> 30)
+                (hoy - timedelta(days=10)).isoformat(),  # 10 días vencido -> no pasa
+                (hoy - timedelta(days=30)).isoformat(),  # exactamente 30 -> no pasa con "mayor"
+            ],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'mayor', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 100.0)
+
+    def test_kpi_con_filtro_dias_vencidos_sin_operador_explicito_cae_a_mayor_por_defecto(self):
+        # El selector de "Comparación" en la UI muestra "Mayor que (>)" preseleccionado apenas se
+        # elige la columna de fecha, pero eso no persiste `operador_filtro` en el mapeo hasta que
+        # el usuario lo toca a mano — el filtro debe comportarse igual que si `operador_filtro`
+        # fuera `'mayor'` explícito, no como si no hubiera filtro en absoluto.
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 200],
+            'vencimiento': [(hoy - timedelta(days=45)).isoformat(), (hoy - timedelta(days=10)).isoformat()],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 100.0)
+
+    def test_kpi_con_filtro_dias_vencidos_mayor_igual_incluye_el_limite_exacto(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 300],
+            'vencimiento': [(hoy - timedelta(days=10)).isoformat(), (hoy - timedelta(days=30)).isoformat()],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'mayor_igual', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 300.0)
+
+    def test_kpi_con_filtro_dias_vencidos_menor_solo_suma_filas_que_todavia_no_vencieron(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 200, 300],
+            'vencimiento': [
+                (hoy + timedelta(days=10)).isoformat(),  # todavía no vence (-10 días transcurridos) -> pasa (< 0)
+                (hoy - timedelta(days=5)).isoformat(),  # ya vencido -> no pasa
+                hoy.isoformat(),  # vence hoy (0 días transcurridos) -> no pasa con "menor" que 0
+            ],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'menor', 'dias_filtro': 0,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 100.0)
+
+    def test_kpi_con_filtro_dias_vencidos_menor_igual_incluye_el_limite_exacto(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 300],
+            'vencimiento': [(hoy + timedelta(days=10)).isoformat(), hoy.isoformat()],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'menor_igual', 'dias_filtro': 0,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 400.0)
+
+    def test_kpi_con_filtro_dias_vencidos_menor_excluye_fechas_invalidas_igual_que_mayor(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 200],
+            'vencimiento': [(hoy + timedelta(days=10)).isoformat(), 'no es una fecha'],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'menor', 'dias_filtro': 0,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 100.0)
+
+    def test_kpi_con_filtro_dias_vencidos_excluye_fechas_invalidas(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'saldo': [100, 200],
+            'vencimiento': [(hoy - timedelta(days=45)).isoformat(), 'no es una fecha'],
+        })
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'mayor', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertEqual(datos['kpi-1']['valor'], 100.0)
+
+    def test_filtro_dias_vencidos_en_una_grafica_no_aplica_solo_es_para_kpi(self):
+        hoy = date.today()
+        df = pd.DataFrame({
+            'ventas': [100, 200],
+            'region': ['Norte', 'Sur'],
+            'vencimiento': [(hoy - timedelta(days=45)).isoformat(), (hoy - timedelta(days=5)).isoformat()],
+        })
+        mapeo = {'grafico-1': {
+            'disponible': True, 'columna_categoria': 'region', 'columna_valor': 'ventas', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'mayor', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        # Ninguna fila coincide con `valor_filtro` (no se eligió) bajo el filtro de igualdad al que
+        # cae un `calculo` que no es KPI -> sin filtro real aplicado, se ven ambas filas.
+        self.assertEqual(dict(zip(datos['grafico-1']['categorias'], datos['grafico-1']['valores'])), {'Norte': 100.0, 'Sur': 200.0})
+
+    def test_descripcion_con_filtro_dias_vencidos_menciona_la_comparacion(self):
+        hoy = date.today()
+        df = pd.DataFrame({'saldo': [100], 'vencimiento': [(hoy - timedelta(days=45)).isoformat()]})
+        mapeo = {'kpi-1': {
+            'disponible': True, 'columna_valor': 'saldo', 'columna_filtro': 'vencimiento',
+            'tipo_filtro': 'dias_vencidos', 'operador_filtro': 'mayor', 'dias_filtro': 30,
+        }}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertIn('"vencimiento" son > 30', datos['kpi-1']['descripcion'])
+
     def test_tabla_calcula_columnas_filas_y_total(self):
         df = pd.DataFrame({
             'producto': ['A', 'A', 'B', 'C'],
@@ -224,6 +373,237 @@ class CalcularDatosMapeoServiceTests(TestCase):
         datos = plantilla.calcular_datos_mapeo(df, mapeo)
         fila_a = next(f for f in datos['tabla-1']['filas'] if f[0] == 'A')
         self.assertEqual(fila_a[1], 75.0)
+
+    def test_kpi_con_meta_adjunta_meta_al_contenido(self):
+        df = pd.DataFrame({'saldo': [100, 200, 300]})
+        mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'saldo', 'meta_min': 700, 'meta_max': 1000}}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertIn('meta', datos['kpi-1'])
+        self.assertFalse(datos['kpi-1']['meta']['cumple'])
+
+    def test_kpi_sin_meta_no_agrega_la_clave(self):
+        df = pd.DataFrame({'saldo': [100, 200, 300]})
+        mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'saldo'}}
+        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        self.assertNotIn('meta', datos['kpi-1'])
+
+
+class TablaConUsaHistoricoTests(TestCase):
+    """`calculo == 'tabla'` con `propuesta['usa_historico']` — en vez de leer `df` (el archivo
+    actual), arma el contenido desde el histórico de cargas del dashboard
+    (`historico.calcular_tabla_historica`, mismo cálculo que "Tabla 3"), vía
+    `_contenido_tabla_historica`. Cubre tanto `calcular_contenido_por_calculo` (Zona Personal)
+    como `calcular_datos_mapeo` (las 13 posiciones fijas, p. ej. tabla-1/tabla-2)."""
+
+    def setUp(self):
+        Dashboard.objects.create(dashboard_id='finanzas', name='Finanzas')
+        carga_enero = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='enero.xlsx')
+        carga_febrero = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='febrero.xlsx')
+        historico.guardar_filas_historicas(carga_enero, pd.DataFrame({'saldo': [100, 200]}), ['saldo'])
+        historico.guardar_filas_historicas(carga_febrero, pd.DataFrame({'saldo': [500]}), ['saldo'])
+        # El `df` del archivo "actual" es intencionalmente distinto — si el cálculo lo llegara a
+        # usar en vez del histórico, los tests de abajo fallarían con estos valores.
+        self.df_actual = pd.DataFrame({'saldo': [999999]})
+
+    def test_calcular_contenido_por_calculo_arma_una_fila_por_carga(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'tabla', 'Saldo histórico',
+            {'usa_historico': True, 'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}]},
+            dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['titulo'], 'Saldo histórico')
+        self.assertEqual(contenido['columnas'], ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'saldo'])
+        self.assertEqual([fila[-1] for fila in contenido['filas']], [300.0, 500.0])
+        self.assertIsNone(contenido['total'])
+
+    def test_calcular_contenido_por_calculo_sin_dashboard_id_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'tabla', 'Saldo histórico',
+            {'usa_historico': True, 'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}]},
+        )
+        self.assertIsNone(contenido)
+
+    def test_calcular_contenido_por_calculo_sin_columnas_valor_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'tabla', 'Saldo histórico', {'usa_historico': True}, dashboard_id='finanzas',
+        )
+        self.assertIsNone(contenido)
+
+    def test_sin_usa_historico_sigue_leyendo_el_archivo_actual_como_siempre(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            pd.DataFrame({'cliente': ['A', 'B'], 'saldo': [10, 20]}), 'tabla', 'Detalle',
+            {'columna_id': 'cliente', 'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}]},
+            dashboard_id='finanzas',
+        )
+        self.assertEqual(sorted(fila[0] for fila in contenido['filas']), ['A', 'B'])
+        self.assertEqual({fila[0]: fila[1] for fila in contenido['filas']}, {'A': 10.0, 'B': 20.0})
+
+    def test_calcular_datos_mapeo_de_una_posicion_fija_usa_el_historico(self):
+        mapeo = {'tabla-1': {
+            'disponible': True, 'usa_historico': True,
+            'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}],
+        }}
+        datos = plantilla.calcular_datos_mapeo(self.df_actual, mapeo, dashboard_id='finanzas')
+        self.assertEqual([fila[-1] for fila in datos['tabla-1']['filas']], [300.0, 500.0])
+
+    def test_calcular_datos_mapeo_sin_dashboard_id_cae_al_dato_ficticio(self):
+        mapeo = {'tabla-1': {
+            'disponible': True, 'usa_historico': True,
+            'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}],
+        }}
+        datos = plantilla.calcular_datos_mapeo(self.df_actual, mapeo)
+        self.assertEqual(datos['tabla-1'], plantilla.datos_ficticios()['tabla-1'])
+
+
+class KpiChartMultivalorMultiserieConUsaHistoricoTests(TestCase):
+    """`calculo in ('kpi', 'chart', 'multivalor', 'multiserie')` con `propuesta['usa_historico']`
+    — mismo mecanismo que `TablaConUsaHistoricoTests`, extendido más allá de tablas. Cubre solo
+    `calcular_contenido_por_calculo` (Zona Personal); `calcular_datos_mapeo` (posiciones fijas)
+    reusa exactamente el mismo despacho interno (`_calcular_contenido_slot`), ya probado para
+    'tabla' arriba — no hace falta repetirlo acá."""
+
+    def setUp(self):
+        Dashboard.objects.create(dashboard_id='finanzas', name='Finanzas')
+        carga_enero = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='enero.xlsx')
+        carga_febrero = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='febrero.xlsx')
+        historico.guardar_filas_historicas(
+            carga_enero, pd.DataFrame({'saldo': [100, 200], 'costo': [10, 20], 'region': ['Norte', 'Sur']}),
+            ['saldo', 'costo', 'region'],
+        )
+        historico.guardar_filas_historicas(
+            carga_febrero, pd.DataFrame({'saldo': [500], 'costo': [50], 'region': ['Norte']}),
+            ['saldo', 'costo', 'region'],
+        )
+        # El `df` del archivo "actual" es intencionalmente distinto de los valores históricos — si
+        # el cálculo lo llegara a usar en vez del histórico, estos tests fallarían con esos valores.
+        self.df_actual = pd.DataFrame({'saldo': [999999], 'costo': [999999], 'region': ['Ninguna']})
+
+    def test_kpi_toma_el_valor_de_la_carga_mas_reciente(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'kpi', 'Saldo', {'usa_historico': True, 'columna_valor': 'saldo'}, dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['valor'], 500.0)  # febrero, la más reciente — no 100+200+500
+        self.assertEqual(contenido['formato'], 'numero')
+
+    def test_kpi_respeta_formato_y_meta_igual_que_en_modo_normal(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'kpi', 'Saldo',
+            {'usa_historico': True, 'columna_valor': 'saldo', 'formato': 'moneda', 'meta_min': 1000},
+            dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['formato'], 'moneda')
+        self.assertFalse(contenido['meta']['cumple'])  # 500 < 1000
+
+    def test_kpi_sin_columna_valor_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'kpi', 'Saldo', {'usa_historico': True}, dashboard_id='finanzas',
+        )
+        self.assertIsNone(contenido)
+
+    def test_chart_arma_una_categoria_por_carga(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'chart', 'Saldo histórico', {'usa_historico': True, 'columna_valor': 'saldo'}, dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['categorias'], ['enero.xlsx', 'febrero.xlsx'])
+        self.assertEqual(contenido['valores'], [300.0, 500.0])
+
+    def test_multivalor_arma_una_serie_por_columna_con_la_carga_como_categoria(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'multivalor', 'Comparación',
+            {'usa_historico': True, 'columnas_valor': ['saldo', 'costo']}, dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['categorias'], ['enero.xlsx', 'febrero.xlsx'])
+        self.assertEqual(contenido['series'], [
+            {'nombre': 'saldo', 'valores': [300.0, 500.0]},
+            {'nombre': 'costo', 'valores': [30.0, 50.0]},
+        ])
+
+    def test_multiserie_arma_una_serie_por_valor_de_columna_serie(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'multiserie', 'Saldo por región',
+            {'usa_historico': True, 'columna_valor': 'saldo', 'columna_serie': 'region'}, dashboard_id='finanzas',
+        )
+        self.assertEqual(contenido['categorias'], ['enero.xlsx', 'febrero.xlsx'])
+        series_por_nombre = {s['nombre']: s['valores'] for s in contenido['series']}
+        self.assertEqual(series_por_nombre['Norte'], [100.0, 500.0])
+        self.assertEqual(series_por_nombre['Sur'], [200.0, None])
+
+    def test_multiserie_sin_columna_serie_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self.df_actual, 'multiserie', 'Saldo por región',
+            {'usa_historico': True, 'columna_valor': 'saldo'}, dashboard_id='finanzas',
+        )
+        self.assertIsNone(contenido)
+
+    def test_dispersion_ignora_usa_historico_sigue_leyendo_el_archivo_actual(self):
+        # Dispersión queda fuera de alcance a propósito — `usa_historico` en su `propuesta` no
+        # tiene ningún efecto, sigue leyendo `df` como siempre.
+        contenido = plantilla.calcular_contenido_por_calculo(
+            pd.DataFrame({'x': [1, 2], 'y': [3, 4]}), 'dispersion', 'Dispersión',
+            {'usa_historico': True, 'columna_valor': 'x', 'columna_valor_y': 'y'}, dashboard_id='finanzas',
+        )
+        self.assertEqual(len(contenido['puntos']), 2)
+
+
+class CalcularContenidoPorCalculoTramosYConcentracionTests(TestCase):
+    """Los 3 `calculo` nuevos (`tramos_antiguedad`/`cumplimiento_metas`/`concentracion`) vía
+    `calcular_contenido_por_calculo` — el camino que usa Zona Personal (`ComponentDataSection.jsx`
+    /`AgregarComponentePersonalModal.jsx`), a diferencia de las 13 posiciones fijas."""
+
+    def _df(self):
+        hoy = date.today()
+        return pd.DataFrame({
+            'cliente': ['A', 'B', 'C'],
+            'saldo': [500, 300, 200],
+            'vencimiento': [
+                (hoy - timedelta(days=5)).isoformat(),
+                (hoy - timedelta(days=45)).isoformat(),
+                (hoy - timedelta(days=150)).isoformat(),
+            ],
+        })
+
+    def test_tramos_antiguedad_caso_feliz(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'tramos_antiguedad', 'Antigüedad', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo',
+        })
+        self.assertEqual(contenido['titulo'], 'Antigüedad')
+        self.assertEqual(contenido['categorias'], generic_charts.ETIQUETAS_TRAMOS_ANTIGUEDAD)
+        self.assertEqual(sum(contenido['valores']), 1000.0)
+
+    def test_tramos_antiguedad_columna_faltante_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'tramos_antiguedad', 'Antigüedad', {
+            'columna_fecha': 'no_existe', 'columna_valor': 'saldo',
+        })
+        self.assertIsNone(contenido)
+
+    def test_cumplimiento_metas_caso_feliz(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'cumplimiento_metas', 'Cumplimiento', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo',
+            'metas': [{'meta_min': 5}],
+        })
+        self.assertEqual(contenido['columnas'], ['Tramo', 'saldo', '% acumulado', 'Resultado'])
+        self.assertEqual(len(contenido['filas']), 6)
+        self.assertIsNone(contenido['total'])
+
+    def test_cumplimiento_metas_columna_faltante_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'cumplimiento_metas', 'Cumplimiento', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'no_existe',
+        })
+        self.assertIsNone(contenido)
+
+    def test_concentracion_caso_feliz(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'concentracion', 'Concentración', {
+            'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 2,
+        })
+        self.assertEqual(contenido['columnas'], ['cliente', 'saldo', '% del total', '% acumulado'])
+        self.assertEqual(len(contenido['filas']), 3)
+        self.assertEqual(contenido['total'], ['Total', 1000.0, 100.0, 100.0])
+
+    def test_concentracion_columna_faltante_devuelve_none(self):
+        contenido = plantilla.calcular_contenido_por_calculo(self._df(), 'concentracion', 'Concentración', {
+            'columna_id': 'no_existe', 'columna_valor': 'saldo', 'top_n': 2,
+        })
+        self.assertIsNone(contenido)
 
 
 class AplicarMapeoServiceTests(TestCase):
@@ -322,6 +702,22 @@ class AplicarMapeoServiceTests(TestCase):
         grafico_1 = DashboardComponent.objects.get(layout__dashboard_id=self.dashboard_id, component_id='grafico-1')
         self.assertEqual(grafico_1.chart_type, 'barras_verticales')
 
+    def test_barras_verticales_y_horizontales_son_compatibles_con_multivalor_se_persisten_aunque_el_contenido_siga_siendo_series(self):
+        # Barras verticales/horizontales, pastel y dona son el mínimo que SIEMPRE debe estar
+        # disponible en cualquier posición de gráfico, también en `multivalor`/`multiserie` (2+
+        # columnas de valor) — mismo criterio que pastel/dona: el colapso a una sola columna por
+        # categoría lo hace el frontend (`GenericChartRenderer`), este servicio solo respeta el
+        # `chart_type` elegido sin tocar el contenido calculado.
+        df = pd.DataFrame({'region': ['Norte', 'Sur'], 'ventas': [100, 200], 'costo': [50, 80]})
+        for chart_type in ('barras_verticales', 'barras_horizontales'):
+            mapeo = {'grafico-2': {
+                'disponible': True, 'columna_categoria': 'region', 'columnas_valor': ['ventas', 'costo'], 'chart_type': chart_type,
+            }}
+            plantilla.aplicar_mapeo(self.dashboard_id, df, mapeo)
+            grafico_2 = DashboardComponent.objects.get(layout__dashboard_id=self.dashboard_id, component_id='grafico-2')
+            self.assertEqual(grafico_2.chart_type, chart_type)
+            self.assertIn('series', grafico_2.content)
+
     def test_pastel_dona_son_compatibles_con_multivalor_se_persisten_aunque_el_contenido_siga_siendo_series(self):
         # Antes de esta feature, 'pastel'/'dona' no eran compatibles con 'multivalor' (2+ columnas
         # de valor) y `_chart_type_elegido` los descartaba, cayendo al default del slot — ahora sí
@@ -419,6 +815,22 @@ class FlujoApiMapeoPlantillaTests(TestCase):
         carga = CargaArchivo.objects.get(id=carga_id)
         self.assertEqual(carga.estado, CargaArchivo.Estado.PROCESADO)
 
+    def test_aplicar_guarda_una_foto_del_mapeo_y_los_aliases_para_actualizaciones_automaticas(self):
+        """`Dashboard.fuente_bd_ultimo_mapeo`/`fuente_bd_ultimo_aliases` — lo que
+        `services/fuente_bd_scheduler.py` reaplica sin intervención humana en cada actualización
+        automática de "Conectar vista de base de datos". Se guarda para CUALQUIER carga (no solo
+        las que vinieron de una base de datos), es la foto más reciente disponible."""
+        carga_id = self._subir_archivo()
+        sugerido = self.client.post('/api/cartera/plantilla/sugerir', {'carga_id': carga_id}, format='json').json()
+
+        self.client.post('/api/cartera/plantilla/aplicar', {
+            'carga_id': carga_id, 'mapeo': sugerido['mapeo'], 'aliases': {'Saldo': 'Monto'},
+        }, format='json')
+
+        dashboard = Dashboard.objects.get(dashboard_id='finanzas')
+        self.assertEqual(dashboard.fuente_bd_ultimo_mapeo, sugerido['mapeo'])
+        self.assertEqual(dashboard.fuente_bd_ultimo_aliases, {'Saldo': 'Monto'})
+
     def test_aplicar_respeta_el_chart_type_elegido_por_el_usuario(self):
         carga_id = self._subir_archivo()
         sugerido = self.client.post('/api/cartera/plantilla/sugerir', {'carga_id': carga_id}, format='json').json()
@@ -495,6 +907,45 @@ class FlujoApiMapeoPlantillaTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn('GESTIONANDO', resp.json()['valores'])
 
+    def test_duplicados_columna_devuelve_cantidad_y_ejemplos(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/duplicados-columna', {
+            'carga_id': carga_id, 'columna': 'Causal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn('cantidad_valores_duplicados', data)
+        self.assertIn('ejemplos', data)
+        # "Causal" repite valores (GESTIONANDO/PAGADO) en el fixture de 15 filas.
+        self.assertGreater(data['cantidad_valores_duplicados'], 0)
+
+    def test_duplicados_columna_sin_columna_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/duplicados-columna', {'carga_id': carga_id}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_REQUERIDA')
+
+    def test_duplicados_columna_inexistente_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/duplicados-columna', {
+            'carga_id': carga_id, 'columna': 'no_existe',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_INVALIDA')
+
+    def test_duplicados_columna_respeta_el_alias_elegido(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/duplicados-columna', {
+            'carga_id': carga_id, 'columna': 'Motivo', 'aliases': {'Causal': 'Motivo'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertGreater(resp.json()['cantidad_valores_duplicados'], 0)
+
+    def test_duplicados_columna_sin_carga_id_devuelve_400(self):
+        resp = self.client.post('/api/cartera/plantilla/duplicados-columna', {'columna': 'Causal'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'CARGA_ID_REQUERIDO')
+
     def test_aplicar_sin_mapeo_devuelve_400(self):
         carga_id = self._subir_archivo()
         resp = self.client.post('/api/cartera/plantilla/aplicar', {'carga_id': carga_id}, format='json')
@@ -530,6 +981,88 @@ class FlujoApiMapeoPlantillaTests(TestCase):
             'carga_id': carga_id, 'mapeo': {'kpi-1': {'disponible': True, 'columna_valor': 'Saldo'}},
         }, format='json')
         self.assertEqual(resp.status_code, 200)
+
+
+class FlujoApiPrevisualizarComponenteTests(TestCase):
+    """`PrevisualizarMapeoComponenteView` — igual que `previsualizar` pero para UN componente que
+    no es una de las 13 posiciones fijas (Zona Personal): recibe `calculo`/`titulo`/`mapeo` de un
+    único componente, no un dict indexado por slot id."""
+
+    def setUp(self):
+        self.client = APIClient()
+        usuario = User.objects.create_superuser(username='tester_previsualizar_comp', email='tpc@example.com', password='Clave-Segura-123')
+        self.client.force_authenticate(user=usuario)
+        Dashboard.objects.create(dashboard_id='finanzas', name='Finanzas')
+        plantilla.sembrar_plantilla('finanzas')
+
+    def _subir_archivo(self):
+        with open(FIXTURE_PATH, 'rb') as f:
+            resp = self.client.post('/api/cartera/validar-archivo', {'archivo': f, 'dashboard_id': 'finanzas'}, format='multipart')
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()['carga_id']
+
+    def test_previsualizar_componente_kpi_devuelve_contenido_recalculado(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'calculo': 'kpi', 'titulo': 'Mi KPI',
+            'mapeo': {'disponible': True, 'columna_valor': 'Saldo'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['contenido']['titulo'], 'Mi KPI')
+        self.assertIn('Suma de "Saldo"', data['contenido']['descripcion'])
+        self.assertIsInstance(data['contenido']['valor'], float)
+
+    def test_previsualizar_componente_tabla_devuelve_columnas_y_filas(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'calculo': 'tabla', 'titulo': 'Detalle',
+            'mapeo': {'disponible': True, 'columna_id': 'Cliente', 'columnas_valor': ['Saldo']},
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        contenido = resp.json()['contenido']
+        self.assertIn('columnas', contenido)
+        self.assertIn('filas', contenido)
+
+    def test_previsualizar_componente_columna_inexistente_devuelve_contenido_null(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'calculo': 'kpi', 'titulo': 'Mi KPI',
+            'mapeo': {'disponible': True, 'columna_valor': 'Columna Que No Existe'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIsNone(resp.json()['contenido'])
+
+    def test_previsualizar_componente_no_persiste_nada(self):
+        carga_id = self._subir_archivo()
+        self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'calculo': 'kpi', 'titulo': 'Mi KPI',
+            'mapeo': {'disponible': True, 'columna_valor': 'Saldo'},
+        }, format='json')
+        self.assertEqual(DashboardComponent.objects.filter(layout__dashboard_id='finanzas').count(), len(plantilla.PLANTILLA_SLOTS))
+
+    def test_previsualizar_componente_sin_calculo_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'titulo': 'Mi KPI', 'mapeo': {'disponible': True, 'columna_valor': 'Saldo'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'CALCULO_REQUERIDO')
+
+    def test_previsualizar_componente_sin_mapeo_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'carga_id': carga_id, 'calculo': 'kpi', 'titulo': 'Mi KPI',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'MAPEO_REQUERIDO')
+
+    def test_previsualizar_componente_sin_carga_id_devuelve_400(self):
+        resp = self.client.post('/api/cartera/plantilla/previsualizar-componente', {
+            'calculo': 'kpi', 'titulo': 'Mi KPI', 'mapeo': {'disponible': True, 'columna_valor': 'Saldo'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'CARGA_ID_REQUERIDO')
 
 
 class ArchivoActualDashboardViewTests(TestCase):
@@ -721,3 +1254,75 @@ class ValoresBlancosApiTests(TestCase):
         resp2 = self.client.post('/api/cartera/plantilla/sugerir', {'carga_id': carga_id}, format='json')
         columna2 = next(c for c in resp2.json()['columnas'] if c['nombre'] == 'Alterno Cliente')
         self.assertEqual(columna2['valores_no_nulos'], 15)
+
+
+class AntiguedadContraLaFechaDeCorteTests(TestCase):
+    """La antigüedad se mide contra la fecha de corte de la carga, no contra el día en que se mira
+    el dashboard.
+
+    Antes usaba siempre `date.today()`: un archivo de junio seguía envejeciendo en septiembre
+    aunque no hubiera cambiado —los tramos se vaciaban solos hacia "+120 días" y un "Cumple" del
+    cumplimiento de metas podía darse vuelta de un día para el otro— y convivían dos nociones de
+    "vencido" en la misma pantalla, porque los KPIs de cartera siempre midieron contra la fecha de
+    corte.
+    """
+
+    CORTE = date(2026, 6, 30)
+
+    def _df(self):
+        return pd.DataFrame({
+            'vencimiento': [
+                (self.CORTE - timedelta(days=10)).isoformat(),
+                (self.CORTE - timedelta(days=200)).isoformat(),
+            ],
+            'saldo': [100, 50],
+        })
+
+    def test_los_tramos_se_calculan_desde_la_fecha_de_corte(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self._df(), 'tramos_antiguedad', 'Antigüedad',
+            {'columna_fecha': 'vencimiento', 'columna_valor': 'saldo'}, None, self.CORTE,
+        )
+        por_tramo = dict(zip(contenido['categorias'], contenido['valores']))
+
+        # Vencido hace 10 días RESPECTO DE LA FECHA DE CORTE.
+        self.assertEqual(por_tramo['30 días'], 100.0)
+        self.assertEqual(por_tramo['+120 días'], 50.0)
+
+    def test_el_resultado_no_depende_del_dia_en_que_se_calcula(self):
+        """Dos fechas de corte distintas sobre el mismo archivo dan tramos distintos, que es el
+        comportamiento correcto; lo que no puede pasar es que el resultado cambie solo."""
+        df = self._df()
+        args = ('tramos_antiguedad', 'Antigüedad', {'columna_fecha': 'vencimiento', 'columna_valor': 'saldo'})
+
+        primera = plantilla.calcular_contenido_por_calculo(df, *args, None, self.CORTE)
+        segunda = plantilla.calcular_contenido_por_calculo(df, *args, None, self.CORTE)
+        self.assertEqual(primera['valores'], segunda['valores'])
+
+        mas_tarde = plantilla.calcular_contenido_por_calculo(
+            df, *args, None, self.CORTE + timedelta(days=90),
+        )
+        self.assertNotEqual(primera['valores'], mas_tarde['valores'])
+
+    def test_el_filtro_de_dias_transcurridos_de_un_kpi_usa_la_fecha_de_corte(self):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            self._df(), 'kpi', 'Vencido +30 días',
+            {'columna_valor': 'saldo', 'columna_filtro': 'vencimiento', 'tipo_filtro': 'dias_vencidos',
+             'dias_filtro': 30, 'operador_filtro': 'mayor'},
+            None, self.CORTE,
+        )
+        # Solo el documento vencido hace 200 días supera los 30 a la fecha de corte.
+        self.assertEqual(contenido['valor'], 50.0)
+
+    def test_sin_fecha_de_corte_registrada_se_cae_a_hoy(self):
+        """Comportamiento anterior, conservado para cargas sin `fecha_corte`."""
+        hoy = date.today()
+        df = pd.DataFrame({
+            'vencimiento': [(hoy - timedelta(days=5)).isoformat()],
+            'saldo': [100],
+        })
+        contenido = plantilla.calcular_contenido_por_calculo(
+            df, 'tramos_antiguedad', 'Antigüedad',
+            {'columna_fecha': 'vencimiento', 'columna_valor': 'saldo'},
+        )
+        self.assertEqual(dict(zip(contenido['categorias'], contenido['valores']))['30 días'], 100.0)

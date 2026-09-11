@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Form, Modal, Spinner } from 'react-bootstrap'
 import * as carteraService from '../../services/carteraService'
-import { camposParaSlot } from '../dashboard-generic/SlotFields'
+import * as historicoService from '../../services/historicoService'
+import { CamposParaSlot, SelectorColumna } from '../dashboard-generic/SlotFields'
+
+/** Tipos de componente cuya propuesta trae una única `columna_valor` (ver `construirPayload`) —
+ * son los únicos donde tiene sentido pedir una "columna de contexto adicional": el backend
+ * (`AgregarGraficaView.post`) calcula ese desglose con `generar_datos_grafica(df, columna_valor,
+ * columna_contexto_ia)`, que necesita justamente esa columna de valor. `multivalor` (varias
+ * métricas) y `tabla` (sin una columna de valor única) quedan afuera. */
+const TIPOS_CON_CONTEXTO_IA = new Set(['kpi', 'chart', 'multiserie', 'dispersion'])
 
 /** Cada opción define el `calculo` que se manda al backend (`AgregarGraficaView`) y el tipo de
- * visualización por defecto — mismo vocabulario que `PLANTILLA_SLOTS`/`camposParaSlot`, así el
+ * visualización por defecto — mismo vocabulario que `PLANTILLA_SLOTS`/`CamposParaSlot`, así el
  * formulario de "Zona Personal" reutiliza tal cual los selectores ya usados por las 15 posiciones
  * fijas, sin reinventar ninguno. */
 const TIPOS_COMPONENTE = [
@@ -14,6 +22,9 @@ const TIPOS_COMPONENTE = [
   { id: 'multiserie', etiqueta: 'Gráfico de 2+ columnas (categoría y serie)', tipoVisualizacion: 'barras_agrupadas' },
   { id: 'tabla', etiqueta: 'Tabla', tipoVisualizacion: 'tabla' },
   { id: 'dispersion', etiqueta: 'Dispersión', tipoVisualizacion: 'dispersion' },
+  { id: 'tramos_antiguedad', etiqueta: 'Antigüedad por tramos (gráfico)', tipoVisualizacion: 'barras_verticales' },
+  { id: 'cumplimiento_metas', etiqueta: 'Cumplimiento de metas por tramo (tabla)', tipoVisualizacion: 'tabla' },
+  { id: 'concentracion', etiqueta: 'Concentración (top-N + resto)', tipoVisualizacion: 'tabla' },
 ]
 
 /** 1/2/4 columnas del grid de 12 — mismo vocabulario que pidió el usuario ("1, 2 o 4 columnas"),
@@ -37,36 +48,58 @@ function anchoSugerido(componentesPersonales) {
   return WIDTH_A_ANCHO[ultimo.width] || ANCHO_POR_DEFECTO
 }
 
-function construirPayload({ tipoId, tipoVisualizacionPorDefecto, cargaId, titulo, descripcion, propuesta, ancho }) {
+function construirPayload({ tipoId, tipoVisualizacionPorDefecto, cargaId, titulo, descripcion, propuesta, ancho, instruccionIA, columnaContextoIA }) {
   const base = {
     carga_id: cargaId, titulo: titulo.trim(), descripcion: descripcion.trim(),
     calculo: tipoId, ancho_columnas: ancho,
   }
+  if (instruccionIA.trim()) base.instruccion_ia = instruccionIA.trim()
+  if (TIPOS_CON_CONTEXTO_IA.has(tipoId) && columnaContextoIA) base.columna_contexto_ia = columnaContextoIA
   const tipoVisualizacion = propuesta.chart_type || tipoVisualizacionPorDefecto
   if (tipoId === 'kpi') {
-    return { ...base, columna_valor: propuesta.columna_valor, tipo_agregacion: propuesta.tipo_agregacion }
+    return {
+      ...base, columna_valor: propuesta.columna_valor, tipo_agregacion: propuesta.tipo_agregacion,
+      meta_min: propuesta.meta_min, meta_max: propuesta.meta_max, formato: propuesta.formato,
+      usa_historico: Boolean(propuesta.usa_historico),
+    }
   }
   if (tipoId === 'chart') {
-    return { ...base, columna_valor: propuesta.columna_valor, columna_categoria: propuesta.columna_categoria, tipo_visualizacion: tipoVisualizacion }
+    return {
+      ...base, columna_valor: propuesta.columna_valor, columna_categoria: propuesta.columna_categoria,
+      tipo_visualizacion: tipoVisualizacion, usa_historico: Boolean(propuesta.usa_historico),
+    }
   }
   if (tipoId === 'multivalor') {
     return {
       ...base, columna_categoria: propuesta.columna_categoria,
       columnas_valor: (propuesta.columnas_valor || []).filter(Boolean), tipo_visualizacion: tipoVisualizacion,
+      usa_historico: Boolean(propuesta.usa_historico),
     }
   }
   if (tipoId === 'multiserie') {
     return {
       ...base, columna_categoria: propuesta.columna_categoria, columna_serie: propuesta.columna_serie,
       columna_valor: propuesta.columna_valor, tipo_visualizacion: tipoVisualizacion,
+      usa_historico: Boolean(propuesta.usa_historico),
     }
   }
   if (tipoId === 'dispersion') {
     return { ...base, columna_valor: propuesta.columna_valor, columna_valor_y: propuesta.columna_valor_y }
   }
+  if (tipoId === 'tramos_antiguedad') {
+    return { ...base, columna_fecha: propuesta.columna_fecha, columna_valor: propuesta.columna_valor }
+  }
+  if (tipoId === 'cumplimiento_metas') {
+    return {
+      ...base, columna_fecha: propuesta.columna_fecha, columna_valor: propuesta.columna_valor, metas: propuesta.metas,
+    }
+  }
+  if (tipoId === 'concentracion') {
+    return { ...base, columna_id: propuesta.columna_id, columna_valor: propuesta.columna_valor, top_n: propuesta.top_n }
+  }
   // tabla
   return {
-    ...base, columna_id: propuesta.columna_id,
+    ...base, columna_id: propuesta.columna_id, usa_historico: Boolean(propuesta.usa_historico),
     columnas_valor: (propuesta.columnas_valor || []).filter((c) => c?.columna),
   }
 }
@@ -80,10 +113,16 @@ function construirPayload({ tipoId, tipoVisualizacionPorDefecto, cargaId, titulo
  * "Guardar cambios", así que al confirmar el llamador debe refrescar el layout
  * (`useDashboardLayout().recargar()`).
  *
- * Reutiliza tal cual `camposParaSlot` (`SlotFields.jsx`) con un `slot` sintético — mismos
+ * Reutiliza tal cual `CamposParaSlot` (`SlotFields.jsx`) con un `slot` sintético — mismos
  * selectores de columna/tipo de cálculo/tipo de gráfico que ya arma el mapeo de las 15 posiciones
  * fijas, sin duplicar esa lógica. Sin vista previa en vivo contra el backend (alcance v1): el
  * componente se calcula y aparece recién al confirmar.
+ *
+ * "Apoyo para la IA": una instrucción de texto libre (`instruccion_ia`) y, para los tipos con una
+ * única columna de valor (`TIPOS_CON_CONTEXTO_IA`), una columna adicional de contexto
+ * (`columna_contexto_ia`) — el backend calcula ese desglose una sola vez al crear el componente y
+ * ambos quedan guardados en `DashboardComponent.config` para que "Hallazgos clave" los use al
+ * interpretar este componente puntual, sin afectar cómo se calcula ni se dibuja.
  */
 export default function AgregarComponentePersonalModal({ show, onHide, dashboardId, componentesPersonales, onAgregado, tipoInicial }) {
   const [archivoActual, setArchivoActual] = useState(null)
@@ -94,8 +133,11 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
   const [descripcion, setDescripcion] = useState('')
   const [ancho, setAncho] = useState(ANCHO_POR_DEFECTO)
   const [propuesta, setPropuesta] = useState({})
+  const [instruccionIA, setInstruccionIA] = useState('')
+  const [columnaContextoIA, setColumnaContextoIA] = useState(null)
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
+  const [columnasHistoricas, setColumnasHistoricas] = useState([])
 
   useEffect(() => {
     if (!show) return undefined
@@ -107,6 +149,8 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
     setDescripcion('')
     setAncho(anchoSugerido(componentesPersonales))
     setPropuesta({})
+    setInstruccionIA('')
+    setColumnaContextoIA(null)
     setError('')
 
     let cancelado = false
@@ -116,6 +160,11 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
       .then((resultado) => { if (!cancelado) setArchivoActual(resultado) })
       .catch(() => { if (!cancelado) setErrorArchivo('No se pudo cargar la información del archivo de este dashboard.') })
       .finally(() => { if (!cancelado) setCargandoArchivo(false) })
+    // De mejor esfuerzo, igual que el resto de este efecto: sin columnas históricas, el selector
+    // "Fuente de datos" → "Histórico" de una Tabla simplemente no ofrece ninguna columna.
+    historicoService.listarCargasHistoricas(dashboardId)
+      .then((resultado) => { if (!cancelado) setColumnasHistoricas(resultado.columnas_disponibles || []) })
+      .catch(() => { if (!cancelado) setColumnasHistoricas([]) })
     return () => { cancelado = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- solo debe reiniciar/recargar al abrir, no en cada cambio de componentesPersonales
   }, [show, dashboardId, tipoInicial])
@@ -129,6 +178,7 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
   const cambiarTipo = (nuevoTipoId) => {
     setTipoId(nuevoTipoId)
     setPropuesta({})
+    setColumnaContextoIA(null)
   }
 
   const confirmar = async () => {
@@ -138,6 +188,7 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
       await carteraService.agregarComponentePersonal(construirPayload({
         tipoId, tipoVisualizacionPorDefecto: tipoSeleccionado.tipoVisualizacion,
         cargaId: archivoActual.carga_id, titulo, descripcion, propuesta, ancho,
+        instruccionIA, columnaContextoIA,
       }))
       await onAgregado()
     } catch (e) {
@@ -183,7 +234,33 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
               </Form.Select>
             </Form.Group>
 
-            {camposParaSlot({ slot, propuesta, columnas: archivoActual.columnas, cambiar, cambiarLista })}
+            <CamposParaSlot
+              slot={slot} propuesta={propuesta} columnas={archivoActual.columnas}
+              cambiar={cambiar} cambiarLista={cambiarLista}
+              cargaId={archivoActual.carga_id} columnasHistoricas={columnasHistoricas}
+            />
+
+            <div className="mb-2 pt-2 border-top">
+              <div className="chart-panel__subtitle mb-1">Apoyo para la IA (opcional)</div>
+              {TIPOS_CON_CONTEXTO_IA.has(tipoId) && (
+                <SelectorColumna
+                  etiqueta="Desglose adicional por columna" contexto="este componente"
+                  valor={columnaContextoIA} opciones={archivoActual.columnas}
+                  onCambiar={setColumnaContextoIA}
+                />
+              )}
+              <Form.Group className="mb-2" controlId="agregar-personal-instruccion-ia">
+                <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Instrucción para la IA</Form.Label>
+                <Form.Control
+                  as="textarea" rows={2} size="sm" value={instruccionIA}
+                  onChange={(e) => setInstruccionIA(e.target.value)} maxLength={500}
+                  placeholder='Ej.: "explicá los totales por la columna de contexto elegida"'
+                />
+                <Form.Text style={{ fontSize: '0.72rem' }}>
+                  Se usa al generar "Hallazgos clave" para este componente — no cambia el gráfico en sí.
+                </Form.Text>
+              </Form.Group>
+            </div>
 
             <Form.Group className="mb-2" controlId="agregar-personal-ancho">
               <Form.Label className="mb-1" style={{ fontSize: '0.85rem' }}>Ancho</Form.Label>

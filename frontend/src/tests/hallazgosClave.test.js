@@ -25,6 +25,28 @@ describe('generarHallazgos', () => {
     it('sin datos, no hay hallazgos', () => {
       expect(generarHallazgos('kpi', { datos: null })).toBe('')
     })
+
+    it('con meta cumplida, agrega una frase de "Cumple"', () => {
+      const texto = generarHallazgos('kpi', {
+        datos: { valor: 100, formato: 'numero', meta: { meta_min: 50, meta_max: 200, cumple: true, motivos: [] } },
+      })
+      expect(texto).toMatch(/\*\*Cumple\*\* la meta configurada\./)
+    })
+
+    it('con meta incumplida, agrega una frase de "No cumple" con los motivos', () => {
+      const texto = generarHallazgos('kpi', {
+        datos: {
+          valor: 10, formato: 'numero',
+          meta: { meta_min: 50, meta_max: null, cumple: false, motivos: ['menor al mínimo (50)'] },
+        },
+      })
+      expect(texto).toMatch(/\*\*No cumple\*\* la meta configurada \(menor al mínimo \(50\)\)\./)
+    })
+
+    it('sin meta, no menciona ningún cumplimiento', () => {
+      const texto = generarHallazgos('kpi', { datos: { valor: 100, formato: 'numero' } })
+      expect(texto).not.toMatch(/meta configurada/)
+    })
   })
 
   describe('categorico (barras/líneas/pastel)', () => {
@@ -119,6 +141,21 @@ describe('generarHallazgos', () => {
 
     it('sin filas, no hay hallazgos', () => {
       expect(generarHallazgos('tabla', { datos: { columnas: ['A'], filas: [] } })).toBe('')
+    })
+
+    it('cumplimiento_metas: ninguna fila se excluye por nombre, "mayor valor" es la de mayor % acumulado real', () => {
+      const texto = generarHallazgos('tabla', {
+        datos: {
+          columnas: ['Tramo', 'Saldo', '% acumulado', 'Resultado'],
+          filas: [
+            ['Corriente', 100, 10, 'Cumple'],
+            ['Vencido ≤ 30 días (acum.)', 300, 30, 'Sin meta'],
+            ['Más de 120 días', 1000, 100, 'Sin meta'],
+          ],
+          total: null,
+        },
+      })
+      expect(texto).toMatch(/\*\*Más de 120 días\*\* tiene el mayor valor de "Saldo" \(\*\*1\.000\*\*\)/)
     })
 
     it('con una columna de texto (no numérica) antes de las de valor, no la usa para "mayor valor"', () => {

@@ -12,6 +12,16 @@ function celda(valor) {
   return typeof valor === 'number' ? formatNumber(valor) : valor
 }
 
+/** Celda de la columna "Resultado" (tabla `cumplimiento_metas`, ver
+ * `services/generic_charts.py::etiqueta_cumplimiento`) — único resaltado condicional de
+ * `GenericDataTable` hoy: el resto de columnas siempre se muestra como texto plano
+ * (`celda(valor)`), sin colores ni badges basados en el valor. */
+function BadgeResultado({ valor }) {
+  if (valor === 'Cumple') return <Badge bg="success">{valor}</Badge>
+  if (valor === 'Sin meta') return <Badge bg="secondary">{valor}</Badge>
+  return <Badge bg="danger">{valor}</Badge>
+}
+
 function comparar(a, b) {
   if (typeof a === 'number' && typeof b === 'number') return a - b
   return String(a ?? '').localeCompare(String(b ?? ''), 'es', { numeric: true })
@@ -118,7 +128,9 @@ function TablaMultiColumna({ columnas, filas, total }) {
             <tr key={i}>
               {fila.map((valor, j) => (
                 // eslint-disable-next-line react/no-array-index-key -- ídem, el nombre de columna puede repetirse
-                <td key={j} className={j > 0 ? 'text-end' : undefined}>{celda(valor)}</td>
+                <td key={j} className={j > 0 ? 'text-end' : undefined}>
+                  {columnas[j] === 'Resultado' ? <BadgeResultado valor={valor} /> : celda(valor)}
+                </td>
               ))}
             </tr>
           ))}

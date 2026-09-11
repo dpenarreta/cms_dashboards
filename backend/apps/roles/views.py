@@ -38,6 +38,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         log_event(
             domain=AuditEvent.Domain.ROLE_MANAGEMENT, action='ROLE_CREATED', actor=self.request.user,
             entity_type='role', entity_id=rol.id, entity_name=rol.name, new_values={'name': rol.name},
+            request=self.request,
         )
 
     def perform_update(self, serializer):
@@ -45,6 +46,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         log_event(
             domain=AuditEvent.Domain.ROLE_MANAGEMENT, action='ROLE_UPDATED', actor=self.request.user,
             entity_type='role', entity_id=rol.id, entity_name=rol.name, new_values={'name': rol.name},
+            request=self.request,
         )
 
     def perform_destroy(self, instance):
@@ -52,6 +54,7 @@ class RoleViewSet(viewsets.ModelViewSet):
             domain=AuditEvent.Domain.ROLE_MANAGEMENT, action='ROLE_DELETED', actor=self.request.user,
             entity_type='role', entity_id=instance.id, entity_name=instance.name,
             previous_values={'name': instance.name},
+            request=self.request,
         )
         instance.delete()
 

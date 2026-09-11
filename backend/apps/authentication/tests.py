@@ -1,15 +1,18 @@
 import io
 import os
 import tempfile
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core import mail
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from PIL import Image
 from rest_framework import serializers as drf_serializers
 from rest_framework.test import APIClient
+from rest_framework.throttling import SimpleRateThrottle
 
 from apps.audit.models import AuditEvent
 
@@ -64,7 +67,58 @@ class LoginViewTests(TestCase):
         resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['error'], 'CUENTA_BLOQUEADA_TEMPORALMENTE')
-        self.assertEqual(LoginAttempt.objects.filter(identifier='ana').count(), 3)
+        # Los intentos se cuentan contra un identificador canónico (`user:<pk>`), no contra el
+        # texto tipeado — ver `BruteForceProtectionService.identificador_canonico`.
+        usuario = User.objects.get(username='ana')
+        self.assertEqual(LoginAttempt.objects.filter(identifier=f'user:{usuario.pk}').count(), 3)
+
+    @override_settings(LOGIN_MAX_FAILED_ATTEMPTS=3)
+    def test_alternar_usuario_y_correo_no_duplica_los_intentos_permitidos(self):
+        """El bloqueo se aplica a la CUENTA, no al texto escrito.
+
+        Antes se contaba el identificador crudo, así que `ana` y `ana@example.com` llevaban
+        contadores separados: 3 intentos con uno y 3 más con el otro sobre la misma cuenta, sin
+        bloqueo, y cada alias de correo sumaba otros 3.
+        """
+        for _ in range(2):
+            self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'incorrecta'}, format='json')
+        # El tercer fallo llega por el correo: mismo contador, así que alcanza el límite de 3.
+        self.client.post('/api/auth/login', {'identifier': 'ana@example.com', 'password': 'incorrecta'}, format='json')
+
+        resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
+        self.assertEqual(resp.json()['error'], 'CUENTA_BLOQUEADA_TEMPORALMENTE')
+
+    @override_settings(LOGIN_MAX_FAILED_ATTEMPTS=3)
+    def test_variar_mayusculas_no_duplica_los_intentos_permitidos(self):
+        """Mismo criterio que el test anterior, con la otra variante del agujero: la normalización
+        no puede depender de que la colación de la base sea case-insensitive (lo es en SQL Server,
+        no en SQLite)."""
+        for _ in range(3):
+            self.client.post('/api/auth/login', {'identifier': 'ANA', 'password': 'incorrecta'}, format='json')
+
+        resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
+        self.assertEqual(resp.json()['error'], 'CUENTA_BLOQUEADA_TEMPORALMENTE')
+
+    @override_settings(LOGIN_MAX_FAILED_ATTEMPTS=3)
+    def test_identificador_inexistente_tambien_acumula_y_bloquea(self):
+        """Contar por identificador (y no solo por usuario resuelto) es lo que evita que enumerar
+        cuentas sea gratis: un identificador que no existe también se bloquea."""
+        for _ in range(3):
+            self.client.post('/api/auth/login', {'identifier': 'no-existe', 'password': 'x'}, format='json')
+
+        resp = self.client.post('/api/auth/login', {'identifier': 'no-existe', 'password': 'x'}, format='json')
+        self.assertEqual(resp.json()['error'], 'CUENTA_BLOQUEADA_TEMPORALMENTE')
+        self.assertEqual(LoginAttempt.objects.filter(identifier='no-existe').count(), 3)
+
+    @override_settings(LOGIN_MAX_FAILED_ATTEMPTS=100, LOGIN_MAX_FAILED_ATTEMPTS_PER_IP=3)
+    def test_bloqueo_por_ip_ante_intentos_contra_muchas_cuentas_distintas(self):
+        """El eje por cuenta no ve el rociado de una contraseña habitual contra muchas cuentas
+        (cada cuenta recibe un único fallo), así que hay un umbral propio por IP."""
+        for i in range(3):
+            self.client.post('/api/auth/login', {'identifier': f'victima{i}', 'password': 'Verano2026'}, format='json')
+
+        resp = self.client.post('/api/auth/login', {'identifier': 'otra-mas', 'password': 'Verano2026'}, format='json')
+        self.assertEqual(resp.json()['error'], 'CUENTA_BLOQUEADA_TEMPORALMENTE')
 
 
 class RefreshLogoutMeTests(TestCase):
@@ -567,3 +621,141 @@ class EmailTemplateAdminViewTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].subject, 'Un asunto bien distinto')
         self.assertIn('Hola fer,', mail.outbox[0].body)
+
+
+class FortalezaDeContrasenaTests(TestCase):
+    """SEC-04: `AUTH_PASSWORD_VALIDATORS` estaba configurado y nunca se invocaba.
+
+    Lo único que se aplicaba era un `min_length=8` a mano, así que `12345678` (solo numérica),
+    `password` (lista de contraseñas comunes) y el propio nombre de usuario se aceptaban.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = User.objects.create_user(
+            username='ana.perez', email='ana@example.com', password='Clave-Segura-123',
+        )
+        self.client.force_authenticate(user=self.usuario)
+
+    def _cambiar(self, nueva):
+        return self.client.post(
+            '/api/auth/password/change',
+            {'old_password': 'Clave-Segura-123', 'new_password': nueva}, format='json',
+        )
+
+    def test_rechaza_contrasena_solo_numerica(self):
+        self.assertEqual(self._cambiar('12345678').status_code, 400)
+
+    def test_rechaza_contrasena_comun(self):
+        self.assertEqual(self._cambiar('password').status_code, 400)
+
+    def test_rechaza_contrasena_parecida_al_nombre_de_usuario(self):
+        self.assertEqual(self._cambiar('ana.perez').status_code, 400)
+
+    def test_rechaza_contrasena_demasiado_corta(self):
+        self.assertEqual(self._cambiar('Ab3d').status_code, 400)
+
+    def test_acepta_una_contrasena_fuerte(self):
+        self.assertEqual(self._cambiar('Trueno-Violeta-88').status_code, 204)
+        self.usuario.refresh_from_db()
+        self.assertTrue(self.usuario.check_password('Trueno-Violeta-88'))
+
+
+class CambioDeContrasenaPropiaRevocaSesionesTests(TestCase):
+    """SEC-07: era la única de las tres rutas que cambian contraseña que no revocaba sesiones.
+
+    Es la más importante para el caso de uso: quien cambia su clave porque sospecha que le robaron
+    el acceso esperaba invalidar la sesión del atacante.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
+
+    def _login(self):
+        return self.client.post(
+            '/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json',
+        ).json()
+
+    def test_revoca_las_otras_sesiones_y_conserva_la_actual(self):
+        sesion_atacante = self._login()
+        sesion_propia = self._login()
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {sesion_propia["access"]}')
+        resp = self.client.post(
+            '/api/auth/password/change',
+            {'old_password': 'Clave-Segura-123', 'new_password': 'Trueno-Violeta-88'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 204)
+
+        # La sesión con la que se hizo el cambio sigue sirviendo...
+        self.assertEqual(self.client.get('/api/auth/me').status_code, 200)
+
+        # ...y la otra dejó de servir.
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {sesion_atacante["access"]}')
+        self.assertEqual(self.client.get('/api/auth/me').status_code, 401)
+
+
+class RotacionDeRefreshTokenTests(TestCase):
+    """SEC-11: sin rotación, el `jti` nunca cambiaba y la detección de reutilización de
+    `refresh_tokens` era una rama inalcanzable."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
+        self.tokens = self.client.post(
+            '/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json',
+        ).json()
+
+    def test_el_refresco_devuelve_un_refresh_nuevo(self):
+        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('refresh', resp.json())
+        self.assertNotEqual(resp.json()['refresh'], self.tokens['refresh'])
+
+    def test_reutilizar_un_refresh_viejo_revoca_la_sesion_completa(self):
+        nuevo = self.client.post(
+            '/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json',
+        ).json()['refresh']
+
+        # El viejo ya no es el vigente: se interpreta como token robado y cae la sesión entera.
+        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json')
+        self.assertEqual(resp.json()['error'], 'REFRESH_TOKEN_REUTILIZADO')
+
+        # Incluso el refresh legítimo emitido antes del incidente deja de servir.
+        resp = self.client.post('/api/auth/token/refresh', {'refresh': nuevo}, format='json')
+        self.assertEqual(resp.json()['error'], 'SESION_INACTIVA')
+
+
+class LoginThrottleTests(TestCase):
+    """SEC-06: el login no tenía ningún límite de tasa.
+
+    Los throttles quedan desactivados durante `manage.py test` (ver el comentario en
+    `config/settings.py`: su contador vive en la caché, que no se reinicia entre tests, así que
+    con los límites activos el test número N falla por el consumo de los N-1 anteriores). Esta
+    clase los reactiva a un límite bajo para verificar que efectivamente aplican.
+
+    Se parchea `SimpleRateThrottle.THROTTLE_RATES` y no los settings porque DRF lee las tasas en
+    un atributo de clase que se fija al importar el módulo: `override_settings` no lo alcanza.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
+        parche = mock.patch.dict(SimpleRateThrottle.THROTTLE_RATES, {'login': '3/min'})
+        parche.start()
+        self.addCleanup(parche.stop)
+        # El contador es por IP y vive en la caché del proceso: hay que partir de cero.
+        cache.clear()
+        self.addCleanup(cache.clear)
+
+    def test_supera_el_limite_de_tasa_y_responde_429(self):
+        for _ in range(3):
+            self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'incorrecta'}, format='json')
+
+        resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
+        self.assertEqual(resp.status_code, 429)
+
+    def test_por_debajo_del_limite_el_login_funciona_normalmente(self):
+        resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
+        self.assertEqual(resp.status_code, 200)

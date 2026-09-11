@@ -1,7 +1,9 @@
 import { Button } from 'react-bootstrap'
-import { Link, Outlet } from 'react-router-dom'
+import { Link, Outlet, useLocation } from 'react-router-dom'
 import AdminSidebar from './AdminSidebar'
 import '../../styles/admin-sidebar.css'
+
+const RUTA_LISTADO_DASHBOARDS = '/app/dashboards'
 
 /**
  * Layout de pantalla completa de toda la app autenticada (dashboards y administración) — la
@@ -13,12 +15,21 @@ import '../../styles/admin-sidebar.css'
  * superior propia, más liviana, a la derecha.
  */
 export default function AdminLayout() {
+  const { pathname } = useLocation()
+  // "Volver a Dashboards" no tiene destino útil estando ya en el listado, así que ahí se oculta
+  // (antes se mostraba siempre, incluido en la pantalla a la que apunta).
+  const mostrarVolver = pathname !== RUTA_LISTADO_DASHBOARDS
+
   return (
     <div className="admin-shell">
       <AdminSidebar />
       <div className="admin-shell__content">
-        <header className="admin-shell__topbar">
-          <Button as={Link} to="/app/dashboards" size="sm" variant="outline-secondary">Volver a Dashboards</Button>
+        <header className="admin-shell__topbar d-print-none">
+          {mostrarVolver && (
+            <Button as={Link} to={RUTA_LISTADO_DASHBOARDS} size="sm" variant="outline-secondary">
+              Volver a Dashboards
+            </Button>
+          )}
         </header>
         <div className="admin-shell__page">
           <Outlet />

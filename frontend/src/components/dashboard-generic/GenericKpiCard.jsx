@@ -23,6 +23,20 @@ function formatearValor(valor, formato) {
   return formatNumber(valor)
 }
 
+/** Estado de cumplimiento de la meta opcional de un KPI (`data.meta`, ver
+ * `services/generic_charts.py::evaluar_meta` — `{meta_min, meta_max, cumple, motivos}`). `null`
+ * si el KPI no tiene meta configurada (comportamiento actual sin cambios). Reusa
+ * `.kpi-card__sub`/las mismas variables de color que ya usa el bloque de `tendencia` — mismo
+ * lenguaje visual, sin agregar nada a `dashboard.css`. */
+function MetaEstado({ meta }) {
+  if (!meta) return null
+  return (
+    <div className="kpi-card__sub" style={{ color: meta.cumple ? 'var(--status-good)' : 'var(--status-critical)' }}>
+      {meta.cumple ? '✓ Cumple la meta' : `✗ No cumple la meta (${meta.motivos.join('; ')})`}
+    </div>
+  )
+}
+
 /**
  * Renderiza un componente type=kpi — `data` es `component.content` tal cual viene del layout:
  * `{titulo, descripcion, valor, formato, tendencia}` (ver `services/plantilla.py`). `formato`
@@ -57,6 +71,7 @@ export default function GenericKpiCard({ data, override, config, hallazgoIA }) {
         <div className="kpi-card__label">{titulo}</div>
       )}
       <div className="kpi-card__value">{formatearValor(data.valor, data.formato)}</div>
+      <MetaEstado meta={data.meta} />
       {tendencia ? (
         <div className="kpi-card__sub" style={{ color: tendencia.valor >= 0 ? 'var(--status-good)' : 'var(--status-critical)' }}>
           {tendencia.valor >= 0 ? '↑' : '↓'} {Math.abs(tendencia.valor)}% {tendencia.texto}

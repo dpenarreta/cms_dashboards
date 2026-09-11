@@ -29,26 +29,46 @@ describe('RolesListPage', () => {
     expect(screen.getByText('2')).toBeInTheDocument()
   })
 
-  it('eliminar pide confirmación y llama al servicio', async () => {
+  it('eliminar pide confirmación en un modal y llama al servicio al confirmar', async () => {
     rolesService.list.mockResolvedValue({ results: [ROL], count: 1, next: null, previous: null })
     rolesService.remove.mockResolvedValue({})
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderPagina()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Eliminar' }))
 
-    expect(window.confirm).toHaveBeenCalled()
+    // El clic solo abre el modal: todavía no se llamó al servicio.
+    expect(rolesService.remove).not.toHaveBeenCalled()
+    // `Modal.Title` de react-bootstrap renderiza un div, no un heading — se consulta por texto.
+    expect(screen.getByText('Eliminar rol')).toBeInTheDocument()
+
+    // El botón de confirmar del modal es el segundo "Eliminar" del documento (el primero es el
+    // de la fila de la tabla, que sigue montado detrás).
+    const botonesEliminar = screen.getAllByRole('button', { name: 'Eliminar' })
+    await userEvent.click(botonesEliminar[botonesEliminar.length - 1])
+
     await waitFor(() => expect(rolesService.remove).toHaveBeenCalledWith(1))
   })
 
-  it('si se cancela la confirmación, no elimina', async () => {
+  it('si se cancela el modal, no elimina', async () => {
     rolesService.list.mockResolvedValue({ results: [ROL], count: 1, next: null, previous: null })
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    renderPagina()
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Eliminar' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+    expect(rolesService.remove).not.toHaveBeenCalled()
+  })
+
+  it('no usa el diálogo nativo del navegador para confirmar', async () => {
+    // `window.confirm` no es accesible ni testeable y la regla del repo lo prohíbe para acciones
+    // destructivas (`.claude/rules/dashboards.md`).
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    rolesService.list.mockResolvedValue({ results: [ROL], count: 1, next: null, previous: null })
     renderPagina()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Eliminar' }))
 
-    expect(rolesService.remove).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
   })
 
   it('con permiso para ver usuarios además de roles, muestra la pestaña "Usuarios" para moverse entre ambas listas', async () => {

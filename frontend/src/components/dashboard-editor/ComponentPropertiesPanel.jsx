@@ -3,9 +3,11 @@ import { Accordion, Alert, Button, Form, Offcanvas } from 'react-bootstrap'
 import WidthHeightControls from './WidthHeightControls'
 import FilterFieldReorderList from './FilterFieldReorderList'
 import ComponentDataSection from './ComponentDataSection'
+import TableCellsEditor from './TableCellsEditor'
 import { SelectorTipoGrafico } from '../dashboard-generic/SlotFields'
 import { POSICIONES_LEYENDA } from '../../utils/legendPosition'
 import { PLANTILLA_SLOTS, TIPOS_COMPATIBLES } from '../../utils/plantillaSlots'
+import { PAGE_SIZES_PERMITIDOS } from '../../config/pageSizes'
 
 // Tipos de `calculo` con tipo de gráfico intercambiable — único criterio que decide si, en modo
 // plantilla base, la sección "Datos" muestra el selector de tipo de gráfico o no aparece (mismo
@@ -13,7 +15,6 @@ import { PLANTILLA_SLOTS, TIPOS_COMPATIBLES } from '../../utils/plantillaSlots'
 const _CALCULO_POR_COMPONENT_ID = Object.fromEntries(PLANTILLA_SLOTS.map((s) => [s.id, s.calculo]))
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
-const PAGE_SIZES_FIJOS = [5, 10, 25, 50, 100]
 // Espejo de `TIPOS_CON_LEYENDA` en `cartera/services/dashboard_layout.py`: los únicos tipos de
 // gráfica que dibujan una leyenda, y por lo tanto los únicos donde tiene sentido reposicionarla.
 const TIPOS_CON_LEYENDA = new Set(['barras_agrupadas', 'barras_apiladas', 'area_apilada', 'lineas_multiples', 'pastel', 'dona'])
@@ -165,9 +166,15 @@ function CampoColor({ etiqueta, valor, porDefecto, onCambiar }) {
 
 export default function ComponentPropertiesPanel({
   componente, dashboardId, onCerrar, onActualizarContenido, onActualizarEstilos, onCambiarAncho, onCambiarAlto,
-  onActualizarConfig, onActualizarComponente, modoPlantillaBase = false,
+  onActualizarConfig, onActualizarComponente, modoPlantillaBase = false, esSuperusuario,
 }) {
   if (!componente) return null
+
+  // Mismo criterio que `ComponentWrapper.jsx`: un componente bloqueado (`config.bloqueado`,
+  // sembrado como estructura fija de un dashboard puntual) no permite cambiar tamaño salvo que
+  // el usuario sea superusuario — el mapeo/contenido de datos (sección "Datos" más abajo) NUNCA
+  // se bloquea, para nadie.
+  const bloqueado = Boolean(componente.config?.bloqueado) && !esSuperusuario
 
   const filasColor = filasColorPara(componente)
   const restablecerColores = () => onActualizarEstilos(componente.component_id, estilosDeRestablecerPara(componente))
@@ -235,7 +242,10 @@ export default function ComponentPropertiesPanel({
                     onCambiar={(chartType) => onActualizarComponente(componente.component_id, { chart_type: chartType })}
                   />
                 ) : (
-                  <ComponentDataSection componente={componente} dashboardId={dashboardId} onActualizarComponente={onActualizarComponente} />
+                  <ComponentDataSection
+                    componente={componente} dashboardId={dashboardId}
+                    onActualizarComponente={onActualizarComponente} onActualizarContenido={onActualizarContenido}
+                  />
                 )}
               </Accordion.Body>
             </Accordion.Item>
@@ -251,7 +261,13 @@ export default function ComponentPropertiesPanel({
                   height={componente.height}
                   onCambiarAncho={(w) => onCambiarAncho(componente.component_id, w)}
                   onCambiarAlto={(h) => onCambiarAlto(componente.component_id, h)}
+                  disabled={bloqueado}
                 />
+                {bloqueado && (
+                  <div className="text-secondary mt-1" style={{ fontSize: '0.75rem' }}>
+                    Este componente está bloqueado: su tamaño no se puede cambiar.
+                  </div>
+                )}
               </div>
 
               {filasColor.length > 0 && (
@@ -330,11 +346,27 @@ export default function ComponentPropertiesPanel({
                         defaultPageSize: Number(e.target.value),
                       })}
                     >
-                      {(componente.config?.allowedPageSizes || PAGE_SIZES_FIJOS).map((n) => (
+                      {(componente.config?.allowedPageSizes || PAGE_SIZES_PERMITIDOS).map((n) => (
                         <option key={n} value={n}>{n} registros</option>
                       ))}
                     </Form.Select>
                   </Form.Group>
+                </>
+              )}
+
+              {componente.type === 'chart' && componente.chart_type === 'tabla'
+                && Array.isArray(componente.content?.columnas) && Array.isArray(componente.content?.filas) && (
+                <>
+                  <h6>Valores de la tabla</h6>
+                  <div className="mb-3">
+                    <TableCellsEditor
+                      columnas={componente.content.columnas}
+                      filas={componente.content.filas}
+                      total={componente.content.total}
+                      onCambiarFilas={(filas) => onActualizarContenido(componente.component_id, { filas })}
+                      onCambiarTotal={(total) => onActualizarContenido(componente.component_id, { total })}
+                    />
+                  </div>
                 </>
               )}
 

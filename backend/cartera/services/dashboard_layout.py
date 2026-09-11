@@ -20,7 +20,7 @@ from apps.audit.services import log_event
 from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
 from ..models import DashboardComponent, DashboardLayout
-from .generic_charts import TIPOS_VISUALIZACION
+from .generic_charts import ETIQUETAS_TRAMOS_ACUMULADOS, TIPOS_VISUALIZACION, evaluar_meta
 
 _CHART_TYPES_VALIDOS = {t['id'] for t in TIPOS_VISUALIZACION} | {''}
 
@@ -194,12 +194,176 @@ def _sanitizar_config_paginacion(config):
     return config
 
 
-def validar_componentes(dashboard_id, componentes):
+_TIPOS_CELDA_VALIDOS = (int, float, str, type(None))
+
+
+def _validar_contenido_tabla(component_id, content, contenido_original, mapeo_cambio=False):
+    """Editar valores de celda (panel de propiedades, `TableCellsEditor.jsx`) solo puede cambiar
+    el VALOR de una celda que ya existe — nunca agregar/quitar filas ni columnas, ni renombrarlas.
+    Ocultar los botones de agregar/quitar en el frontend no alcanza (`@.claude/rules/security.md`):
+    esto es lo que realmente lo impide. Solo aplica a tablas "multi-columna"
+    (`content.columnas`/`content.filas` en forma de lista — lo que arma
+    `generic_charts.generar_datos_tabla`); la forma simple categorías/valores de 2 columnas no la
+    usa `agregar_componente_generado` para tablas y queda fuera de este chequeo.
+
+    `mapeo_cambio=True` cuando la fuente de datos del componente cambió en este mismo guardado
+    (reconfigurar "Datos" en el panel de propiedades, plantilla fija o Zona Personal — ver
+    `views.PrevisualizarMapeoPlantillaView`/`PrevisualizarMapeoComponenteView`): ahí una cantidad
+    distinta de filas/columnas es exactamente lo esperado (nueva agrupación), así que no se exige
+    la misma forma que antes — solo se sigue validando que cada celda tenga un tipo válido, como
+    defensa básica contra un payload manipulado."""
+    columnas_originales = contenido_original.get('columnas')
+    filas_originales = contenido_original.get('filas')
+    if not isinstance(columnas_originales, list) or not isinstance(filas_originales, list):
+        return
+
+    columnas = content.get('columnas')
+    if not isinstance(columnas, list):
+        raise CarteraError(f'La tabla "{component_id}" no tiene columnas válidas.', codigo='TABLA_COLUMNAS_INVALIDAS')
+    if not mapeo_cambio and columnas != columnas_originales:
+        raise CarteraError(
+            f'No se pueden agregar, quitar ni renombrar las columnas de la tabla "{component_id}".',
+            codigo='TABLA_COLUMNAS_INVALIDAS',
+        )
+
+    def _validar_fila(fila, nombre_fila):
+        if not isinstance(fila, list) or len(fila) != len(columnas):
+            raise CarteraError(
+                f'La fila "{nombre_fila}" de la tabla "{component_id}" no tiene la cantidad de columnas esperada.',
+                codigo='TABLA_FILAS_INVALIDAS',
+            )
+        for valor in fila:
+            if not isinstance(valor, _TIPOS_CELDA_VALIDOS):
+                raise CarteraError(
+                    f'Valor de celda inválido en la fila "{nombre_fila}" de la tabla "{component_id}".',
+                    codigo='TABLA_CELDA_INVALIDA',
+                )
+
+    filas = content.get('filas')
+    if not isinstance(filas, list):
+        raise CarteraError(f'La tabla "{component_id}" no tiene filas válidas.', codigo='TABLA_FILAS_INVALIDAS')
+    if not mapeo_cambio and len(filas) != len(filas_originales):
+        raise CarteraError(
+            f'No se pueden agregar ni quitar filas de la tabla "{component_id}".', codigo='TABLA_FILAS_INVALIDAS',
+        )
+    for i, fila in enumerate(filas):
+        _validar_fila(fila, f'fila {i + 1}')
+
+    total_original = contenido_original.get('total')
+    total = content.get('total')
+    if mapeo_cambio:
+        if total is not None:
+            _validar_fila(total, 'total')
+    elif total_original is not None:
+        _validar_fila(total, 'total')
+
+
+def _validar_numero_meta(valor, campo, component_id):
+    """`None`/`''` (sin meta) pasan tal cual y quedan como `None`. Cualquier otra cosa debe ser un
+    número real — `bool` se rechaza a propósito (en Python es subclase de `int`; un checkbox mal
+    serializado no debe colarse como meta `0`/`1`)."""
+    if valor in (None, ''):
+        return None
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        raise CarteraError(f'Meta inválida en "{component_id}": {valor!r}.', codigo='META_INVALIDA')
+    return float(valor)
+
+
+TOP_N_MIN, TOP_N_MAX = 1, 100
+FORMATOS_KPI_VALIDOS = {'numero', 'moneda', 'porcentaje'}
+
+
+def _validar_formato_kpi(valor, component_id):
+    """`None`/`''` (sin elegir) cae al valor por defecto histórico `'numero'` — así un KPI creado
+    antes de que existiera este campo se sigue mostrando igual que siempre. Cualquier otro valor
+    debe ser uno de `FORMATOS_KPI_VALIDOS` (mismas 3 opciones que ya interpretaba
+    `GenericKpiCard.jsx::formatearValor`, ahora elegibles desde "Configurar componente → Datos")."""
+    if valor in (None, ''):
+        return 'numero'
+    if valor not in FORMATOS_KPI_VALIDOS:
+        raise CarteraError(f'Formato inválido en "{component_id}": {valor!r}.', codigo='FORMATO_INVALIDO')
+    return valor
+
+
+def _validar_mapeo_calculo(component_id, tipo, chart_type, mapeo):
+    """Valida (y sanitiza) los campos de meta/top-N/formato/histórico de `mapeo` que hoy no valida
+    nada más — metas de KPI (`meta_min`/`meta_max`, cualquier componente de tipo KPI, sea una de
+    las 4 posiciones fijas o uno de Zona Personal), su `formato` de presentación (`'numero'`/
+    `'moneda'`/`'porcentaje'`), cantidad top-N de "Concentración" (`mapeo['calculo'] ==
+    'concentracion'`), metas por tramo de "Cumplimiento de metas" (`mapeo['calculo'] ==
+    'cumplimiento_metas'`) y `usa_historico` de KPI/Gráfico/Tabla (`calculo in ('kpi', 'chart',
+    'multivalor', 'multiserie', 'tabla')` — dispersión, tramos de antigüedad, cumplimiento de
+    metas y concentración quedan fuera, su cálculo no se traduce a "una carga = un punto"). Muta
+    `mapeo` in-place con los valores ya normalizados (`float`/`None`/`str`/`bool`). A diferencia
+    del filtro `dias_vencidos` (permisivo, nunca debe romper una vista previa en vivo — ver
+    `plantilla.py::_aplicar_filtro_dias_vencidos`), esto se rechaza de plano: es el punto de
+    "Guardar cambios" del editor, mismo criterio que `_validar_color`.
+
+    `calculo` se resuelve con `mapeo.get('calculo')` si está (Zona Personal siempre lo guarda
+    explícito) o, si no, por descarte de `chart_type`: las 13 posiciones fijas nunca guardan
+    `calculo` dentro del propio mapeo (sale de `PLANTILLA_SLOTS`/estructuralmente del `chart_type`
+    ya persistido en el componente, ver `ComponentDataSection.jsx::conCalculo`) — `'tabla'`/
+    `'dispersion'` identifican su propio `chart_type` sin ambigüedad; cualquier otro `chart_type`
+    de una posición fija corresponde a `'chart'`/`'multivalor'`/`'multiserie'`, que comparten la
+    misma validación acá (no hace falta distinguir cuál es cuál para esto)."""
+    if tipo == DashboardComponent.Tipo.KPI:
+        mapeo['meta_min'] = _validar_numero_meta(mapeo.get('meta_min'), 'meta_min', component_id)
+        mapeo['meta_max'] = _validar_numero_meta(mapeo.get('meta_max'), 'meta_max', component_id)
+        mapeo['formato'] = _validar_formato_kpi(mapeo.get('formato'), component_id)
+        mapeo['usa_historico'] = bool(mapeo.get('usa_historico'))
+        return
+
+    calculo = mapeo.get('calculo')
+    if calculo is None:
+        if chart_type == 'dispersion':
+            calculo = 'dispersion'
+        elif chart_type == 'tabla':
+            calculo = 'tabla'
+        else:
+            calculo = 'chart'
+
+    if calculo in ('tabla', 'chart', 'multivalor', 'multiserie'):
+        mapeo['usa_historico'] = bool(mapeo.get('usa_historico'))
+    elif calculo == 'concentracion':
+        top_n = mapeo.get('top_n')
+        if top_n not in (None, ''):
+            if isinstance(top_n, bool) or not isinstance(top_n, int) or not (TOP_N_MIN <= top_n <= TOP_N_MAX):
+                raise CarteraError(f'Cantidad (top-N) inválida en "{component_id}": {top_n!r}.', codigo='TOP_N_INVALIDO')
+    elif calculo == 'cumplimiento_metas':
+        metas = mapeo.get('metas')
+        if metas is not None:
+            if not isinstance(metas, list) or len(metas) > len(ETIQUETAS_TRAMOS_ACUMULADOS):
+                raise CarteraError(f'Metas inválidas en "{component_id}".', codigo='METAS_INVALIDAS')
+            nuevas_metas = []
+            for entrada in metas:
+                if entrada is None:
+                    nuevas_metas.append(None)
+                    continue
+                if not isinstance(entrada, dict):
+                    raise CarteraError(f'Metas inválidas en "{component_id}".', codigo='METAS_INVALIDAS')
+                nuevas_metas.append({
+                    'meta_min': _validar_numero_meta(entrada.get('meta_min'), 'meta_min', component_id),
+                    'meta_max': _validar_numero_meta(entrada.get('meta_max'), 'meta_max', component_id),
+                })
+            mapeo['metas'] = nuevas_metas
+
+
+def validar_componentes(dashboard_id, componentes, es_superusuario=False):
     """Valida y sanitiza la lista de componentes entrante. Lanza CarteraError si algo no es
     válido. Devuelve la lista ya sanitizada, lista para persistir. Una lista vacía es válida: el
     editor visual permite borrar componentes (sección "editor del dashboard"), y borrarlos todos
-    deja el dashboard vacío — el mismo estado en el que nace cualquier dashboard nuevo."""
+    deja el dashboard vacío — el mismo estado en el que nace cualquier dashboard nuevo.
+
+    `es_superusuario=False` hace que un componente guardado con `config.bloqueado=True` (ver
+    `Dashboard Directorio`, sembrado por migración) rechace cualquier cambio de posición relativa/
+    ancho/alto/visibilidad/eliminación con `CarteraError(codigo='COMPONENTE_BLOQUEADO')` — el
+    mapeo/contenido de datos NUNCA se bloquea, solo la estructura. Con `es_superusuario=True` no
+    se aplica ninguna restricción extra, igual que hoy."""
     validos = componentes_validos(dashboard_id)
+    ids_bloqueados = {
+        component_id for component_id, definicion in validos.items()
+        if (definicion.get('config') or {}).get('bloqueado')
+    }
 
     if not isinstance(componentes, list):
         raise CarteraError('La configuración debe ser una lista de componentes.', codigo='LAYOUT_INVALIDO')
@@ -215,6 +379,7 @@ def validar_componentes(dashboard_id, componentes):
         ids_vistos.add(component_id)
 
         definicion = validos[component_id]
+        bloqueado = component_id in ids_bloqueados and not es_superusuario
 
         width = comp.get('width', definicion['width'])
         if not isinstance(width, int) or not (ANCHO_MIN <= width <= ANCHO_MAX):
@@ -224,17 +389,34 @@ def validar_componentes(dashboard_id, componentes):
         if not isinstance(height, int) or not (ALTO_MIN <= height <= ALTO_MAX):
             raise CarteraError(f'Alto inválido para "{component_id}": {height}.', codigo='ALTO_INVALIDO')
 
+        is_visible = bool(comp.get('is_visible', True))
+        if bloqueado and (
+            width != definicion['width'] or height != definicion['height']
+            or is_visible != bool(definicion.get('is_visible', True))
+        ):
+            raise CarteraError(
+                f'El componente "{component_id}" está bloqueado: no se puede mover, redimensionar '
+                'ni ocultar.', codigo='COMPONENTE_BLOQUEADO',
+            )
+
         content = dict(comp.get('content') or {})
         if 'titulo' in content:
             content['titulo'] = _sanitizar_texto(content['titulo'], LONGITUD_MAXIMA_TITULO, 'titulo')
         if 'descripcion' in content:
             content['descripcion'] = _sanitizar_texto(content['descripcion'], LONGITUD_MAXIMA_DESCRIPCION, 'descripcion')
+        mapeo_cambio = (comp.get('mapeo') or {}) != (definicion.get('mapeo') or {})
+        _validar_contenido_tabla(component_id, content, definicion.get('content') or {}, mapeo_cambio=mapeo_cambio)
 
         styles = _validar_estilos(dict(comp.get('styles') or {}))
 
         config = dict(comp.get('config') if comp.get('config') is not None else definicion.get('config', {}))
         if definicion['type'] == DashboardComponent.Tipo.TABLE:
             config = _sanitizar_config_paginacion(config)
+        if component_id in ids_bloqueados:
+            # Reafirma el bloqueo pase lo que pase en el `config` entrante — el mapeo/paginación
+            # de arriba sí se puede tocar libremente, pero el flag estructural nunca se pierde
+            # (evita que un payload que mande `config: {}` desbloquee el componente sin querer).
+            config['bloqueado'] = True
 
         # A diferencia del resto de campos (siempre se puede editar libremente desde el editor),
         # `chart_type` sí se valida contra el catálogo — un valor arbitrario rompería
@@ -247,6 +429,8 @@ def validar_componentes(dashboard_id, componentes):
         mapeo = comp.get('mapeo') if comp.get('mapeo') is not None else definicion.get('mapeo', {})
         if not isinstance(mapeo, dict):
             raise CarteraError(f'El campo "mapeo" de "{component_id}" debe ser un objeto.', codigo='MAPEO_INVALIDO')
+        mapeo = dict(mapeo)
+        _validar_mapeo_calculo(component_id, definicion['type'], chart_type, mapeo)
 
         resultado.append({
             'component_id': component_id,
@@ -256,12 +440,38 @@ def validar_componentes(dashboard_id, componentes):
             'order': int(comp.get('order', definicion['order'])),
             'width': width,
             'height': height,
-            'is_visible': bool(comp.get('is_visible', True)),
+            'is_visible': is_visible,
             'content': content,
             'styles': styles,
             'config': config,
             'mapeo': mapeo,
         })
+
+    if not es_superusuario and ids_bloqueados:
+        faltantes = ids_bloqueados - ids_vistos
+        if faltantes:
+            raise CarteraError(
+                f'El componente "{sorted(faltantes)[0]}" está bloqueado: no se puede eliminar.',
+                codigo='COMPONENTE_BLOQUEADO',
+            )
+        # Posición relativa entre sí: comparar la sub-secuencia de ids bloqueados en el orden en
+        # que aparecían (guardado) contra la sub-secuencia de esos mismos ids en el orden nuevo —
+        # deben coincidir exactamente. El `order`/`row` ABSOLUTO de cada uno puede cambiar como
+        # efecto secundario de que se agregue/quite/reordene cualquier OTRO componente (Zona
+        # Personal libre alrededor del bloque bloqueado), eso no cuenta como "tocar" el bloqueo.
+        secuencia_anterior = [
+            component_id for component_id, _ in sorted(validos.items(), key=lambda kv: kv[1]['order'])
+            if component_id in ids_bloqueados
+        ]
+        secuencia_nueva = [
+            comp['component_id'] for comp in sorted(resultado, key=lambda c: c['order'])
+            if comp['component_id'] in ids_bloqueados
+        ]
+        if secuencia_nueva != secuencia_anterior:
+            raise CarteraError(
+                'No se puede cambiar el orden relativo de los componentes bloqueados entre sí.',
+                codigo='COMPONENTE_BLOQUEADO',
+            )
 
     return resultado
 
@@ -373,9 +583,20 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
     empieza de cero primero (se usa en la primera gráfica que se agrega tras cargar un archivo
     nuevo, para no mezclar datos de dos archivos distintos en el mismo dashboard).
 
-    `especificacion` es `{'titulo', 'descripcion', 'columna_valor', 'columna_categoria',
-    'columna_serie', 'columna_valor_y', 'columna_id', 'columnas_valor', 'tipo_visualizacion',
-    'ancho_columnas', 'zona', 'datos'}`, donde `datos` ya viene calculado por
+    `especificacion` es `{'titulo', 'descripcion', 'calculo', 'columna_valor', 'columna_categoria',
+    'columna_serie', 'columna_valor_y', 'columna_id', 'columnas_valor', 'tipo_agregacion',
+    'tipo_visualizacion', 'ancho_columnas', 'zona', 'datos', 'instruccion_ia', 'columna_contexto_ia',
+    'contexto_ia_datos', 'meta_min', 'meta_max', 'formato', 'columna_fecha', 'metas', 'top_n'}` —
+    estos últimos 6 solo aplican a `calculo in ('kpi', 'tramos_antiguedad', 'cumplimiento_metas',
+    'concentracion')` (`formato` solo a `'kpi'`), ver el bloque que arma `mapeo` más abajo. `calculo` (una de
+    'kpi'/'chart'/'multivalor'/'multiserie'/'dispersion'/'tabla'/'tramos_antiguedad'/
+    'cumplimiento_metas'/'concentracion', mandada por `AgregarGraficaView` cuando viene de la Zona
+    Personal) queda persistida tal
+    cual en `DashboardComponent.mapeo` junto con las columnas elegidas — es lo único que permite
+    reconfigurar después la fuente de datos de este componente desde "Configurar componente" →
+    "Datos" (`ComponentDataSection.jsx`), igual que ya pueden hacer las 13 posiciones fijas de la
+    plantilla. Sin `calculo` (flujo legado de recomendaciones automáticas), el componente queda sin
+    `mapeo`, como antes de esto. `datos` ya viene calculado por
     `generic_charts.generar_datos_grafica`/`generar_datos_multiserie`/`generar_datos_multivalor`/
     `generar_datos_dispersion`/`generar_datos_tabla` — su forma (`datos['tipo']` =
     'kpi'/'chart'/'multiserie'/'dispersion'/'tabla_multi') decide qué se guarda en `content`;
@@ -389,7 +610,17 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
     reconocen `EditableGrid.jsx` (agrupación visual en modo edición) y `plantilla._escribir_plantilla`
     (preservación al reaplicar el mapeo de las 15 posiciones fijas). Todo componente generado trae
     una descripción de partida (editable después desde el panel de propiedades, igual que el
-    título) y, si su tipo dibuja una leyenda, una posición por defecto también editable ahí."""
+    título) y, si su tipo dibuja una leyenda, una posición por defecto también editable ahí.
+
+    `instruccion_ia` (texto libre) y `columna_contexto_ia`/`contexto_ia_datos` (una columna del
+    archivo distinta de las que arman el gráfico, ya agregada por `views.AgregarGraficaView` con
+    `generic_charts.generar_datos_grafica`) son opcionales — vienen del campo "Instrucción para la
+    IA" de `AgregarComponentePersonalModal.jsx`, pensado para pedirle a la IA que interprete este
+    componente puntual en términos de algo que el gráfico en sí no muestra (p. ej. "explicá los
+    totales por la Causal de gestión"). Se guardan tal cual en `config['instruccion_ia']`/
+    `config['contexto_ia']` — nunca afectan `content` ni cómo se dibuja el componente, solo los lee
+    `services/dashboard_interpretation.py::_bloque_instruccion_ia` al generar "Hallazgos clave" o
+    la "Interpretación completa"."""
     layout = obtener_o_crear_layout(dashboard_id)
 
     existentes = [] if reemplazar_existentes else list(componentes_validos(dashboard_id).values())
@@ -411,6 +642,83 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
     zona = especificacion.get('zona')
     if zona:
         config['zona'] = zona
+    # `bloqueado`, si viene, se guarda en `config['bloqueado']` — usado por
+    # `validar_componentes` para rechazar cambios de posición/tamaño/visibilidad/eliminación de
+    # usuarios normales (superusuario exceptuado). Ningún flujo de UI lo manda hoy (ni
+    # `AgregarGraficaView` ni `AgregarComponentePersonalModal.jsx` exponen esta opción) — solo lo
+    # usa la migración de datos que siembra Dashboard Directorio.
+    if especificacion.get('bloqueado'):
+        config['bloqueado'] = True
+    instruccion_ia = (especificacion.get('instruccion_ia') or '').strip()
+    if instruccion_ia:
+        config['instruccion_ia'] = instruccion_ia
+    contexto_ia_datos = especificacion.get('contexto_ia_datos')
+    if contexto_ia_datos and contexto_ia_datos.get('categorias'):
+        config['contexto_ia'] = {
+            'columna': especificacion.get('columna_contexto_ia'),
+            'categorias': contexto_ia_datos['categorias'],
+            'valores': contexto_ia_datos['valores'],
+        }
+
+    # `mapeo` (a diferencia de `config`, arriba): misma forma por `calculo` que usa
+    # `plantilla.py::_calcular_contenido_slot`, más la clave `'calculo'` (que los 13 slots fijos no
+    # necesitan guardar porque sale de `PLANTILLA_SLOTS`, pero Zona Personal no tiene ese catálogo
+    # externo). Es lo que permite reconfigurar después la fuente de datos de este componente desde
+    # "Configurar componente" → "Datos" (`ComponentDataSection.jsx`) — sin esto, `config` guarda las
+    # mismas columnas pero nadie las vuelve a leer. Solo se arma si el llamador mandó `calculo`
+    # explícito (`AgregarGraficaView`, Zona Personal); el flujo legado de recomendaciones
+    # automáticas no lo manda y queda sin `mapeo`, igual que antes de este cambio.
+    calculo = especificacion.get('calculo')
+    mapeo = {}
+    if calculo:
+        mapeo = {'disponible': True, 'calculo': calculo}
+        if calculo == 'kpi':
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            if especificacion.get('tipo_agregacion'):
+                mapeo['tipo_agregacion'] = especificacion['tipo_agregacion']
+            if especificacion.get('meta_min') is not None:
+                mapeo['meta_min'] = especificacion['meta_min']
+            if especificacion.get('meta_max') is not None:
+                mapeo['meta_max'] = especificacion['meta_max']
+            if especificacion.get('formato'):
+                mapeo['formato'] = especificacion['formato']
+            if especificacion.get('usa_historico'):
+                mapeo['usa_historico'] = True
+        elif calculo == 'multivalor':
+            mapeo['columna_categoria'] = especificacion.get('columna_categoria')
+            mapeo['columnas_valor'] = especificacion.get('columnas_valor')
+            if especificacion.get('usa_historico'):
+                mapeo['usa_historico'] = True
+        elif calculo == 'multiserie':
+            mapeo['columna_categoria'] = especificacion.get('columna_categoria')
+            mapeo['columna_serie'] = especificacion.get('columna_serie')
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            if especificacion.get('usa_historico'):
+                mapeo['usa_historico'] = True
+        elif calculo == 'dispersion':
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            mapeo['columna_valor_y'] = especificacion.get('columna_valor_y')
+        elif calculo == 'tabla':
+            mapeo['columna_id'] = especificacion.get('columna_id')
+            mapeo['columnas_valor'] = especificacion.get('columnas_valor')
+            if especificacion.get('usa_historico'):
+                mapeo['usa_historico'] = True
+        elif calculo == 'tramos_antiguedad':
+            mapeo['columna_fecha'] = especificacion.get('columna_fecha')
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+        elif calculo == 'cumplimiento_metas':
+            mapeo['columna_fecha'] = especificacion.get('columna_fecha')
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            mapeo['metas'] = especificacion.get('metas')
+        elif calculo == 'concentracion':
+            mapeo['columna_id'] = especificacion.get('columna_id')
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            mapeo['top_n'] = especificacion.get('top_n')
+        else:
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            mapeo['columna_categoria'] = especificacion.get('columna_categoria')
+            if especificacion.get('usa_historico'):
+                mapeo['usa_historico'] = True
 
     if datos['tipo'] == 'dispersion':
         config['columna_valor_y'] = especificacion.get('columna_valor_y')
@@ -418,14 +726,21 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': 'dispersion',
             'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'puntos': datos['puntos']},
-            'styles': {}, 'config': config,
+            'styles': {}, 'config': config, 'mapeo': mapeo,
         }
     elif datos['tipo'] == 'kpi':
+        content_kpi = {
+            'titulo': titulo, 'descripcion': descripcion, 'valor': datos['valor'],
+            'formato': especificacion.get('formato') or 'numero',
+        }
+        meta = evaluar_meta(datos['valor'], especificacion.get('meta_min'), especificacion.get('meta_max'))
+        if meta is not None:
+            content_kpi['meta'] = meta
         nuevo = {
             'component_id': component_id, 'type': DashboardComponent.Tipo.KPI, 'chart_type': '',
             'row': orden, 'order': orden, 'width': kpi_ancho, 'height': KPI_ALTO, 'is_visible': True,
-            'content': {'titulo': titulo, 'descripcion': descripcion, 'valor': datos['valor']},
-            'styles': {}, 'config': config,
+            'content': content_kpi,
+            'styles': {}, 'config': config, 'mapeo': mapeo,
         }
     elif datos['tipo'] == 'tabla_multi':
         config['columna_id'] = especificacion.get('columna_id')
@@ -437,7 +752,7 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
                 'titulo': titulo, 'descripcion': descripcion,
                 'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
             },
-            'styles': {}, 'config': config,
+            'styles': {}, 'config': config, 'mapeo': mapeo,
         }
     elif datos['tipo'] == 'multiserie':
         if especificacion.get('columnas_valor'):
@@ -449,7 +764,7 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
             'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'series': datos['series']},
-            'styles': {}, 'config': config,
+            'styles': {}, 'config': config, 'mapeo': mapeo,
         }
     else:
         chart_type = especificacion.get('tipo_visualizacion') or 'barras_horizontales'
@@ -459,7 +774,7 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
             'component_id': component_id, 'type': DashboardComponent.Tipo.CHART, 'chart_type': chart_type,
             'row': orden, 'order': orden, 'width': chart_ancho, 'height': CHART_ALTO, 'is_visible': True,
             'content': {'titulo': titulo, 'descripcion': descripcion, 'categorias': datos['categorias'], 'valores': datos['valores']},
-            'styles': {}, 'config': config,
+            'styles': {}, 'config': config, 'mapeo': mapeo,
         }
 
     _escribir_componentes(layout, existentes + [nuevo])

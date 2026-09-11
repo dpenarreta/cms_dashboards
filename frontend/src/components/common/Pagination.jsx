@@ -1,7 +1,7 @@
 import { Button, Form } from 'react-bootstrap'
 import { formatNumber } from '../../utils/format'
+import { PAGE_SIZES_PERMITIDOS } from '../../config/pageSizes'
 
-const OPCIONES_POR_DEFECTO = [5, 10, 25, 50, 100]
 
 /**
  * Paginación reutilizable: selector de "registros por página" + resumen + navegación
@@ -15,7 +15,7 @@ export default function Pagination({
   totalPaginas,
   totalRegistros,
   pageSize,
-  allowedPageSizes = OPCIONES_POR_DEFECTO,
+  allowedPageSizes = PAGE_SIZES_PERMITIDOS,
   onCambiarPagina,
   onCambiarPageSize,
   cargando = false,

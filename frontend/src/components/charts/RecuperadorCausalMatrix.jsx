@@ -3,6 +3,7 @@ import Pagination from '../common/Pagination'
 import { useDrilldown } from '../../hooks/useDrilldown'
 import { usePaginacionCliente } from '../../hooks/usePaginacionCliente'
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/format'
+import { PAGE_SIZES_PERMITIDOS } from '../../config/pageSizes'
 
 function CeldaSeleccionable({ onSeleccionar, children }) {
   return (
@@ -98,7 +99,7 @@ export default function RecuperadorCausalMatrix({ matriz, metrica, override }) {
         totalPaginas={totalPaginas}
         totalRegistros={totalRegistros}
         pageSize={pageSize}
-        allowedPageSizes={override?.config?.allowedPageSizes || [5, 10, 25, 50, 100]}
+        allowedPageSizes={override?.config?.allowedPageSizes || PAGE_SIZES_PERMITIDOS}
         onCambiarPagina={irAPagina}
         onCambiarPageSize={cambiarPageSize}
       />

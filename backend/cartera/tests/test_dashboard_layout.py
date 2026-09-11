@@ -2,6 +2,7 @@ import json
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -60,7 +61,7 @@ class AgregarComponenteGeneradoTests(TestCase):
         componentes = list(layout.components.all())
         self.assertEqual(len(componentes), 1)
         self.assertEqual(componentes[0].type, DashboardComponent.Tipo.KPI)
-        self.assertEqual(componentes[0].content, {'titulo': 'Total', 'descripcion': '', 'valor': 100.0})
+        self.assertEqual(componentes[0].content, {'titulo': 'Total', 'descripcion': '', 'valor': 100.0, 'formato': 'numero'})
 
     def test_crea_un_componente_chart(self):
         especificacion = {
@@ -112,6 +113,289 @@ class AgregarComponenteGeneradoTests(TestCase):
             domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_CHART_ADDED',
             dashboard_id='finanzas', actor=usuario,
         ).exists())
+
+
+class AgregarComponenteGeneradoCalculoNuevosTests(TestCase):
+    """`agregar_componente_generado` para los 3 `calculo` nuevos — confirma que `mapeo` queda
+    completo (necesario para reconfigurar después desde "Configurar componente" → "Datos")."""
+
+    def test_kpi_con_meta_persiste_meta_min_y_meta_max_en_mapeo_y_content(self):
+        especificacion = {
+            'titulo': 'Total', 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 100.0}, 'meta_min': 50, 'meta_max': 200,
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertEqual(componente.mapeo['meta_min'], 50)
+        self.assertEqual(componente.mapeo['meta_max'], 200)
+        self.assertIn('meta', componente.content)
+        self.assertTrue(componente.content['meta']['cumple'])
+
+    def test_kpi_sin_meta_no_agrega_nada_de_meta(self):
+        especificacion = {
+            'titulo': 'Total', 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 100.0},
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertNotIn('meta_min', componente.mapeo)
+        self.assertNotIn('meta', componente.content)
+
+    def test_kpi_con_formato_moneda_lo_persiste_en_mapeo_y_content(self):
+        especificacion = {
+            'titulo': 'Cartera Total', 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 100.0}, 'formato': 'moneda',
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertEqual(componente.mapeo['formato'], 'moneda')
+        self.assertEqual(componente.content['formato'], 'moneda')
+
+    def test_kpi_sin_formato_elegido_cae_a_numero_en_content_sin_agregarlo_al_mapeo(self):
+        especificacion = {
+            'titulo': 'Total', 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 100.0},
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertNotIn('formato', componente.mapeo)
+        self.assertEqual(componente.content['formato'], 'numero')
+
+    def test_tramos_antiguedad_persiste_columna_fecha_y_valor_en_mapeo(self):
+        especificacion = {
+            'titulo': 'Antigüedad', 'calculo': 'tramos_antiguedad',
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo',
+            'datos': {'tipo': 'chart', 'categorias': ['Anticipada'], 'valores': [100.0]},
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertEqual(componente.mapeo, {
+            'disponible': True, 'calculo': 'tramos_antiguedad', 'columna_fecha': 'vencimiento', 'columna_valor': 'saldo',
+        })
+
+    def test_cumplimiento_metas_persiste_metas_en_mapeo(self):
+        metas = [{'meta_min': 50}]
+        especificacion = {
+            'titulo': 'Cumplimiento', 'calculo': 'cumplimiento_metas',
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': metas,
+            'datos': {'tipo': 'tabla_multi', 'columnas': ['Tramo', 'saldo', '% acumulado', 'Resultado'], 'filas': [], 'total': None},
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertEqual(componente.mapeo, {
+            'disponible': True, 'calculo': 'cumplimiento_metas',
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': metas,
+        })
+
+    def test_concentracion_persiste_top_n_en_mapeo(self):
+        especificacion = {
+            'titulo': 'Concentración', 'calculo': 'concentracion',
+            'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 10,
+            'datos': {'tipo': 'tabla_multi', 'columnas': ['cliente', 'saldo', '% del total', '% acumulado'], 'filas': [], 'total': None},
+        }
+        layout = dl.agregar_componente_generado('finanzas', especificacion)
+        componente = layout.components.get()
+        self.assertEqual(componente.mapeo, {
+            'disponible': True, 'calculo': 'concentracion', 'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 10,
+        })
+
+
+class ValidarMapeoCalculoTests(TestCase):
+    """`validar_componentes` — validación real de `meta_min`/`meta_max` (KPI), `top_n`
+    (concentración) y `metas` (cumplimiento de metas), a través del endpoint PUT del layout."""
+
+    def setUp(self):
+        self.client = _cliente_autenticado()
+
+    def _guardar_kpi_con_especificacion(self, extra_especificacion):
+        especificacion = {
+            'titulo': 'Total', 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 100.0}, **extra_especificacion,
+        }
+        dl.agregar_componente_generado('finanzas', especificacion, reemplazar_existentes=True)
+        data = self.client.get('/api/dashboards/finanzas/layout').json()
+        return data
+
+    def test_kpi_con_meta_numerica_valida_se_guarda(self):
+        data = self._guardar_kpi_con_especificacion({'meta_min': 50, 'meta_max': 200})
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_kpi_con_meta_no_numerica_devuelve_400(self):
+        data = self._guardar_kpi_con_especificacion({'meta_min': 50})
+        comps = data['components']
+        comps[0]['mapeo']['meta_min'] = 'no es un número'
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'META_INVALIDA')
+
+    def test_kpi_con_formato_valido_se_guarda(self):
+        data = self._guardar_kpi_con_especificacion({'formato': 'moneda'})
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_kpi_sin_formato_elegido_se_guarda_como_numero(self):
+        data = self._guardar_kpi_con_especificacion({})
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        guardado = resp.json()['components'][0]
+        self.assertEqual(guardado['mapeo']['formato'], 'numero')
+
+    def test_kpi_con_formato_invalido_devuelve_400(self):
+        data = self._guardar_kpi_con_especificacion({})
+        comps = data['components']
+        comps[0]['mapeo']['formato'] = 'euros'
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'FORMATO_INVALIDO')
+
+    def _guardar_componente_con_calculo(self, calculo, extra_especificacion):
+        especificacion = {
+            'titulo': 'Comp', 'calculo': calculo,
+            'datos': {'tipo': 'tabla_multi', 'columnas': ['a'], 'filas': [], 'total': None},
+            **extra_especificacion,
+        }
+        dl.agregar_componente_generado('finanzas', especificacion, reemplazar_existentes=True)
+        return self.client.get('/api/dashboards/finanzas/layout').json()
+
+    def test_tabla_con_usa_historico_se_guarda(self):
+        data = self._guardar_componente_con_calculo('tabla', {
+            'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}], 'usa_historico': True,
+        })
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        guardado = resp.json()['components'][0]
+        self.assertTrue(guardado['mapeo']['usa_historico'])
+
+    def test_tabla_sin_usa_historico_se_guarda_como_false(self):
+        data = self._guardar_componente_con_calculo('tabla', {
+            'columna_id': 'cliente', 'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}],
+        })
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+        guardado = resp.json()['components'][0]
+        self.assertFalse(guardado['mapeo']['usa_historico'])
+
+    def test_concentracion_con_top_n_valido_se_guarda(self):
+        data = self._guardar_componente_con_calculo('concentracion', {'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 10})
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_concentracion_con_top_n_fuera_de_rango_devuelve_400(self):
+        data = self._guardar_componente_con_calculo('concentracion', {'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 10})
+        comps = data['components']
+        comps[0]['mapeo']['top_n'] = 200
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TOP_N_INVALIDO')
+
+    def test_concentracion_con_top_n_no_entero_devuelve_400(self):
+        data = self._guardar_componente_con_calculo('concentracion', {'columna_id': 'cliente', 'columna_valor': 'saldo', 'top_n': 10})
+        comps = data['components']
+        comps[0]['mapeo']['top_n'] = 'diez'
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TOP_N_INVALIDO')
+
+    def test_cumplimiento_metas_con_metas_validas_se_guarda(self):
+        data = self._guardar_componente_con_calculo('cumplimiento_metas', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': [{'meta_min': 50}],
+        })
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_cumplimiento_metas_con_metas_no_lista_devuelve_400(self):
+        data = self._guardar_componente_con_calculo('cumplimiento_metas', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': [{'meta_min': 50}],
+        })
+        comps = data['components']
+        comps[0]['mapeo']['metas'] = 'no es una lista'
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'METAS_INVALIDAS')
+
+    def test_cumplimiento_metas_con_entrada_de_meta_invalida_devuelve_400(self):
+        # El valor de una meta individual (dentro de la lista) reusa el mismo código de error que
+        # la meta de un KPI (`META_INVALIDA`, no `METAS_INVALIDAS`) — `METAS_INVALIDAS` queda para
+        # problemas de ESTRUCTURA de la lista (no es lista, entrada no es dict, más de 6 entradas).
+        data = self._guardar_componente_con_calculo('cumplimiento_metas', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': [{'meta_min': 50}],
+        })
+        comps = data['components']
+        comps[0]['mapeo']['metas'] = [{'meta_min': 'no numérico'}]
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'META_INVALIDA')
+
+    def test_cumplimiento_metas_con_estructura_de_lista_invalida_devuelve_metas_invalidas(self):
+        data = self._guardar_componente_con_calculo('cumplimiento_metas', {
+            'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': [{'meta_min': 50}],
+        })
+        comps = data['components']
+        comps[0]['mapeo']['metas'] = ['no es un dict']
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'METAS_INVALIDAS')
+
+
+class ValidarMapeoCalculoUsaHistoricoDirectoTests(TestCase):
+    """`_validar_mapeo_calculo` a través de llamadas directas (no vía el endpoint PUT del layout) —
+    cubre específicamente el fallback `mapeo.get('calculo') or (chart_type si es 'tabla')`, que
+    solo hace falta para las 13 posiciones fijas (tabla-1/tabla-2/tabla-3, nunca guardan `calculo`
+    dentro de su propio mapeo, ver `ComponentDataSection.jsx::conCalculo`) — algo que
+    `_guardar_componente_con_calculo` (arriba, usa `agregar_componente_generado`) no puede simular,
+    porque Zona Personal SIEMPRE guarda `calculo` explícito."""
+
+    def test_zona_personal_normaliza_usa_historico_a_bool(self):
+        mapeo = {'calculo': 'tabla', 'usa_historico': 1}
+        dl._validar_mapeo_calculo('mi-tabla', DashboardComponent.Tipo.CHART, 'tabla', mapeo)
+        self.assertIs(mapeo['usa_historico'], True)
+
+    def test_zona_personal_sin_usa_historico_lo_deja_en_false(self):
+        mapeo = {'calculo': 'tabla'}
+        dl._validar_mapeo_calculo('mi-tabla', DashboardComponent.Tipo.CHART, 'tabla', mapeo)
+        self.assertIs(mapeo['usa_historico'], False)
+
+    def test_posicion_fija_sin_calculo_en_el_mapeo_usa_el_chart_type_como_fallback(self):
+        mapeo = {'usa_historico': True}
+        dl._validar_mapeo_calculo('tabla-1', DashboardComponent.Tipo.CHART, 'tabla', mapeo)
+        self.assertIs(mapeo['usa_historico'], True)
+
+    def test_calculo_explicito_en_el_mapeo_gana_por_encima_del_chart_type(self):
+        # concentracion/cumplimiento_metas también tienen chart_type == 'tabla' — sin priorizar
+        # `mapeo['calculo']` cuando está presente, se les agregaría `usa_historico` por error.
+        mapeo = {'calculo': 'concentracion'}
+        dl._validar_mapeo_calculo('mi-concentracion', DashboardComponent.Tipo.CHART, 'tabla', mapeo)
+        self.assertNotIn('usa_historico', mapeo)
+
+    def test_posicion_fija_de_grafico_normal_tambien_recibe_usa_historico(self):
+        # 'chart'/'multivalor'/'multiserie' quedan dentro de alcance (no solo 'tabla') — cualquier
+        # `chart_type` que no sea 'tabla' ni 'dispersion' cae al fallback genérico 'chart', que sí
+        # necesita `usa_historico` sanitizado.
+        mapeo = {}
+        dl._validar_mapeo_calculo('grafico-1', DashboardComponent.Tipo.CHART, 'barras_verticales', mapeo)
+        self.assertIs(mapeo['usa_historico'], False)
+
+    def test_posicion_fija_de_dispersion_no_agrega_usa_historico(self):
+        # Dispersión es la única posición fija que queda fuera de alcance (su cálculo, un punto
+        # por fila con ambas columnas presentes, no se traduce a "una carga = un punto").
+        mapeo = {}
+        dl._validar_mapeo_calculo('grafico-6', DashboardComponent.Tipo.CHART, 'dispersion', mapeo)
+        self.assertNotIn('usa_historico', mapeo)
 
 
 class AgregarComponentePresentacionalTests(TestCase):
@@ -274,7 +558,7 @@ class GuardarLayoutTests(TestCase):
 
         self.assertEqual(resp.status_code, 200)
         componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
-        self.assertEqual(componente.mapeo, {'columna_valor': 'saldo', 'columna_categoria': 'ciudad'})
+        self.assertEqual(componente.mapeo, {'columna_valor': 'saldo', 'columna_categoria': 'ciudad', 'usa_historico': False})
 
     def test_mapeo_invalido_devuelve_400(self):
         comps = self.data_inicial['components']
@@ -391,6 +675,177 @@ class GuardarLayoutTests(TestCase):
         self.assertEqual(guardado['styles']['coloresPorCategoria'], {'Quito': '#1F4E78'})
 
 
+class GuardarLayoutTablaTests(TestCase):
+    """Editar valores de celda (panel de propiedades, `TableCellsEditor.jsx`) solo puede cambiar
+    el VALOR de una celda que ya existe — `_validar_contenido_tabla` es lo que realmente lo
+    impide, no el frontend (ver `@.claude/rules/security.md`)."""
+
+    def setUp(self):
+        self.client = _cliente_autenticado()
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Top clientes', 'columna_id': 'cliente', 'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}],
+            'datos': {'tipo': 'tabla_multi', 'columnas': ['Cliente', 'Saldo'], 'filas': [['A', 100.0], ['B', 200.0]], 'total': ['Total', 300.0]},
+        })
+        self.data_inicial = self.client.get('/api/dashboards/finanzas/layout').json()
+
+    def _guardar(self, componentes, version=None):
+        payload = {'version': version if version is not None else self.data_inicial['version'], 'components': componentes, 'changed_by': 'Tester'}
+        return self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+
+    def test_editar_un_valor_de_celda_dentro_de_la_misma_forma_se_guarda(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', 999.0], ['B', 200.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.content['filas'], [['A', 999.0], ['B', 200.0]])
+
+    def test_editar_la_fila_de_total_se_guarda(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['total'] = ['Total', 999.0]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.content['total'], ['Total', 999.0])
+
+    def test_una_celda_que_pasa_de_null_a_numero_se_acepta(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', None], ['B', 200.0]]
+        resp = self._guardar(comps)
+        self.assertEqual(resp.status_code, 200)
+
+        comps2 = resp.json()['components']
+        comps2[0]['content']['filas'] = [['A', 150.0], ['B', 200.0]]
+        resp2 = self._guardar(comps2, version=resp.json()['version'])
+        self.assertEqual(resp2.status_code, 200)
+
+    def test_agregar_una_fila_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', 100.0], ['B', 200.0], ['C', 300.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_FILAS_INVALIDAS')
+
+    def test_quitar_una_fila_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', 100.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_FILAS_INVALIDAS')
+
+    def test_una_fila_con_menos_columnas_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A'], ['B', 200.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_FILAS_INVALIDAS')
+
+    def test_renombrar_una_columna_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['columnas'] = ['Cliente', 'Saldo Nuevo']
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_COLUMNAS_INVALIDAS')
+
+    def test_agregar_una_columna_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['columnas'] = ['Cliente', 'Saldo', 'Extra']
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_COLUMNAS_INVALIDAS')
+
+    def test_una_celda_con_un_objeto_anidado_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', {'no': 'valido'}], ['B', 200.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_CELDA_INVALIDA')
+
+    def test_achicar_la_fila_de_total_se_rechaza(self):
+        comps = self.data_inicial['components']
+        comps[0]['content']['total'] = ['Total']
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_FILAS_INVALIDAS')
+
+
+class GuardarLayoutTablaConMapeoTests(TestCase):
+    """Reconfigurar la fuente de datos de una tabla (plantilla fija o Zona Personal, panel de
+    propiedades → "Datos", `ComponentDataSection.jsx`) legítimamente cambia la cantidad de
+    filas/columnas frente a lo ya persistido (nueva agrupación) — `_validar_contenido_tabla` no
+    debe exigir la misma forma cuando el `mapeo` entrante cambió en el mismo guardado."""
+
+    def setUp(self):
+        self.client = _cliente_autenticado()
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Top clientes', 'calculo': 'tabla', 'columna_id': 'cliente',
+            'columnas_valor': [{'columna': 'saldo', 'tipo_agregacion': 'suma'}],
+            'datos': {'tipo': 'tabla_multi', 'columnas': ['Cliente', 'Saldo'], 'filas': [['A', 100.0], ['B', 200.0]], 'total': ['Total', 300.0]},
+        })
+        self.data_inicial = self.client.get('/api/dashboards/finanzas/layout').json()
+
+    def _guardar(self, componentes, version=None):
+        payload = {'version': version if version is not None else self.data_inicial['version'], 'components': componentes, 'changed_by': 'Tester'}
+        return self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+
+    def test_cambiar_mapeo_y_forma_de_la_tabla_en_el_mismo_guardado_se_acepta(self):
+        comps = self.data_inicial['components']
+        comps[0]['mapeo'] = {'disponible': True, 'calculo': 'tabla', 'columna_id': 'cliente', 'columnas_valor': [{'columna': 'dias_credito', 'tipo_agregacion': 'suma'}]}
+        comps[0]['content'] = {
+            'titulo': 'Top clientes', 'descripcion': '',
+            'columnas': ['Cliente', 'Dias credito', '% del total'],
+            'filas': [['A', 10.0, 50.0], ['B', 10.0, 50.0], ['C', 0.0, 0.0]],
+            'total': ['Total', 20.0, 100.0],
+        }
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 200)
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id=comps[0]['component_id'])
+        self.assertEqual(componente.content['columnas'], ['Cliente', 'Dias credito', '% del total'])
+        self.assertEqual(len(componente.content['filas']), 3)
+        self.assertEqual(componente.mapeo['columna_id'], 'cliente')
+
+    def test_cambiar_solo_el_contenido_sin_tocar_el_mapeo_sigue_exigiendo_la_misma_forma(self):
+        """Control: sin cambio de `mapeo`, el comportamiento existente (edición manual de celdas,
+        `GuardarLayoutTablaTests`) no debe verse afectado por este fix."""
+        comps = self.data_inicial['components']
+        comps[0]['content']['filas'] = [['A', 100.0], ['B', 200.0], ['C', 300.0]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_FILAS_INVALIDAS')
+
+    def test_cambiar_mapeo_con_una_celda_invalida_sigue_rechazandose(self):
+        comps = self.data_inicial['components']
+        comps[0]['mapeo'] = {'disponible': True, 'calculo': 'tabla', 'columna_id': 'cliente', 'columnas_valor': [{'columna': 'dias_credito', 'tipo_agregacion': 'suma'}]}
+        comps[0]['content']['filas'] = [['A', {'no': 'valido'}]]
+
+        resp = self._guardar(comps)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TABLA_CELDA_INVALIDA')
+
+
 class PaginacionEnComponenteTablaTests(TestCase):
     """`_sanitizar_config_paginacion` sigue vigente para cualquier componente tipo TABLE que
     exista en un layout (aunque el flujo de generación ya no cree ninguno por defecto)."""
@@ -442,13 +897,32 @@ class RestablecerLayoutTests(TestCase):
     def test_versions_devuelve_historial_mas_reciente_primero(self):
         client = _cliente_autenticado()
         _generar_componentes('finanzas', cantidad=1)
-        client.post('/api/dashboards/finanzas/layout/reset', data=json.dumps({'changed_by': 'A'}), content_type='application/json')
-        client.post('/api/dashboards/finanzas/layout/reset', data=json.dumps({'changed_by': 'B'}), content_type='application/json')
+        client.post('/api/dashboards/finanzas/layout/reset', content_type='application/json')
+        client.post('/api/dashboards/finanzas/layout/reset', content_type='application/json')
 
         resp = client.get('/api/dashboards/finanzas/versions')
         entradas = resp.json()
         self.assertGreaterEqual(len(entradas), 2)
-        self.assertEqual(entradas[0]['changed_by'], 'B')
+        # El autor sale del usuario autenticado, no del cuerpo de la petición.
+        self.assertEqual(entradas[0]['changed_by'], User.objects.get().username)
+
+    def test_versions_ignora_el_changed_by_enviado_por_el_cliente(self):
+        """El autor del cambio no es falsificable.
+
+        Antes `changed_by` venía en el cuerpo y el historial lo mostraba ANTES que el actor real,
+        así que cualquiera que pudiera guardar un layout podía firmarlo con el nombre de otra
+        persona.
+        """
+        client = _cliente_autenticado()
+        _generar_componentes('finanzas', cantidad=1)
+        client.post(
+            '/api/dashboards/finanzas/layout/reset',
+            data=json.dumps({'changed_by': 'Gerente General'}), content_type='application/json',
+        )
+
+        entradas = client.get('/api/dashboards/finanzas/versions').json()
+        self.assertNotEqual(entradas[0]['changed_by'], 'Gerente General')
+        self.assertEqual(entradas[0]['changed_by'], User.objects.get().username)
 
 
 class PermisosTests(TestCase):
@@ -474,3 +948,177 @@ class PermisosTests(TestCase):
         with mock.patch('cartera.permisos.tiene_permiso', return_value=False):
             resp = client.get('/api/dashboards/finanzas/layout')
         self.assertEqual(resp.status_code, 403)
+
+
+def _agregar_componente_bloqueado(dashboard_id, titulo='KPI bloqueado', **kwargs):
+    especificacion = {
+        'titulo': titulo, 'calculo': 'kpi', 'columna_valor': 'saldo', 'columna_categoria': None,
+        'datos': {'tipo': 'kpi', 'valor': 100.0}, 'bloqueado': True,
+    }
+    especificacion.update(kwargs)
+    return dl.agregar_componente_generado(dashboard_id, especificacion)
+
+
+def _payload_actual(dashboard_id):
+    """Copia mutable del layout guardado, en la misma forma que envía el frontend en el `PUT` —
+    mismo patrón que `GuardarLayoutTests` (que la obtiene vía `self.client.get(...).json()`), pero
+    directo desde el servicio para no depender de un cliente HTTP en tests unitarios."""
+    layout = dl.obtener_o_crear_layout(dashboard_id)
+    return [dict(c) for c in dl.serializar_layout(layout)['components']]
+
+
+class ValidarComponentesBloqueoTests(TestCase):
+    """`validar_componentes(..., es_superusuario=False)` — rechaza cambios de posición relativa/
+    ancho/alto/visibilidad/eliminación en un componente con `config.bloqueado=True`, salvo que el
+    actor sea superusuario. El mapeo/contenido de datos nunca se bloquea (no se testea acá que se
+    pueda editar porque ya lo cubre `ValidarMapeoCalculoTests`/`AgregarComponenteGeneradoCalculoNuevosTests`
+    sin este flag — la ausencia de una restricción nueva ahí es la prueba)."""
+
+    def test_config_bloqueado_queda_persistido_al_crear(self):
+        _agregar_componente_bloqueado('finanzas')
+        componente = DashboardComponent.objects.get(layout__dashboard_id='finanzas', component_id='kpi-bloqueado')
+        self.assertTrue(componente.config['bloqueado'])
+
+    def test_cambiar_el_mapeo_sin_superusuario_se_acepta(self):
+        """El bloqueo es solo estructural: un usuario normal puede seguir eligiendo qué columna
+        alimenta un KPI/gráfico/tabla bloqueado desde "Configurar componente → Datos", igual que en
+        cualquier otro componente — es lo que le permite a cada usuario seleccionar qué información
+        quiere ver, aunque no pueda mover/redimensionar/ocultar/eliminar la estructura en sí."""
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['mapeo'] = {
+            'disponible': True, 'calculo': 'kpi', 'columna_valor': 'otra_columna',
+        }
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(resultado[0]['mapeo']['columna_valor'], 'otra_columna')
+
+    def test_cambiar_el_contenido_titulo_y_descripcion_sin_superusuario_se_acepta(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['content'] = {**comps[0]['content'], 'titulo': 'Otro título', 'descripcion': 'Otra descripción'}
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(resultado[0]['content']['titulo'], 'Otro título')
+        self.assertEqual(resultado[0]['content']['descripcion'], 'Otra descripción')
+
+    def test_cambiar_ancho_sin_superusuario_se_rechaza(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['width'] = 6
+        with self.assertRaises(CarteraError) as ctx:
+            dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(ctx.exception.codigo, 'COMPONENTE_BLOQUEADO')
+
+    def test_cambiar_ancho_con_superusuario_se_acepta(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['width'] = 6
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=True)
+        self.assertEqual(resultado[0]['width'], 6)
+
+    def test_ocultar_sin_superusuario_se_rechaza(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['is_visible'] = False
+        with self.assertRaises(CarteraError) as ctx:
+            dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(ctx.exception.codigo, 'COMPONENTE_BLOQUEADO')
+
+    def test_ocultar_con_superusuario_se_acepta(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['is_visible'] = False
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=True)
+        self.assertFalse(resultado[0]['is_visible'])
+
+    def test_eliminar_sin_superusuario_se_rechaza(self):
+        _agregar_componente_bloqueado('finanzas')
+        with self.assertRaises(CarteraError) as ctx:
+            dl.validar_componentes('finanzas', [], es_superusuario=False)
+        self.assertEqual(ctx.exception.codigo, 'COMPONENTE_BLOQUEADO')
+
+    def test_eliminar_con_superusuario_se_acepta(self):
+        _agregar_componente_bloqueado('finanzas')
+        resultado = dl.validar_componentes('finanzas', [], es_superusuario=True)
+        self.assertEqual(resultado, [])
+
+    def test_reordenar_componentes_no_bloqueados_alrededor_del_bloqueado_no_rompe(self):
+        """Agregar/reordenar Zona Personal libremente alrededor del bloque bloqueado cambia el
+        `order` ABSOLUTO del bloqueado como efecto secundario — eso no cuenta como "tocarlo"."""
+        _agregar_componente_bloqueado('finanzas')
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Libre 1', 'columna_valor': 'valor', 'columna_categoria': 'categoria',
+            'datos': {'tipo': 'chart', 'categorias': ['A'], 'valores': [1.0]},
+        })
+        comps = _payload_actual('finanzas')
+        # Invierte el orden de los 2 componentes NO bloqueados; el bloqueado no se toca.
+        bloqueado = next(c for c in comps if c['component_id'] == 'kpi-bloqueado')
+        libres = [c for c in comps if c['component_id'] != 'kpi-bloqueado']
+        for i, c in enumerate(reversed(libres)):
+            c['order'] = 100 + i
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(next(c for c in resultado if c['component_id'] == 'kpi-bloqueado')['width'], bloqueado['width'])
+
+    def test_invertir_orden_relativo_entre_dos_bloqueados_se_rechaza(self):
+        _agregar_componente_bloqueado('finanzas', titulo='Bloqueado 1')
+        _agregar_componente_bloqueado('finanzas', titulo='Bloqueado 2')
+        comps = _payload_actual('finanzas')
+        ordenes = sorted(c['order'] for c in comps)
+        por_id = {c['component_id']: c for c in comps}
+        # Invierte el `order` de los dos bloqueados entre sí (mismo conjunto de valores, orden relativo distinto).
+        por_id['bloqueado-1']['order'], por_id['bloqueado-2']['order'] = ordenes[1], ordenes[0]
+        with self.assertRaises(CarteraError) as ctx:
+            dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertEqual(ctx.exception.codigo, 'COMPONENTE_BLOQUEADO')
+
+    def test_config_bloqueado_se_reafirma_aunque_el_payload_mande_config_vacio(self):
+        """Un payload que mande `config: {}` para un componente bloqueado no debe poder
+        desbloquearlo — el flag estructural se reafirma del lado del servidor, no del cliente."""
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['config'] = {}
+        resultado = dl.validar_componentes('finanzas', comps, es_superusuario=False)
+        self.assertTrue(resultado[0]['config']['bloqueado'])
+
+
+class DashboardLayoutViewBloqueoTests(TestCase):
+    """Confirma que `DashboardLayoutView.put` conecta `request.user.is_superuser` con
+    `validar_componentes` — la protección real ya está cubierta por
+    `ValidarComponentesBloqueoTests`, esto solo prueba el cableado de la vista."""
+
+    def _cliente_normal_con_permiso(self):
+        usuario = User.objects.create_user(
+            username=f'editor_normal_{User.objects.count()}', email=f'editor{User.objects.count()}@example.com',
+            password='Clave-Segura-123',
+        )
+        usuario.user_permissions.add(Permission.objects.get(codename='dashboard.layout.edit', content_type__app_label='permissions'))
+        client = APIClient()
+        client.force_authenticate(user=usuario)
+        return client
+
+    def test_usuario_normal_recibe_400_al_intentar_editar_un_componente_bloqueado(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['width'] = 6
+        version = dl.obtener_o_crear_layout('finanzas').version
+        client = self._cliente_normal_con_permiso()
+        resp = client.put(
+            '/api/dashboards/finanzas/layout',
+            data=json.dumps({'version': version, 'components': comps, 'changed_by': 'Tester'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COMPONENTE_BLOQUEADO')
+
+    def test_superusuario_puede_editar_un_componente_bloqueado(self):
+        _agregar_componente_bloqueado('finanzas')
+        comps = _payload_actual('finanzas')
+        comps[0]['width'] = 6
+        version = dl.obtener_o_crear_layout('finanzas').version
+        client = _cliente_autenticado()
+        resp = client.put(
+            '/api/dashboards/finanzas/layout',
+            data=json.dumps({'version': version, 'components': comps, 'changed_by': 'Tester'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['components'][0]['width'], 6)

@@ -1,5 +1,6 @@
 """Lectura y validación estructural del archivo Excel (secciones 3 y 14)."""
 
+import io
 import os
 import zipfile
 
@@ -37,8 +38,6 @@ def validar_extension_y_firma(nombre_archivo, contenido):
 
 
 def _rechazar_macros(contenido):
-    import io
-
     try:
         with zipfile.ZipFile(io.BytesIO(contenido)) as z:
             nombres = z.namelist()

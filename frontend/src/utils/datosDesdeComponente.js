@@ -12,7 +12,12 @@ export function construirOverride(componente) {
  * `PlantillaBasePage.jsx` (plantilla base personalizable, mismos datos ficticios). */
 export function datosDesdeComponente(componente) {
   if (componente.type === 'kpi') {
-    return { datos: { valor: componente.content?.valor, formato: componente.content?.formato, tendencia: componente.content?.tendencia } }
+    return {
+      datos: {
+        valor: componente.content?.valor, formato: componente.content?.formato,
+        tendencia: componente.content?.tendencia, meta: componente.content?.meta,
+      },
+    }
   }
   if (componente.chart_type === 'dispersion') {
     return { datos: { puntos: componente.content?.puntos } }

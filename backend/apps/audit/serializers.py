@@ -6,6 +6,11 @@ from .models import AuditEvent
 
 
 class AuditEventListSerializer(serializers.ModelSerializer):
+    # Se mantiene el nombre `actor_username` en la respuesta (el frontend ya lo consume) pero el
+    # valor sale de la clave foránea cuando la cuenta existe — ver
+    # `AuditEvent.actor_username_actual`.
+    actor_username = serializers.CharField(source='actor_username_actual', read_only=True)
+
     class Meta:
         model = AuditEvent
         fields = (

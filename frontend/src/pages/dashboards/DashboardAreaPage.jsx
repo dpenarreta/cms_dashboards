@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Alert, Button, OverlayTrigger, Spinner, Tooltip } from 'react-bootstrap'
+import { useEffect, useRef, useState } from 'react'
+import { Alert, Button, Spinner } from 'react-bootstrap'
 import { Link, useParams } from 'react-router-dom'
 import { DndContext, PointerSensor, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { useGenericDashboardBuilder } from '../../hooks/useGenericDashboardBuilder'
@@ -22,14 +22,39 @@ import ComponentPaletteSidebar from '../../components/dashboard-editor/Component
 import ConfirmModal from '../../components/dashboard-editor/ConfirmModal'
 import DashboardTabsBar from '../../components/dashboards/DashboardTabsBar'
 import InterpretacionDashboardModal from '../../components/dashboards/InterpretacionDashboardModal'
+import ConectarFuenteBDModal from '../../components/dashboards/ConectarFuenteBDModal'
+import * as carteraService from '../../services/carteraService'
 import * as dashboardLayoutService from '../../services/dashboardLayoutService'
 import * as historicoService from '../../services/historicoService'
 import { construirOverride, datosDesdeComponente } from '../../utils/datosDesdeComponente'
+import { generarPDFDesdeElemento } from '../../utils/pdfExport'
 
 // Tipos de la paleta sin datos (se crean de inmediato al soltar/elegir, sin pasar por
 // `AgregarComponentePersonalModal`) — mapea el vocabulario de `ComponentPaletteSidebar` al
 // `DashboardComponent.Tipo` real del backend (`title`/`text`).
 const TIPO_BACKEND_PRESENTACIONAL = { titulo: 'title', separador: 'text' }
+
+// `estadoFuenteBD.ultima_actualizacion`/`proxima_actualizacion` llegan como fecha ISO ('YYYY-MM-DD',
+// sin hora) — se arma el string a mano en vez de pasar por `Date`/`toLocaleDateString` para no
+// arriesgar un corrimiento de un día por interpretación UTC según la zona horaria del navegador.
+function formatearFechaISO(iso) {
+  if (!iso) return null
+  const [anio, mes, dia] = iso.split('-')
+  return `${dia}/${mes}/${anio}`
+}
+
+// Días corridos entre `iso` ('YYYY-MM-DD') y hoy, para el "1 D"/"2 D"... junto a "Última
+// actualización". Ambas fechas se arman como medianoche LOCAL (nunca UTC) antes de restar, mismo
+// motivo que `formatearFechaISO`: evita que la resta dé un día de más o de menos según la zona
+// horaria del navegador.
+function diasDesdeISO(iso) {
+  if (!iso) return null
+  const [anio, mes, dia] = iso.split('-').map(Number)
+  const fecha = new Date(anio, mes - 1, dia)
+  const hoy = new Date()
+  const hoyMedianoche = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
+  return Math.round((hoyMedianoche - fecha) / (1000 * 60 * 60 * 24))
+}
 
 /** Único destino de suelta de la paleta de componentes (`ComponentPaletteSidebar`) — vive en un
  * `DndContext` separado del de `EditableGrid.jsx` (que gobierna el reordenamiento interno del
@@ -65,6 +90,11 @@ function ZonaPersonalDropTarget() {
  * Cada posición sigue siendo un componente normal del layout (`useDashboardLayout`), así que
  * conserva el editor de grid (mover/redimensionar/ocultar/recolorear) ya existente.
  *
+ * "Conectar vista de base de datos" entra al MISMO flujo por otra puerta: `ConectarFuenteBDModal`
+ * pide (y guarda) qué vista/procedimiento de la conexión externa "por defecto" usar, y recién al
+ * confirmar ahí dispara `builder.conectarFuenteBD()` — de ahí en más es indistinguible de haber
+ * subido un Excel (mismas fases RENOMBRAR/VALORES_EN_BLANCO/MAPEO, ver `services/db_source.py`).
+ *
  * En modo edición, el panel lateral de componentes (`ComponentPaletteSidebar`) se abre solo al
  * entrar en modo edición y permite arrastrar (o hacer clic, como alternativa sin arrastre) un
  * tipo de componente hasta `ZonaPersonalDropTarget` — separador/título se crean de inmediato
@@ -80,9 +110,61 @@ export default function DashboardAreaPage() {
   const [tipoModalPersonal, setTipoModalPersonal] = useState(null)
   const [mostrarPaleta, setMostrarPaleta] = useState(false)
   const [mostrarInterpretacion, setMostrarInterpretacion] = useState(false)
+  const [mostrarConectarFuenteBD, setMostrarConectarFuenteBD] = useState(false)
   const [confirmandoAgregarTipo, setConfirmandoAgregarTipo] = useState(null)
   const builder = useGenericDashboardBuilder(dashboardId)
   const layout = useDashboardLayout(dashboardId)
+  // Estado de "Última actualización"/"Próxima actualización automática" bajo los botones del
+  // encabezado (`obtenerFuenteBD` ya trae ambas fechas calculadas, ver
+  // `services/dashboards.py::obtener_fuente_bd`) — se vuelve a pedir después de cualquier acción
+  // que pueda haber cambiado alguna de las dos (conectar, aplicar un mapeo, actualizar ahora, o
+  // simplemente guardar la configuración del modal aunque no haya llegado a conectar).
+  const [estadoFuenteBD, setEstadoFuenteBD] = useState(null)
+  const [actualizandoAhora, setActualizandoAhora] = useState(false)
+  const [errorActualizarAhora, setErrorActualizarAhora] = useState('')
+  const cargarEstadoFuenteBD = () => {
+    dashboardLayoutService.obtenerFuenteBD(dashboardId).then(setEstadoFuenteBD).catch(() => setEstadoFuenteBD(null))
+  }
+  useEffect(cargarEstadoFuenteBD, [dashboardId])
+
+  const actualizarAhora = async () => {
+    setActualizandoAhora(true)
+    setErrorActualizarAhora('')
+    try {
+      const resultado = await carteraService.actualizarFuenteBDAhora(dashboardId)
+      if (resultado.ok) {
+        await layout.recargar()
+      } else {
+        setErrorActualizarAhora(resultado.mensaje)
+      }
+    } catch (e) {
+      setErrorActualizarAhora(e.response?.data?.mensaje || 'No se pudo actualizar.')
+    } finally {
+      setActualizandoAhora(false)
+      cargarEstadoFuenteBD()
+    }
+  }
+  // "Imprimir como PDF" (botón del encabezado) — captura `dashboardRef` (el contenedor de todo el
+  // dashboard, `.cartera-app`) tal cual está renderizado en pantalla con `html2canvas` y arma el
+  // PDF con `jsPDF` (`utils/pdfExport.js`). Se descartó `window.print()`/`@media print`: la foto
+  // de impresión nativa del navegador se toma antes de que Recharts termine de re-medir sus
+  // gráficos, dejándolos rotos (sobre todo los circulares). Capturar el DOM ya renderizado evita
+  // ese problema de raíz, a cambio de que el PDF sea una imagen (sin texto seleccionable).
+  const dashboardRef = useRef(null)
+  const [generandoPDF, setGenerandoPDF] = useState(false)
+  const [errorPDF, setErrorPDF] = useState('')
+  const imprimirComoPDF = async () => {
+    if (!dashboardRef.current) return
+    setGenerandoPDF(true)
+    setErrorPDF('')
+    try {
+      await generarPDFDesdeElemento(dashboardRef.current, `${dashboardInfo?.name || dashboardId}.pdf`)
+    } catch {
+      setErrorPDF('No se pudo generar el PDF. Intentá de nuevo.')
+    } finally {
+      setGenerandoPDF(false)
+    }
+  }
   const permisos = usePermisos()
   const sensoresPaleta = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
   // `usePermisos()` es un stub que concede todo el editor visual siempre (ver `hooks/CLAUDE.md`)
@@ -174,7 +256,37 @@ export default function DashboardAreaPage() {
     if (resultado.ok) {
       await layout.recargar()
       setMostrarConstructor(false)
+      cargarEstadoFuenteBD()
     }
+  }
+
+  // Le pasa `ConectarFuenteBDModal` como `onConectar`: se llama recién después de guardar la
+  // configuración (tipo/nombre/parámetros) elegida en el modal, y le devuelve `{ok}` para que el
+  // modal decida qué mostrar — con `ok:false` el modal se queda abierto con su propio mensaje fijo
+  // hasta que el usuario confirma "Aceptar" (ver `ConectarFuenteBDModal.jsx`), así que acá solo
+  // hace falta revelar el asistente si salió bien, o limpiar el estado a medio armar de la carga
+  // fallida si no (`builder.limpiar`, ya sabe no hacer nada raro si nunca llegó a crearse una
+  // `CargaArchivo`) — nunca mostrar nada de error acá, eso es responsabilidad del modal.
+  const conectarFuenteBD = async () => {
+    const resultado = await builder.conectarFuenteBD()
+    if (resultado.ok) {
+      setMostrarConstructor(true)
+    } else {
+      await builder.limpiar()
+    }
+    cargarEstadoFuenteBD()
+    return resultado
+  }
+
+  // Le pasa `ConectarFuenteBDModal` como `onDatosBorrados`: borra TODA la información real del
+  // dashboard (cargas de Excel, histórico, conexión a BD, Zona Personal) y lo deja como recién
+  // creado (`services/dashboards.py::borrar_datos_dashboard`) — hay que refrescar tanto el layout
+  // (ahora con las posiciones fijas en datos de ejemplo) como el estado de fuente BD (ahora vacío)
+  // para que la pantalla deje de mostrar el archivo/conexión que ya no existe.
+  const borrarDatosDashboard = async (confirmationName) => {
+    await dashboardLayoutService.borrarDatosDashboard(dashboardId, confirmationName)
+    await layout.recargar()
+    cargarEstadoFuenteBD()
   }
 
   // Agregar un componente (desde la paleta, sea presentacional o vía el modal) persiste de
@@ -227,6 +339,13 @@ export default function DashboardAreaPage() {
         const override = construirOverride(componente)
         const { datos, datosMultiserie } = datosDesdeComponente(componente)
         const esTablaHistorica = componente.component_id === 'tabla-3'
+        // Cualquier otra Tabla (fija o de Zona Personal) puede elegir "Histórico" desde
+        // "Configurar componente" → "Datos" (ver `SlotFields.jsx::SelectorFuenteDatosTabla`) — a
+        // diferencia de Tabla 3, ahí el contenido YA viene calculado en `componente.content`
+        // (`plantilla.py::_contenido_tabla_historica`, mismo momento que cualquier otro
+        // recálculo), no hace falta el wrapper de refetch en vivo. Solo cambia la etiqueta
+        // "Histórica" del título.
+        const esHistorica = esTablaHistorica || Boolean(componente.mapeo?.usa_historico)
         const contenidoNormal = (
           <GenericChartRenderer
             tipoVisualizacion={componente.type === 'kpi' ? 'kpi' : (componente.chart_type || 'barras_horizontales')}
@@ -235,7 +354,7 @@ export default function DashboardAreaPage() {
             titulo={componente.content?.titulo}
             override={override}
             config={componente.config}
-            esHistorica={esTablaHistorica}
+            esHistorica={esHistorica}
             hallazgoIA={hallazgosIA[componente.component_id]}
           />
         )
@@ -259,31 +378,73 @@ export default function DashboardAreaPage() {
   ]))
 
   return (
-    <div className="cartera-app">
+    <div className="cartera-app" ref={dashboardRef}>
       <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
         <div>
           <h3 className="mb-1">{dashboardInfo?.name || dashboardId}</h3>
           {dashboardInfo?.area && <p className="chart-panel__subtitle mb-0">Área: {dashboardInfo.area}</p>}
         </div>
-        <div className="d-flex gap-2">
+        <div className="d-flex gap-2 d-print-none">
           {puedeInterpretar && (
             <Button variant="outline-secondary" size="sm" onClick={() => setMostrarInterpretacion(true)}>
               Interpretación completa
             </Button>
           )}
-          <OverlayTrigger placement="top" overlay={<Tooltip>Disponible en una fase futura.</Tooltip>}>
-            <span>
-              <Button variant="outline-secondary" size="sm" disabled>Conectar vista de base de datos</Button>
-            </span>
-          </OverlayTrigger>
+          <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConectarFuenteBD(true)}>
+            Conectar vista de base de datos
+          </Button>
           <Button as={Link} to={`/app/dashboards/${dashboardId}/historico`} variant="outline-secondary" size="sm">
             Ver histórico
           </Button>
           {!mostrarConstructor && (
             <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConstructor(true)}>Cargar otro archivo</Button>
           )}
+          <Button variant="outline-secondary" size="sm" onClick={imprimirComoPDF} disabled={generandoPDF}>
+            {generandoPDF ? <Spinner size="sm" animation="border" className="me-1" /> : null}
+            Imprimir como PDF
+          </Button>
         </div>
       </div>
+      {errorPDF && (
+        <Alert variant="danger" dismissible onClose={() => setErrorPDF('')} className="py-2 d-print-none" style={{ fontSize: '0.85rem' }}>
+          {errorPDF}
+        </Alert>
+      )}
+
+      {/* Estado de actualización de datos — bajo los botones del encabezado, siempre con sus 3
+          valores visibles: última actualización, días transcurridos desde esa fecha, y la próxima
+          actualización. Los primeros dos siempre se muestran (con "Nunca" si todavía no hay
+          ninguna carga real). El tercero es una fecha SOLO con una frecuencia automática
+          configurada (`services/fuente_bd_scheduler.py::proxima_actualizacion`); en cualquier otro
+          caso (frecuencia en Manual, o directamente sin fuente configurada) se muestra en su lugar
+          el ícono "Actualizar ahora" — con fuente configurada corre la actualización sin asistente
+          en el momento (`ActualizarFuenteBDAhoraView`); sin fuente, abre el modal de "Conectar
+          vista de base de datos" para configurarla, ya que no hay nada que reconectar todavía. */}
+      {estadoFuenteBD && (
+        <div className="d-flex align-items-center flex-wrap gap-2 mb-3 chart-panel__subtitle d-print-none">
+          <span>
+            Última actualización: {estadoFuenteBD.ultima_actualizacion ? formatearFechaISO(estadoFuenteBD.ultima_actualizacion) : 'Nunca'}
+            {estadoFuenteBD.ultima_actualizacion ? ` (${diasDesdeISO(estadoFuenteBD.ultima_actualizacion)} D)` : ''}
+          </span>
+          {estadoFuenteBD.frecuencia_actualizacion && estadoFuenteBD.proxima_actualizacion ? (
+            <span>· Próxima actualización automática: {formatearFechaISO(estadoFuenteBD.proxima_actualizacion)}</span>
+          ) : (
+            <Button
+              variant="link" size="sm" className="p-0 d-print-none"
+              onClick={estadoFuenteBD.nombre ? actualizarAhora : () => setMostrarConectarFuenteBD(true)}
+              disabled={actualizandoAhora}
+            >
+              {actualizandoAhora ? <Spinner size="sm" animation="border" className="me-1" /> : null}
+              🔄 Actualizar ahora
+            </Button>
+          )}
+        </div>
+      )}
+      {errorActualizarAhora && (
+        <Alert variant="warning" dismissible onClose={() => setErrorActualizarAhora('')} className="py-2 d-print-none" style={{ fontSize: '0.85rem' }}>
+          {errorActualizarAhora}
+        </Alert>
+      )}
 
       {/* Un `layout.error` durante la carga inicial (p. ej. 403 del control de acceso por
           dashboard: el usuario no es dueño/superusuario ni tiene un rol asignado) corta acá — ni
@@ -291,7 +452,9 @@ export default function DashboardAreaPage() {
       {cargandoInicial && layout.error && <Alert variant="danger">{layout.error}</Alert>}
 
       {!(cargandoInicial && layout.error) && (
-        <DashboardTabsBar dashboardId={dashboardId} modoEdicion={layout.modoEdicion} />
+        <div className="d-print-none">
+          <DashboardTabsBar dashboardId={dashboardId} modoEdicion={layout.modoEdicion} />
+        </div>
       )}
 
       {cargandoInicial && !layout.error && <div className="text-center mb-3" role="status"><Spinner animation="border" /></div>}
@@ -361,7 +524,7 @@ export default function DashboardAreaPage() {
 
       {!cargandoInicial && !mostrandoConstructor && (
         <>
-          <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+          <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 d-print-none">
             <div className="chart-panel__subtitle mb-0">Diseño del dashboard</div>
             <EditModeToolbar
               modoEdicion={layout.modoEdicion}
@@ -399,6 +562,7 @@ export default function DashboardAreaPage() {
               onReordenar={layout.reordenarPorIds}
               permiteEstilo={permisos.tiene(PERMISOS.DASHBOARD_COMPONENT_STYLE)}
               permiteEliminar={permisos.tiene(PERMISOS.DASHBOARD_COMPONENT_DELETE)}
+              esSuperusuario={user?.is_superuser}
             />
 
             {layout.modoEdicion && mostrarPaletaEfectivo && <ZonaPersonalDropTarget />}
@@ -421,6 +585,7 @@ export default function DashboardAreaPage() {
               onCambiarAlto={(id, h) => layout.actualizarComponente(id, { height: h })}
               onActualizarConfig={(id, config) => layout.actualizarComponente(id, { config })}
               onActualizarComponente={layout.actualizarComponente}
+              esSuperusuario={user?.is_superuser}
             />
           )}
 
@@ -461,6 +626,15 @@ export default function DashboardAreaPage() {
         show={mostrarInterpretacion}
         onHide={() => setMostrarInterpretacion(false)}
         dashboardId={dashboardId}
+      />
+
+      <ConectarFuenteBDModal
+        show={mostrarConectarFuenteBD}
+        onHide={() => setMostrarConectarFuenteBD(false)}
+        dashboardId={dashboardId}
+        dashboardNombre={dashboardInfo?.name || dashboardId}
+        onConectar={conectarFuenteBD}
+        onDatosBorrados={borrarDatosDashboard}
       />
     </div>
   )

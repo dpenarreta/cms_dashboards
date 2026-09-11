@@ -15,17 +15,30 @@ Ambas parten de los mismos datos ya calculados que sirve `serializar_layout` (`c
 componente visible) — no reprocesan ningún archivo ni vuelven a consultar `RegistroCartera`. Ambas
 también incluyen, si existe, `Dashboard.contexto` (`_bloque_contexto`) — texto libre que un
 administrador carga al crear/editar el dashboard únicamente para orientar a la IA, nunca mostrado
-dentro del dashboard.
+dentro del dashboard — y, por componente, `config.instruccion_ia`/`config.contexto_ia`
+(`_bloque_instruccion_ia`), cargados al crear un componente en Zona Personal
+(`AgregarComponentePersonalModal.jsx`) para pedirle a la IA que lo interprete en términos de una
+columna que no forma parte del gráfico en sí.
 """
 
+import hashlib
 import json
+import logging
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 
 from ..exceptions import CarteraError
 from ..models import Dashboard
 from . import dashboard_layout as dl
+
+logger = logging.getLogger(__name__)
+
+# Vigencia de la caché de hallazgos. La clave ya es un hash del prompt, así que un cambio de datos
+# o de diseño invalida la entrada por sí solo; este TTL solo acota cuánto vive una entrada que ya
+# nadie va a volver a pedir. 12 horas cubre una jornada de trabajo.
+_TTL_CACHE_HALLAZGOS_SEGUNDOS = 12 * 60 * 60
 
 _GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 _TIMEOUT_SEGUNDOS = 45
@@ -88,21 +101,48 @@ def _describir_tabla(content):
     return texto
 
 
+def _bloque_instruccion_ia(componente):
+    """Instrucción libre + columna de contexto adicional que el usuario cargó al crear este
+    componente en Zona Personal (`AgregarComponentePersonalModal.jsx` → `config.instruccion_ia`/
+    `config.contexto_ia`, ver `dashboard_layout.agregar_componente_generado`) — pensado para
+    pedirle a la IA que interprete el componente en términos de una columna que no forma parte del
+    gráfico en sí (p. ej. "explicá los totales por la Causal de gestión"). `contexto_ia` ya viene
+    calculado desde que se creó el componente (mismo criterio que el resto del `content`: una foto
+    fija, no se recalcula contra el archivo en cada carga de página). Solo afecta lo que lee la IA
+    (`_construir_prompt`/`_construir_prompt_hallazgos`) — nunca cambia qué datos se calculan ni
+    cómo se dibuja el componente. Cadena vacía si no hay nada cargado."""
+    config = componente.get('config') or {}
+    instruccion = (config.get('instruccion_ia') or '').strip()
+    contexto = config.get('contexto_ia') or {}
+    if not instruccion and not contexto.get('categorias'):
+        return ''
+    partes = []
+    if instruccion:
+        partes.append(f'Instrucción del usuario para este componente: "{instruccion}".')
+    if contexto.get('categorias'):
+        pares = list(zip(contexto['categorias'], contexto.get('valores') or []))[:_MAXIMO_ITEMS_POR_COMPONENTE]
+        detalle = ', '.join(f'{c}: {_formatear_numero(v)}' for c, v in pares)
+        partes.append(f'Contexto adicional (desglose por "{contexto.get("columna")}"): {detalle}.')
+    return ' ' + ' '.join(partes)
+
+
 def _describir_componente(componente):
     content = componente.get('content') or {}
     if componente['type'] == 'kpi':
-        return _describir_kpi(content)
+        return _describir_kpi(content) + _bloque_instruccion_ia(componente)
     if componente['type'] != 'chart':
         return None
     if 'puntos' in content:
-        return _describir_dispersion(content)
-    if 'columnas' in content and 'filas' in content:
-        return _describir_tabla(content)
-    if 'series' in content:
-        return _describir_multiserie(content)
-    if 'categorias' in content:
-        return _describir_categorico(content)
-    return None
+        base = _describir_dispersion(content)
+    elif 'columnas' in content and 'filas' in content:
+        base = _describir_tabla(content)
+    elif 'series' in content:
+        base = _describir_multiserie(content)
+    elif 'categorias' in content:
+        base = _describir_categorico(content)
+    else:
+        return None
+    return base + _bloque_instruccion_ia(componente)
 
 
 def _bloque_contexto(dashboard):
@@ -130,7 +170,9 @@ def _construir_prompt(dashboard, componentes_descritos):
         'señale relaciones entre componentes si son evidentes a partir de los datos provistos. '
         'Si hay contexto adicional provisto por un administrador, usalo para interpretar mejor los '
         'datos (a qué corresponden, qué matices tener en cuenta), pero no lo repitas textualmente '
-        'ni inventes datos que no estén en la información de arriba.'
+        'ni inventes datos que no estén en la información de arriba. Si algún componente trae una '
+        '"Instrucción del usuario para este componente", seguila al pie de la letra para ese '
+        'componente en particular, usando también el "Contexto adicional" que la acompañe si lo hay.'
     )
 
 
@@ -144,7 +186,9 @@ def _construir_prompt_hallazgos(dashboard, items):
         'y nombres importantes resaltados entre **dobles asteriscos**. Analizá cada componente de '
         'forma independiente, sin compararlo con los demás. Si hay contexto adicional provisto por '
         'un administrador, usalo para interpretar mejor los datos, pero no inventes datos que no '
-        'estén en la información provista.\n'
+        'estén en la información provista. Si un componente trae una "Instrucción del usuario para '
+        'este componente", seguila al pie de la letra para ESE componente, usando también el '
+        '"Contexto adicional" que la acompañe si lo hay.\n'
         f'{_bloque_contexto(dashboard)}\n'
         f'Componentes:\n{cuerpo}\n\n'
         'Devolvé ÚNICAMENTE un objeto JSON plano (sin texto adicional, sin bloque de código) con '
@@ -178,13 +222,27 @@ def _dashboard_y_componentes_visibles(dashboard_id, mensaje_sin_datos):
 def _llamar_gemini(payload):
     url = _GEMINI_URL.format(model=settings.GEMINI_MODEL)
     try:
-        respuesta = requests.post(url, params={'key': settings.GEMINI_API_KEY}, json=payload, timeout=_TIMEOUT_SEGUNDOS)
+        # La credencial va en el encabezado `x-goog-api-key`, NUNCA como parámetro de URL: en la
+        # cadena de consulta la capturaba todo lo que registra URLs (logs de proxy, trazas de
+        # excepción de `requests`, monitoreo). Un encabezado no aparece en un registro de acceso.
+        respuesta = requests.post(
+            url,
+            headers={'x-goog-api-key': settings.GEMINI_API_KEY},
+            json=payload,
+            timeout=_TIMEOUT_SEGUNDOS,
+        )
     except requests.RequestException:
+        # El detalle real del fallo de red queda en el log del servidor: la respuesta al frontend
+        # es deliberadamente genérica, pero sin esto no había forma de diagnosticar nada.
+        logger.exception('Falló la llamada al servicio de IA (modelo=%s)', settings.GEMINI_MODEL)
         raise CarteraError(
             'No se pudo contactar al servicio de interpretación con IA. Intente nuevamente.', codigo='IA_ERROR',
         )
 
     if respuesta.status_code != 200:
+        logger.error(
+            'El servicio de IA respondió %s: %s', respuesta.status_code, respuesta.text[:500],
+        )
         raise CarteraError(
             'El servicio de interpretación con IA respondió con un error. Intente nuevamente.',
             codigo='IA_ERROR',
@@ -195,6 +253,7 @@ def _llamar_gemini(payload):
     try:
         return cuerpo['candidates'][0]['content']['parts'][0]['text']
     except (KeyError, IndexError):
+        logger.error('Respuesta inesperada del servicio de IA: %s', str(cuerpo)[:500])
         raise CarteraError(
             'El servicio de interpretación con IA no devolvió una respuesta utilizable.', codigo='IA_ERROR',
         )
@@ -210,10 +269,29 @@ def generar_interpretacion(dashboard_id):
 
 
 def generar_hallazgos_ia(dashboard_id):
+    """Hallazgo clave por componente, con caché por versión de layout.
+
+    Este endpoint se dispara AUTOMÁTICAMENTE al abrir o guardar un dashboard, con una llamada
+    externa síncrona de hasta 45 segundos. Sin caché, cada recarga de pantalla era una llamada
+    facturable y un hilo del servidor ocupado casi un minuto — recargar en bucle alcanzaba para
+    gastar la cuota y agotar los hilos disponibles.
+
+    La clave es un hash del PROMPT, no la versión del layout: el prompt se arma con los datos ya
+    calculados de cada componente, así que cambia en cuanto cambian los datos o el diseño, y no
+    depende de que toda recarga de archivo bumpee `DashboardLayout.version`. Mismo prompt, misma
+    respuesta — servirla de caché es exacto, no una aproximación.
+    """
     dashboard, items = _dashboard_y_componentes_visibles(
         dashboard_id, 'Este dashboard no tiene componentes con datos para generar hallazgos.',
     )
     prompt = _construir_prompt_hallazgos(dashboard, items)
+
+    huella = hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:32]
+    clave_cache = f'hallazgos_ia:{dashboard_id}:{huella}'
+    en_cache = cache.get(clave_cache)
+    if en_cache is not None:
+        return en_cache
+
     texto_json = _llamar_gemini({
         'contents': [{'parts': [{'text': prompt}]}],
         'generationConfig': {'responseMimeType': 'application/json'},
@@ -231,7 +309,9 @@ def generar_hallazgos_ia(dashboard_id):
         )
 
     ids_validos = {component_id for component_id, _ in items}
-    return {
+    resultado = {
         component_id: texto for component_id, texto in hallazgos.items()
         if component_id in ids_validos and isinstance(texto, str) and texto.strip()
     }
+    cache.set(clave_cache, resultado, _TTL_CACHE_HALLAZGOS_SEGUNDOS)
+    return resultado

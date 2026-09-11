@@ -53,7 +53,10 @@ def log_event(
             user_agent=(user_agent or '')[:255],
             previous_values=mask_sensitive_fields(previous_values or {}),
             new_values=mask_sensitive_fields(new_values or {}),
-            metadata=metadata or {},
+            # `metadata` pasa por el mismo enmascarado que los otros dos diccionarios: era el
+            # único campo libre que no lo hacía, así que cualquier evento nuevo que trajera un
+            # dato sensible acá lo habría escrito en claro sin que nada avisara.
+            metadata=mask_sensitive_fields(metadata or {}),
             message=message,
         )
     except Exception:

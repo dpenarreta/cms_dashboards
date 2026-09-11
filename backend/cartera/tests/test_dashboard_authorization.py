@@ -2,6 +2,7 @@
 del endpoint de dashboards autorizados (docs/integracion/decisions.md #6, integration_plan.md).
 """
 
+import os
 import uuid
 
 from django.contrib.auth import get_user_model
@@ -14,6 +15,7 @@ from cartera.services.dashboards import crear_dashboard
 
 User = get_user_model()
 CARGA_ID_INEXISTENTE = str(uuid.uuid4())
+FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
 
 
 class ProteccionEndpointsCarteraTests(TestCase):
@@ -67,6 +69,53 @@ class ProteccionEndpointsCarteraTests(TestCase):
         client = APIClient()
         resp = client.get(f'/api/cartera/exportar/{CARGA_ID_INEXISTENTE}')
         self.assertEqual(resp.status_code, 401)
+
+
+class ValidarArchivoPermisoTests(TestCase):
+    """"Cargar otro archivo" tiene su propio permiso (`dashboard.archivo.cargar`), separado de
+    `dashboard.view` (antes alcanzaba con poder ver el dashboard) y de
+    `dashboard.fuente_bd.configurar` (conectar a la base de datos es una acción distinta)."""
+
+    def _post_archivo(self, client, dashboard_id='cartera'):
+        with open(FIXTURE_PATH, 'rb') as f:
+            return client.post('/api/cartera/validar-archivo', {'archivo': f, 'dashboard_id': dashboard_id}, format='multipart')
+
+    def test_con_solo_dashboard_view_devuelve_403(self):
+        client = APIClient()
+        usuario = User.objects.create_user(username='solo_ver_archivo', email='sva@example.com', password='Clave-Segura-123')
+        usuario.user_permissions.add(Permission.objects.get(codename='dashboard.view', content_type__app_label='permissions'))
+        client.force_authenticate(user=usuario)
+        resp = self._post_archivo(client)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_con_solo_fuente_bd_configurar_devuelve_403(self):
+        client = APIClient()
+        usuario = User.objects.create_user(username='solo_fuente_bd', email='sfb@example.com', password='Clave-Segura-123')
+        usuario.user_permissions.add(Permission.objects.get(codename='dashboard.fuente_bd.configurar', content_type__app_label='permissions'))
+        client.force_authenticate(user=usuario)
+        resp = self._post_archivo(client)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_con_dashboard_archivo_cargar_pasa_la_verificacion(self):
+        client = APIClient()
+        usuario = User.objects.create_user(username='con_cargar_archivo', email='cca@example.com', password='Clave-Segura-123')
+        usuario.user_permissions.add(Permission.objects.get(codename='dashboard.archivo.cargar', content_type__app_label='permissions'))
+        client.force_authenticate(user=usuario)
+        resp = self._post_archivo(client)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_respeta_el_control_de_acceso_por_dashboard(self):
+        """Un editor asignado por ACL a un dashboard puntual puede cargar archivos ahí aunque no
+        tenga `dashboard.archivo.cargar` global — mismo criterio que `dashboard.fuente_bd.configurar`."""
+        dashboard = crear_dashboard(nombre='Editores archivo')
+        editor = Group.objects.create(name='Editores carga archivo')
+        dashboard.roles_editores.add(editor)
+        usuario = User.objects.create_user(username='editor_acl_archivo', email='eaa@example.com', password='Clave-Segura-123')
+        usuario.groups.add(editor)
+        client = APIClient()
+        client.force_authenticate(user=usuario)
+        resp = self._post_archivo(client, dashboard_id=dashboard.dashboard_id)
+        self.assertEqual(resp.status_code, 200)
 
 
 class DashboardsAuthorizedViewTests(TestCase):

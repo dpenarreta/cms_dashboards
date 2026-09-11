@@ -28,18 +28,18 @@ function renderConNegritas(texto) {
  * llamada a IA resuelve (o si falla): nunca hay un estado de carga visible acá, solo un swap
  * silencioso cuando `textoIA` llega.
  *
- * El encabezado es un botón que expande/contrae el párrafo (tipo "collapse", empieza expandido) —
+ * El encabezado es un botón que expande/contrae el párrafo (tipo "collapse", empieza cerrado) —
  * cada posición del dashboard tiene su propio estado, independiente del resto. Si no hay datos
  * suficientes para decir algo (posición vacía) ni `textoIA`, no se muestra nada.
  */
 export default function HallazgosClaveCard({ variante, datos, datosMultiserie, textoIA }) {
   const idContenido = useId()
-  const [expandido, setExpandido] = useState(true)
+  const [expandido, setExpandido] = useState(false)
   const texto = textoIA || generarHallazgos(variante, { datos, datosMultiserie })
   if (!texto) return null
 
   return (
-    <div className="hallazgos-clave">
+    <div className="hallazgos-clave d-print-none">
       <button
         type="button"
         className="hallazgos-clave__titulo"

@@ -80,6 +80,45 @@ export function useGenericDashboardBuilder(dashboardId) {
     await subirYValidar(archivoLocalRef.current, hoja)
   }, [subirYValidar])
 
+  /** "Conectar vista de base de datos" — mismo destino (`FASE.RENOMBRAR`) y misma forma de estado
+   * que `subirYValidar`, pero la carga viene de `carteraService.conectarFuenteBD` (la vista/
+   * procedimiento ya configurado para este dashboard, ver `DashboardAreaPage.jsx`) en vez de un
+   * archivo elegido a mano — el backend arma una `CargaArchivo` equivalente con una única "hoja"
+   * fija ('Datos'), así el resto del asistente no distingue el origen de los datos.
+   *
+   * Devuelve `{ok}` (mismo patrón que `confirmarMapeo`) en vez de dejar que el llamador lea
+   * `error` después del `await`: leerlo directo sería un closure obsoleto (el `builder` capturado
+   * en `DashboardAreaPage.jsx` es el de ESE render, no ve el `setError` de acá). El mensaje
+   * técnico del backend queda en `error` igual (por si algo interno lo necesita), pero
+   * `DashboardAreaPage.jsx` no lo muestra — ante una falla de conexión no se revela el asistente,
+   * se vuelve a la vista normal del dashboard con un mensaje fijo, sin exponer detalles internos. */
+  const conectarFuenteBD = useCallback(async () => {
+    setCargando(true)
+    setError(null)
+    archivoLocalRef.current = null
+    try {
+      const data = await carteraService.conectarFuenteBD(dashboardId)
+      setArchivoInfo({
+        cargaId: data.carga_id,
+        nombreArchivo: data.nombre_archivo,
+        tamanoBytes: data.tamano_bytes,
+        totalFilas: data.total_filas_detectadas,
+        hojasDisponibles: data.hojas_disponibles,
+        hojaSeleccionada: data.hoja_seleccionada,
+      })
+      const detectadas = data.columnas_detectadas || []
+      setColumnasOriginales(detectadas)
+      setAliases(Object.fromEntries(detectadas.map((nombre) => [nombre, nombre])))
+      setFase(FASE.RENOMBRAR)
+      return { ok: true }
+    } catch (e) {
+      setError(e.response?.data?.mensaje || 'No se pudo conectar con la base de datos.')
+      return { ok: false }
+    } finally {
+      setCargando(false)
+    }
+  }, [dashboardId])
+
   /** Ajusta el nuevo nombre propuesto para una columna del archivo — no llama a ningún servicio
    * todavía, eso ocurre recién al confirmar el renombrado ("Continuar"). */
   const actualizarAlias = useCallback((nombreOriginal, alias) => {
@@ -282,6 +321,7 @@ export function useGenericDashboardBuilder(dashboardId) {
     error,
     subirYValidar,
     cambiarHoja,
+    conectarFuenteBD,
     actualizarAlias,
     cancelarRenombrado,
     confirmarRenombrado,

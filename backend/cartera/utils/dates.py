@@ -53,18 +53,34 @@ def parse_fecha(value):
             return None
 
 
-def calcular_dias_vencidos(fecha_vencimiento, fecha_corte):
-    if pd.isna(fecha_vencimiento):
+def a_fecha(valor):
+    """Normaliza a `date` un valor de fecha que puede venir como `date`, `datetime` o
+    `pandas.Timestamp`; devuelve `None` para vacíos (`None`/`NaT`/`NaN`).
+
+    Existe porque el mismo dato llega con tipos distintos según el origen: el ORM entrega `date`,
+    pero `pd.read_excel` y `pd.to_datetime` convierten las columnas de fecha a `datetime64`, cuyos
+    valores son `Timestamp`. Mezclar los dos tipos en una comparación falla —`date <= Timestamp`
+    levanta `TypeError`— así que conviene normalizar una vez, en el borde, en vez de defenderse en
+    cada operación. `Timestamp` es subclase de `datetime`, con lo que el `isinstance` cubre ambos.
+    """
+    if valor is None or pd.isna(valor):
         return None
-    if isinstance(fecha_vencimiento, dt.datetime):
-        fecha_vencimiento = fecha_vencimiento.date()
+    if isinstance(valor, dt.datetime):
+        return valor.date()
+    return valor
+
+
+def calcular_dias_vencidos(fecha_vencimiento, fecha_corte):
+    fecha_vencimiento = a_fecha(fecha_vencimiento)
+    if fecha_vencimiento is None:
+        return None
     return (fecha_corte - fecha_vencimiento).days
 
 
 def calcular_rango_mora(fecha_vencimiento, fecha_corte):
-    if pd.isna(fecha_vencimiento):
-        return 'SIN FECHA'
     dias = calcular_dias_vencidos(fecha_vencimiento, fecha_corte)
+    if dias is None:
+        return 'SIN FECHA'
     if dias < 0:
         return 'POR VENCER'
     if dias <= 30:

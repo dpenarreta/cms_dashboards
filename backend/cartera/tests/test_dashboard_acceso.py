@@ -4,11 +4,17 @@ ningún rol asignado en ninguno de los 2 grupos no tiene ACL activa: se sigue au
 permiso global de siempre (`cartera/permisos.py::tiene_acceso_dashboard`) — verificado acá mismo
 como caso de regresión."""
 
+import json
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group, Permission
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
+from apps.audit.models import AuditEvent
+from cartera.models import Dashboard
 from cartera.services.dashboards import crear_dashboard
 
 User = get_user_model()
@@ -238,3 +244,114 @@ class DashboardsAutorizadosConAclTests(TestCase):
         resp = self.client.get('/api/dashboards/authorized')
         item = next(d for d in resp.json() if d['dashboard_id'] == raiz_con_dueno.dashboard_id)
         self.assertFalse(item['puede_administrar_acceso'])
+
+
+class CorreccionesDeSeguridadTests(TestCase):
+    """Hallazgos SEC-08, SEC-09 y SEC-13 de la revisión de seguridad."""
+
+    def setUp(self):
+        self.dashboard = Dashboard.objects.create(dashboard_id='finanzas', name='Finanzas', area='Finanzas')
+        self.rol_ajeno = Group.objects.create(name='SOLO_OTROS')
+        self.usuario = User.objects.create_user(
+            username='pepe', email='pepe@example.com', password='Clave-Segura-123',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.usuario)
+
+    def _otorgar(self, *codenames):
+        for codename in codenames:
+            self.usuario.user_permissions.add(
+                Permission.objects.get(codename=codename, content_type__app_label='permissions'),
+            )
+
+    # --- SEC-08 -------------------------------------------------------------------------------
+    def test_eliminar_respeta_la_acl_del_dashboard(self):
+        """Antes `delete` consultaba solo el permiso global, así que la ACL no protegía justo la
+        acción más destructiva."""
+        self._otorgar('dashboard.eliminar', 'dashboard.view')
+        # ACL configurada que NO incluye a este usuario.
+        self.dashboard.roles_editores.add(self.rol_ajeno)
+
+        resp = self.client.delete(
+            '/api/dashboards/finanzas/', data=json.dumps({'confirmation_name': 'Finanzas'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(Dashboard.objects.filter(dashboard_id='finanzas').exists())
+
+    def test_editar_respeta_la_acl_del_dashboard(self):
+        self._otorgar('dashboard.editar', 'dashboard.view')
+        self.dashboard.roles_editores.add(self.rol_ajeno)
+
+        resp = self.client.patch(
+            '/api/dashboards/finanzas/', data=json.dumps({'name': 'Secuestrado'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.dashboard.refresh_from_db()
+        self.assertEqual(self.dashboard.name, 'Finanzas')
+
+    def test_un_editor_de_la_acl_si_puede_eliminar(self):
+        """La corrección no rompe el camino legítimo."""
+        self._otorgar('dashboard.eliminar', 'dashboard.view')
+        rol_propio = Group.objects.create(name='EDITORES_FINANZAS')
+        self.dashboard.roles_editores.add(rol_propio)
+        self.usuario.groups.add(rol_propio)
+
+        resp = self.client.delete(
+            '/api/dashboards/finanzas/', data=json.dumps({'confirmation_name': 'Finanzas'}),
+            content_type='application/json',
+        )
+        self.assertEqual(resp.status_code, 204)
+
+    # --- SEC-13 -------------------------------------------------------------------------------
+    def test_un_acceso_denegado_a_un_dashboard_queda_auditado(self):
+        """Antes los rechazos de `cartera` no escribían ningún `AuditEvent`, así que un sondeo de
+        dashboards ajenos no aparecía en ninguna pantalla."""
+        self.dashboard.roles_lectores.add(self.rol_ajeno)
+
+        resp = self.client.get('/api/dashboards/finanzas/layout')
+        self.assertEqual(resp.status_code, 403)
+
+        evento = AuditEvent.objects.filter(
+            domain=AuditEvent.Domain.SECURITY, action='ACCESS_DENIED', dashboard_id='finanzas',
+        ).first()
+        self.assertIsNotNone(evento)
+        self.assertEqual(evento.result, AuditEvent.Result.DENIED)
+        self.assertEqual(evento.actor_id, self.usuario.id)
+        self.assertEqual(evento.metadata['required_permission'], 'dashboard.view')
+
+
+class ConsultasDelListadoTests(TestCase):
+    """El listado de dashboards autorizados no debe escalar en consultas con la cantidad de
+    dashboards.
+
+    Antes eran ~5 por dashboard: `tiene_acceso_dashboard` y `puede_administrar_acceso` volvían a
+    hacer `Dashboard.objects.get(...)` cada una sobre un objeto que el bucle ya tenía cargado, más
+    los `exists()` de la ACL y una subconsulta de pertenencia a grupos.
+    """
+
+    def setUp(self):
+        self.usuario = User.objects.create_superuser(
+            username='admin', email='admin@example.com', password='Clave-Segura-123',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.usuario)
+
+    def _consultas_para(self, cantidad):
+        Dashboard.objects.all().delete()
+        for i in range(cantidad):
+            Dashboard.objects.create(dashboard_id=f'd{i}', name=f'D{i}', area='A')
+        with CaptureQueriesContext(connection) as capturadas:
+            resp = self.client.get('/api/dashboards/authorized')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), cantidad)
+        return len(capturadas)
+
+    def test_el_numero_de_consultas_no_crece_con_la_cantidad_de_dashboards(self):
+        con_2 = self._consultas_para(2)
+        con_10 = self._consultas_para(10)
+        self.assertEqual(
+            con_2, con_10,
+            f'El listado hizo {con_2} consultas con 2 dashboards y {con_10} con 10 — hay un N+1.',
+        )

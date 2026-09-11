@@ -66,6 +66,11 @@ function hallazgosKpi(datos) {
     const contexto = datos.tendencia.texto ? ` ${datos.tendencia.texto}` : ''
     texto += ` Representa ${direccion} del **${formatPercent(Math.abs(datos.tendencia.valor))}**${contexto}.`
   }
+  if (datos.meta) {
+    texto += datos.meta.cumple
+      ? ' **Cumple** la meta configurada.'
+      : ` **No cumple** la meta configurada (${datos.meta.motivos.join('; ')}).`
+  }
   return texto
 }
 

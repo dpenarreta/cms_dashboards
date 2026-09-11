@@ -4,6 +4,7 @@ import Pagination from '../common/Pagination'
 import * as carteraService from '../../services/carteraService'
 import { useDetalleCartera } from '../../hooks/useDetalleCartera'
 import { formatCurrency, formatDate } from '../../utils/format'
+import { PAGE_SIZES_PERMITIDOS } from '../../config/pageSizes'
 
 const COLUMNAS = [
   { campo: 'cliente', etiqueta: 'Cliente' },
@@ -28,7 +29,7 @@ const COLUMNAS = [
  */
 export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenValidacion, titulo = 'Detalle de documentos', override }) {
   titulo = override?.titulo || titulo
-  const allowedPageSizes = override?.config?.allowedPageSizes || [5, 10, 25, 50, 100]
+  const allowedPageSizes = override?.config?.allowedPageSizes || PAGE_SIZES_PERMITIDOS
   const {
     detalle, pagina, pageSize, orden, busqueda, cargando, error,
     irAPagina, setOrden, setBusqueda, actualizar, cambiarPageSize,

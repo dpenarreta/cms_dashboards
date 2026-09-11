@@ -35,6 +35,37 @@ function renderPanel(overrides = {}) {
   return { props, ...render(<ComponentPropertiesPanel {...props} />) }
 }
 
+describe('ComponentPropertiesPanel — componente bloqueado (config.bloqueado)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+  })
+
+  function componenteBloqueado(extra = {}) {
+    return componenteDePrueba({ config: { bloqueado: true }, ...extra })
+  }
+
+  it('sin superusuario, deshabilita los controles de tamaño y muestra el aviso', () => {
+    renderPanel({ componente: componenteBloqueado() })
+    expect(screen.getByLabelText('Ancho')).toBeDisabled()
+    expect(screen.getByLabelText('Alto')).toBeDisabled()
+    expect(screen.getByText('Este componente está bloqueado: su tamaño no se puede cambiar.')).toBeInTheDocument()
+  })
+
+  it('con superusuario, los controles de tamaño quedan habilitados', () => {
+    renderPanel({ componente: componenteBloqueado(), esSuperusuario: true })
+    expect(screen.getByLabelText('Ancho')).not.toBeDisabled()
+    expect(screen.getByLabelText('Alto')).not.toBeDisabled()
+    expect(screen.queryByText('Este componente está bloqueado: su tamaño no se puede cambiar.')).not.toBeInTheDocument()
+  })
+
+  it('un componente sin bloquear no muestra el aviso ni deshabilita nada', () => {
+    renderPanel()
+    expect(screen.getByLabelText('Ancho')).not.toBeDisabled()
+    expect(screen.queryByText('Este componente está bloqueado: su tamaño no se puede cambiar.')).not.toBeInTheDocument()
+  })
+})
+
 describe('ComponentPropertiesPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -406,5 +437,90 @@ describe('ComponentPropertiesPanel', () => {
     await userEvent.selectOptions(screen.getByLabelText('Posición de la leyenda'), 'derecha')
 
     expect(props.onActualizarConfig).toHaveBeenCalledWith('saldo-por-causal', expect.objectContaining({ leyenda_posicion: 'derecha' }))
+  })
+
+  describe('edición de valores de celda (tablas de Zona Personal)', () => {
+    function componenteTabla(extra = {}) {
+      return componenteDePrueba({
+        component_id: 'tabla-top-clientes', type: 'chart', chart_type: 'tabla',
+        content: {
+          titulo: 'Top clientes', columnas: ['Cliente', 'Saldo'],
+          filas: [['A', 100], ['B', 200]], total: ['Total', 300],
+        },
+        ...extra,
+      })
+    }
+
+    it('muestra "Valores de la tabla" para una gráfica de tipo tabla con contenido multi-columna', () => {
+      renderPanel({ componente: componenteTabla() })
+      expect(screen.getByText('Valores de la tabla')).toBeInTheDocument()
+    })
+
+    it('no muestra "Valores de la tabla" para las posiciones fijas de la plantilla (type: table)', () => {
+      renderPanel({
+        componente: componenteDePrueba({
+          component_id: 'tabla-detalle', type: 'table',
+          config: { defaultPageSize: 10, allowedPageSizes: [5, 10, 25, 50, 100] },
+        }),
+      })
+      expect(screen.queryByText('Valores de la tabla')).not.toBeInTheDocument()
+    })
+
+    it('no muestra "Valores de la tabla" para un KPI ni para otro tipo de gráfica', () => {
+      renderPanel()
+      expect(screen.queryByText('Valores de la tabla')).not.toBeInTheDocument()
+
+      renderPanel({
+        componente: componenteDePrueba({ component_id: 'saldo-por-causal', type: 'chart', chart_type: 'barras_horizontales' }),
+      })
+      expect(screen.queryByText('Valores de la tabla')).not.toBeInTheDocument()
+    })
+
+    it('editar una celda numérica y perder el foco invoca onActualizarContenido con las filas completas', () => {
+      const { props } = renderPanel({ componente: componenteTabla() })
+
+      const campo = screen.getByLabelText('Saldo — fila 1')
+      fireEvent.change(campo, { target: { value: '999' } })
+      fireEvent.blur(campo)
+
+      expect(props.onActualizarContenido).toHaveBeenLastCalledWith('tabla-top-clientes', {
+        filas: [['A', 999], ['B', 200]],
+      })
+    })
+
+    it('editar la fila de total invoca onActualizarContenido con el total completo', () => {
+      const { props } = renderPanel({ componente: componenteTabla() })
+
+      const campo = screen.getByLabelText('Saldo — total')
+      fireEvent.change(campo, { target: { value: '999' } })
+      fireEvent.blur(campo)
+
+      expect(props.onActualizarContenido).toHaveBeenLastCalledWith('tabla-top-clientes', {
+        total: ['Total', 999],
+      })
+    })
+
+    it('un valor no numérico en una celda que era numérica no propaga el cambio y muestra un error', () => {
+      const { props } = renderPanel({ componente: componenteTabla() })
+
+      const campo = screen.getByLabelText('Saldo — fila 1')
+      fireEvent.change(campo, { target: { value: 'abc' } })
+      fireEvent.blur(campo)
+
+      expect(screen.getByText('Debe ser un número.')).toBeInTheDocument()
+      expect(props.onActualizarContenido).not.toHaveBeenCalled()
+    })
+
+    it('editar una celda de texto no exige que sea numérica', () => {
+      const { props } = renderPanel({ componente: componenteTabla() })
+
+      const campo = screen.getByLabelText('Cliente — fila 1')
+      fireEvent.change(campo, { target: { value: 'Nuevo nombre' } })
+      fireEvent.blur(campo)
+
+      expect(props.onActualizarContenido).toHaveBeenLastCalledWith('tabla-top-clientes', {
+        filas: [['Nuevo nombre', 100], ['B', 200]],
+      })
+    })
   })
 })

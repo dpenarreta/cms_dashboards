@@ -36,6 +36,7 @@ export default function PlantillaBasePage() {
         const override = construirOverride(componente)
         const { datos, datosMultiserie } = datosDesdeComponente(componente)
         const esTablaHistorica = componente.component_id === 'tabla-3'
+        const esHistorica = esTablaHistorica || Boolean(componente.mapeo?.usa_historico)
         const contenidoNormal = (
           <GenericChartRenderer
             tipoVisualizacion={componente.type === 'kpi' ? 'kpi' : (componente.chart_type || 'barras_horizontales')}
@@ -44,7 +45,7 @@ export default function PlantillaBasePage() {
             titulo={componente.content?.titulo}
             override={override}
             config={componente.config}
-            esHistorica={esTablaHistorica}
+            esHistorica={esHistorica}
           />
         )
         // Tabla 3 también compara en vivo el histórico de cargas acá — en la práctica siempre

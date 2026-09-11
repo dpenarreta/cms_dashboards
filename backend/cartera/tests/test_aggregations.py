@@ -116,3 +116,60 @@ class RecuperadorCausalTests(SimpleTestCase):
         fila_gestionando = next(f for f in resultado['chart'] if f['causal'] == 'GESTIONANDO')
         # Con metrica=documentos, cada causal tiene 1 documento de 2 totales -> 50%, no 100% ni el % de saldo.
         self.assertAlmostEqual(fila_gestionando['porcentaje_dentro_recuperador'], 50.0, places=1)
+
+
+class CoherenciaDePorcentajesTests(SimpleTestCase):
+    """Casos encontrados auditando el núcleo de cálculo."""
+
+    CORTE = dt.date(2026, 8, 31)
+
+    def test_porcentaje_de_documentos_por_causal_cierra_en_100(self):
+        """Un mismo documento con dos causales se cuenta en las dos (correcto), así que el
+        denominador no puede ser el `nunique` global: con él la columna sumaba más de 100%."""
+        df = pd.DataFrame([
+            {'causal': 'GESTION', 'numero_documento': 'd1', 'saldo': 10.0},
+            {'causal': 'PROMESA', 'numero_documento': 'd1', 'saldo': 20.0},
+            {'causal': 'PROMESA', 'numero_documento': 'd2', 'saldo': 30.0},
+        ])
+        resultado = aggregations.causales(df)
+
+        self.assertAlmostEqual(sum(c['porcentaje_documentos'] for c in resultado['causales']), 100.0, places=1)
+        # El conteo real de documentos distintos del archivo se conserva como dato de encabezado.
+        self.assertEqual(resultado['documentos_total'], 2)
+
+    def test_el_porcentaje_de_otras_ciudades_se_recalcula_y_no_suma_redondeados(self):
+        """Sumar porcentajes ya redondeados a 2 decimales acumula deriva y deja el porcentaje del
+        grupo sin coincidir con su propio saldo."""
+        filas = [
+            {'ciudad': f'C{i:02d}', 'saldo': 3.33, 'numero_documento': f'd{i}',
+             'identificador_cliente': f'c{i}', 'fecha_vencimiento': self.CORTE}
+            for i in range(30)
+        ] + [
+            {'ciudad': f'G{i}', 'saldo': 1000.0, 'numero_documento': f'g{i}',
+             'identificador_cliente': f'gc{i}', 'fecha_vencimiento': self.CORTE}
+            for i in range(8)
+        ]
+        resultado = aggregations.pareto_ciudades(pd.DataFrame(filas), self.CORTE, agrupar_otras=True)
+        otras = resultado['ciudades_agrupadas'][-1]
+
+        esperado = round(otras['saldo_vencido'] / resultado['total_vencida'] * 100, 2)
+        self.assertEqual(otras['porcentaje'], esperado)
+        self.assertNotEqual(otras['porcentaje'], round(sum(c['porcentaje'] for c in resultado['ciudades'][8:]), 2))
+
+    def test_las_celdas_de_la_matriz_se_redondean_igual_que_sus_totales(self):
+        """Antes una celda podía mostrarse como 0.30000000000000004 al lado de un total de 0.3."""
+        df = pd.DataFrame([
+            {'recuperador': 'R1', 'causal': 'A', 'saldo': 0.1, 'numero_documento': 'd1', 'identificador_cliente': 'c1'},
+            {'recuperador': 'R1', 'causal': 'A', 'saldo': 0.2, 'numero_documento': 'd2', 'identificador_cliente': 'c2'},
+        ])
+        matriz = aggregations.recuperador_causal(df)['matriz']
+
+        self.assertEqual(matriz['celdas']['R1']['A'], matriz['totales_fila']['R1'])
+        self.assertEqual(matriz['celdas']['R1']['A'], 0.3)
+
+    def test_las_celdas_de_una_metrica_entera_no_se_redondean_a_float(self):
+        df = pd.DataFrame([
+            {'recuperador': 'R1', 'causal': 'A', 'saldo': 1.0, 'numero_documento': 'd1', 'identificador_cliente': 'c1'},
+        ])
+        matriz = aggregations.recuperador_causal(df, metrica='documentos')['matriz']
+        self.assertEqual(matriz['celdas']['R1']['A'], 1)

@@ -133,14 +133,13 @@ export function useDashboardLayout(dashboardId) {
     })
   }, [])
 
-  const guardar = useCallback(async (changedBy) => {
+  const guardar = useCallback(async () => {
     setCargando(true)
     setError(null)
     try {
       const data = await dashboardLayoutService.guardarLayout(dashboardId, {
         version: layoutGuardado.version,
         components: recalcularFilas(borrador),
-        changedBy,
       })
       setLayoutGuardado(data)
       setBorrador(clonar(data.components))
@@ -167,11 +166,11 @@ export function useDashboardLayout(dashboardId) {
     setConflicto(null)
   }, [conflicto])
 
-  const restablecer = useCallback(async (changedBy) => {
+  const restablecer = useCallback(async () => {
     setCargando(true)
     setError(null)
     try {
-      const data = await dashboardLayoutService.restablecerLayout(dashboardId, { changedBy })
+      const data = await dashboardLayoutService.restablecerLayout(dashboardId)
       setLayoutGuardado(data)
       setBorrador(clonar(data.components))
       return { ok: true }

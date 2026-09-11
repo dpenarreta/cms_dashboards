@@ -37,7 +37,9 @@ class AuditEventViewSet(viewsets.ReadOnlyModelViewSet):
     """Solo lectura: la auditoría es append-only (la escribe `apps.audit.services.log_event`,
     nunca esta vista)."""
 
-    queryset = AuditEvent.objects.all()
+    # `select_related('actor')`: `AuditEvent.actor_username_actual` resuelve el nombre por la
+    # clave foránea, así que sin esto habría una consulta por fila del listado.
+    queryset = AuditEvent.objects.select_related('actor')
 
     def get_permissions(self):
         clases = ACTION_PERMISSION_CLASSES.get(self.action, [require_permission('auditoria.ver')])
@@ -61,7 +63,7 @@ class AuditEventViewSet(viewsets.ReadOnlyModelViewSet):
                 'action': e.action,
                 'result': e.result,
                 'severity': e.severity,
-                'actor_username': e.actor_username,
+                'actor_username': e.actor_username_actual,
                 'entity_type': e.entity_type,
                 'entity_id': e.entity_id,
                 'dashboard_id': e.dashboard_id,

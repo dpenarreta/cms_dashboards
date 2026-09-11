@@ -37,4 +37,17 @@ describe('WidthHeightControls', () => {
 
     expect(onCambiarAncho).toHaveBeenCalledWith(9)
   })
+
+  it('disabled deshabilita los selectores de ancho y alto', () => {
+    render(<WidthHeightControls width={6} height={240} onCambiarAncho={vi.fn()} onCambiarAlto={vi.fn()} disabled />)
+
+    expect(screen.getByLabelText('Ancho')).toBeDisabled()
+    expect(screen.getByLabelText('Alto')).toBeDisabled()
+  })
+
+  it('disabled deshabilita también el campo de alto personalizado', () => {
+    render(<WidthHeightControls width={6} height={321} onCambiarAncho={vi.fn()} onCambiarAlto={vi.fn()} disabled />)
+
+    expect(screen.getByLabelText('Alto personalizado (px)')).toBeDisabled()
+  })
 })

@@ -9,6 +9,7 @@ import * as dashboardLayoutService from '../services/dashboardLayoutService'
 import * as historicoService from '../services/historicoService'
 import * as carteraService from '../services/carteraService'
 import { useAuth } from '../context/AuthContext'
+import * as pdfExport from '../utils/pdfExport'
 
 vi.mock('../hooks/useGenericDashboardBuilder')
 vi.mock('../hooks/useDashboardLayout')
@@ -16,6 +17,7 @@ vi.mock('../services/dashboardLayoutService')
 vi.mock('../services/historicoService')
 vi.mock('../services/carteraService')
 vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
+vi.mock('../utils/pdfExport')
 
 const FASE = { CARGA: 'CARGA', RENOMBRAR: 'RENOMBRAR', VALORES_EN_BLANCO: 'VALORES_EN_BLANCO', MAPEO: 'MAPEO' }
 
@@ -126,6 +128,10 @@ describe('DashboardAreaPage', () => {
     // `DashboardAreaPage.jsx`) — sin este default, cualquier test rompería al llamar `.then()`
     // sobre un mock sin resolver.
     dashboardLayoutService.generarHallazgosIA.mockResolvedValue({ hallazgos: {} })
+    // Vista/procedimiento configurado para este dashboard (`ConfigurarFuenteBDModal`) — sin este
+    // default, cualquier test rompería al llamar `.then()` sobre un mock sin resolver. Sin fuente
+    // configurada por defecto, igual que un dashboard recién creado.
+    dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({ tipo: '', nombre: '' })
   })
 
   it('muestra el nombre y el área del dashboard, resueltos por dashboard_id', async () => {
@@ -173,6 +179,62 @@ describe('DashboardAreaPage', () => {
     expect(screen.getByText('Ventas por ciudad')).toBeInTheDocument()
     expect(screen.queryByTestId('input-archivo')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cargar otro archivo' })).toBeInTheDocument()
+  })
+
+  it('"Imprimir como PDF" captura el dashboard con html2canvas/jsPDF (utils/pdfExport)', async () => {
+    let resolverGeneracion
+    pdfExport.generarPDFDesdeElemento.mockReturnValue(new Promise((resolve) => { resolverGeneracion = resolve }))
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase())
+    renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    const boton = screen.getByRole('button', { name: /Imprimir como PDF/ })
+    await userEvent.click(boton)
+
+    expect(pdfExport.generarPDFDesdeElemento).toHaveBeenCalledTimes(1)
+    expect(pdfExport.generarPDFDesdeElemento.mock.calls[0][1]).toBe('Finanzas.pdf')
+    expect(boton).toBeDisabled()
+
+    resolverGeneracion()
+    await waitFor(() => expect(boton).not.toBeDisabled())
+  })
+
+  it('"Imprimir como PDF" con error muestra un mensaje, sin romper la página', async () => {
+    pdfExport.generarPDFDesdeElemento.mockRejectedValue(new Error('boom'))
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase())
+    renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    await userEvent.click(screen.getByRole('button', { name: /Imprimir como PDF/ }))
+
+    expect(await screen.findByText('No se pudo generar el PDF. Intentá de nuevo.')).toBeInTheDocument()
+  })
+
+  it('el PDF solo muestra el nombre y el área del dashboard — todo el resto del "chrome" queda marcado d-print-none', async () => {
+    dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+      tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: null, proxima_actualizacion: null,
+    })
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase())
+    renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+    await screen.findByText('Última actualización: Nunca')
+
+    // Se mantienen (no d-print-none): el título del dashboard y el área.
+    expect(screen.getByRole('heading', { name: 'Finanzas' })).not.toHaveClass('d-print-none')
+    expect(screen.getByText(/Finanzas y Contabilidad/)).not.toHaveClass('d-print-none')
+
+    // Se excluyen del PDF: la fila de botones del encabezado, la fila de "Última actualización",
+    // la barra de pestañas y la fila "Diseño del dashboard" / "Editar dashboard".
+    expect(screen.getByRole('button', { name: 'Conectar vista de base de datos' }).closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Cargar otro archivo' }).closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByRole('button', { name: /Imprimir como PDF/ }).closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByText('Última actualización: Nunca').closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByRole('link', { name: 'Finanzas' }).closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByText('Diseño del dashboard').closest('.d-print-none')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Editar dashboard' }).closest('.d-print-none')).not.toBeNull()
   })
 
   it('"Cargar otro archivo" muestra la zona de carga; "Cancelar" vuelve a mostrar el grid y llama a limpiar()', async () => {
@@ -400,13 +462,236 @@ describe('DashboardAreaPage', () => {
     expect(cancelarMapeo).toHaveBeenCalled()
   })
 
-  it('incluye el botón "Conectar vista de base de datos", siempre deshabilitado', async () => {
-    useGenericDashboardBuilder.mockReturnValue(builderBase())
-    useDashboardLayout.mockReturnValue(layoutBase())
-    renderPagina()
-    await screen.findByRole('heading', { name: 'Finanzas' })
+  describe('"Conectar vista de base de datos"', () => {
+    it('el botón siempre está habilitado y abre el modal de conexión', async () => {
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+      const boton = await screen.findByRole('button', { name: 'Conectar vista de base de datos' })
+      expect(boton).not.toBeDisabled()
 
-    expect(screen.getByRole('button', { name: 'Conectar vista de base de datos' })).toBeDisabled()
+      await userEvent.click(boton)
+
+      await screen.findByLabelText('Tipo de fuente')
+      expect(screen.getAllByText('Conectar vista de base de datos')).toHaveLength(2) // el botón y el título del modal
+    })
+
+    it('completar tipo/nombre y confirmar guarda la configuración, conecta y revela el asistente', async () => {
+      dashboardLayoutService.actualizarFuenteBD.mockResolvedValue({ tipo: 'procedimiento', nombre: 'dbo.sp_Reporte', parametros: {} })
+      const conectarFuenteBD = vi.fn().mockResolvedValue({ ok: true })
+      useGenericDashboardBuilder.mockReturnValue(builderBase({ conectarFuenteBD }))
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+      await userEvent.click(await screen.findByRole('button', { name: 'Conectar vista de base de datos' }))
+      await userEvent.selectOptions(await screen.findByLabelText('Tipo de fuente'), 'procedimiento')
+      await userEvent.type(screen.getByLabelText('Nombre del procedimiento'), 'dbo.sp_Reporte')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Conectar' }))
+
+      await waitFor(() => expect(dashboardLayoutService.actualizarFuenteBD).toHaveBeenCalledWith(
+        'finanzas',
+        { tipo: 'procedimiento', nombre: 'dbo.sp_Reporte', parametros: {}, fechaFormato: 'YYYY-MM-DD', frecuenciaActualizacion: '' },
+      ))
+      await waitFor(() => expect(conectarFuenteBD).toHaveBeenCalledTimes(1))
+      // Con `ok: true`, `builderBase()` sigue en FASE.CARGA por defecto — lo que importa acá es
+      // que no aparezca el mensaje fijo de error de conexión.
+      expect(screen.queryByText(/Error de conexión/)).not.toBeInTheDocument()
+    })
+
+    it('una conexión fallida no revela el asistente ni cierra el modal: muestra el mensaje fijo y limpia el estado a medio armar', async () => {
+      dashboardLayoutService.actualizarFuenteBD.mockResolvedValue({ tipo: 'procedimiento', nombre: 'dbo.sp_Reporte', parametros: {} })
+      const conectarFuenteBD = vi.fn().mockResolvedValue({ ok: false })
+      const limpiar = vi.fn().mockResolvedValue()
+      useGenericDashboardBuilder.mockReturnValue(builderBase({ conectarFuenteBD, limpiar }))
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+      await userEvent.click(await screen.findByRole('button', { name: 'Conectar vista de base de datos' }))
+      await userEvent.selectOptions(await screen.findByLabelText('Tipo de fuente'), 'procedimiento')
+      await userEvent.type(screen.getByLabelText('Nombre del procedimiento'), 'dbo.sp_no_existe')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Conectar' }))
+
+      // El mensaje aparece DENTRO del modal (que sigue abierto) — nunca se llegó a mostrar el
+      // asistente de columnas.
+      expect(await screen.findByText(
+        'Error de conexión: No se encontró la vista seleccionada. Por favor, comuníquese con el departamento de TI.',
+      )).toBeInTheDocument()
+      expect(limpiar).toHaveBeenCalledTimes(1)
+      expect(screen.queryByLabelText('Tipo de fuente')).not.toBeInTheDocument()
+
+      // Recién "Aceptar" cierra el modal y vuelve al dashboard.
+      await userEvent.click(screen.getByRole('button', { name: 'Aceptar' }))
+      await waitFor(() => expect(screen.queryByText(/Error de conexión/)).not.toBeInTheDocument())
+      expect(screen.getByText('Diseño del dashboard')).toBeInTheDocument()
+    })
+
+    it('borrar todos los datos confirma con el nombre del dashboard, borra y refresca layout/fuente BD', async () => {
+      dashboardLayoutService.borrarDatosDashboard.mockResolvedValue()
+      const layout = layoutBase()
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layout)
+      renderPagina()
+      await userEvent.click(await screen.findByRole('button', { name: 'Conectar vista de base de datos' }))
+      await screen.findByLabelText('Tipo de fuente')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Borrar todos los datos' }))
+      await userEvent.type(screen.getByLabelText('Confirmar nombre del dashboard'), 'Finanzas')
+      await userEvent.click(screen.getByRole('button', { name: 'Borrar todo' }))
+
+      await waitFor(() => expect(dashboardLayoutService.borrarDatosDashboard).toHaveBeenCalledWith('finanzas', 'Finanzas'))
+      await waitFor(() => expect(layout.recargar).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(screen.queryByLabelText('Tipo de fuente')).not.toBeInTheDocument())
+    })
+
+    it('cancelar el modal no guarda ni conecta nada', async () => {
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+      await userEvent.click(await screen.findByRole('button', { name: 'Conectar vista de base de datos' }))
+      await screen.findByLabelText('Tipo de fuente')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+
+      expect(dashboardLayoutService.actualizarFuenteBD).not.toHaveBeenCalled()
+      await waitFor(() => expect(screen.queryByLabelText('Tipo de fuente')).not.toBeInTheDocument())
+    })
+  })
+
+  describe('estado de actualización de datos (bajo los botones del encabezado)', () => {
+    it('sin fuente configurada y sin nunca haber cargado datos, igual muestra los 3 valores: "Nunca", sin próxima automática y el ícono', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: null, proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      expect(await screen.findByText('Última actualización: Nunca')).toBeInTheDocument()
+      expect(screen.queryByText(/Próxima actualización automática/)).not.toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: /Actualizar ahora/ })).toBeInTheDocument()
+    })
+
+    it('la fila de "Última actualización" queda marcada d-print-none (afuera del PDF)', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: null, proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      const fila = (await screen.findByText('Última actualización: Nunca')).closest('div')
+      expect(fila).toHaveClass('d-print-none')
+    })
+
+    it('sin fuente configurada, el ícono "Actualizar ahora" abre el modal de conexión en vez de llamar al servicio de actualización instantánea', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: null, proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      await userEvent.click(await screen.findByRole('button', { name: /Actualizar ahora/ }))
+
+      await screen.findByLabelText('Tipo de fuente')
+      expect(carteraService.actualizarFuenteBDAhora).not.toHaveBeenCalled()
+    })
+
+    // Fecha ISO local (no `toISOString()`, que usa UTC y podría correr un día según la zona
+    // horaria) de "hoy menos N días" — mismo criterio de armado que `diasDesdeISO` en el
+    // componente, para que el test sea determinístico sin importar en qué día corra de verdad.
+    function isoHaceNDias(n) {
+      const objetivo = new Date()
+      objetivo.setDate(objetivo.getDate() - n)
+      const mes = String(objetivo.getMonth() + 1).padStart(2, '0')
+      const dia = String(objetivo.getDate()).padStart(2, '0')
+      return `${objetivo.getFullYear()}-${mes}-${dia}`
+    }
+
+    it('muestra la fecha de la última actualización junto con los días transcurridos', async () => {
+      const iso = isoHaceNDias(3)
+      const [anio, mes, dia] = iso.split('-')
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: iso, proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      expect(await screen.findByText(`Última actualización: ${dia}/${mes}/${anio} (3 D)`)).toBeInTheDocument()
+    })
+
+    it('actualizado hoy mismo muestra "(0 D)"', async () => {
+      const iso = isoHaceNDias(0)
+      const [anio, mes, dia] = iso.split('-')
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: '', nombre: '', frecuencia_actualizacion: '', ultima_actualizacion: iso, proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      expect(await screen.findByText(`Última actualización: ${dia}/${mes}/${anio} (0 D)`)).toBeInTheDocument()
+    })
+
+    it('con frecuencia automática configurada, muestra la próxima actualización en vez del ícono', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: 'vista', nombre: 'dbo.v', frecuencia_actualizacion: 'semanal',
+        ultima_actualizacion: '2026-08-09', proxima_actualizacion: '2026-08-16',
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      expect(await screen.findByText(/Próxima actualización automática: 16\/08\/2026/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Actualizar ahora/ })).not.toBeInTheDocument()
+    })
+
+    it('con fuente configurada pero sin frecuencia automática, muestra el ícono "Actualizar ahora"', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: 'vista', nombre: 'dbo.v', frecuencia_actualizacion: '', ultima_actualizacion: '2026-08-09', proxima_actualizacion: null,
+      })
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase())
+      renderPagina()
+
+      expect(await screen.findByRole('button', { name: /Actualizar ahora/ })).toBeInTheDocument()
+      expect(screen.queryByText(/Próxima actualización automática/)).not.toBeInTheDocument()
+    })
+
+    it('clic en "Actualizar ahora" llama al servicio y, si sale bien, recarga el layout', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: 'vista', nombre: 'dbo.v', frecuencia_actualizacion: '', ultima_actualizacion: '2026-08-09', proxima_actualizacion: null,
+      })
+      carteraService.actualizarFuenteBDAhora.mockResolvedValue({ ok: true, mensaje: 'Actualizado con 10 fila(s).' })
+      const recargar = vi.fn()
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ recargar }))
+      renderPagina()
+
+      await userEvent.click(await screen.findByRole('button', { name: /Actualizar ahora/ }))
+
+      await waitFor(() => expect(carteraService.actualizarFuenteBDAhora).toHaveBeenCalledWith('finanzas'))
+      await waitFor(() => expect(recargar).toHaveBeenCalled())
+    })
+
+    it('clic en "Actualizar ahora" con ok:false muestra el mensaje devuelto, sin recargar el layout', async () => {
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: 'vista', nombre: 'dbo.v', frecuencia_actualizacion: '', ultima_actualizacion: null, proxima_actualizacion: null,
+      })
+      carteraService.actualizarFuenteBDAhora.mockResolvedValue({
+        ok: false, mensaje: 'Este dashboard nunca tuvo un mapeo confirmado manualmente.',
+      })
+      const recargar = vi.fn()
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ recargar }))
+      renderPagina()
+
+      await userEvent.click(await screen.findByRole('button', { name: /Actualizar ahora/ }))
+
+      expect(await screen.findByText('Este dashboard nunca tuvo un mapeo confirmado manualmente.')).toBeInTheDocument()
+      expect(recargar).not.toHaveBeenCalled()
+    })
   })
 
   it('la descripción guardada de un KPI y de una gráfica se muestran en el grid', async () => {

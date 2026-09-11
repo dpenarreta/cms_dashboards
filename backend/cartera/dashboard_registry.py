@@ -22,11 +22,21 @@ def dashboards_autorizados(request):
     # lo ven su dueño/el superusuario/quien tenga uno de los roles asignados — aunque no tenga el
     # permiso global. `puede_administrar_acceso` le indica al frontend si mostrar el botón para
     # configurar esa ACL.
+    # `prefetch_related` + pasar `dashboard=d`: cada iteración ya tiene el objeto cargado, así que
+    # `tiene_acceso_dashboard`/`puede_administrar_acceso` no vuelven a consultarlo. Antes eran ~5
+    # consultas por dashboard (2 `SELECT` del mismo objeto + los `exists()` de la ACL + la
+    # pertenencia a grupos); ahora el listado completo son 3 consultas en total, sin importar
+    # cuántos dashboards haya.
+    consulta = Dashboard.objects.filter(parent__isnull=True).prefetch_related(
+        'roles_editores', 'roles_lectores',
+    )
     return [
         {
             'dashboard_id': d.dashboard_id, 'name': d.name, 'area': d.area, 'contexto': d.contexto,
-            'puede_administrar_acceso': permisos.puede_administrar_acceso(request, d.dashboard_id),
+            'puede_administrar_acceso': permisos.puede_administrar_acceso(request, d.dashboard_id, dashboard=d),
         }
-        for d in Dashboard.objects.filter(parent__isnull=True)
-        if permisos.tiene_acceso_dashboard(request, d.dashboard_id, permiso_global=permisos.DASHBOARD_VIEW)
+        for d in consulta
+        if permisos.tiene_acceso_dashboard(
+            request, d.dashboard_id, permiso_global=permisos.DASHBOARD_VIEW, dashboard=d,
+        )
     ]

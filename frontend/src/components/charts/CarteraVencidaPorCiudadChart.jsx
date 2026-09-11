@@ -3,7 +3,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
 import { Form } from 'react-bootstrap'
 import { useDrilldown } from '../../hooks/useDrilldown'
 import { colorPorIdentidad } from '../../utils/colors'
-import { formatCurrency, formatNumber, formatPercent } from '../../utils/format'
+import { formatCurrency, formatPercent } from '../../utils/format'
 
 const OTRAS_CIUDADES = 'OTRAS CIUDADES'
 

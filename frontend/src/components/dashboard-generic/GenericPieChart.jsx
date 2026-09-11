@@ -3,19 +3,7 @@ import { formatNumber } from '../../utils/format'
 import { propsLeyendaPara } from '../../utils/legendPosition'
 import { PALETA_CATEGORICA } from '../../utils/colors'
 import HallazgosClaveCard from './HallazgosClaveCard'
-
-/** Arma las porciones del gráfico a partir de `{categorias, valores}` — separado del componente
- * para poder probar la sustitución de nombre sin depender de que recharts realmente dibuje nada
- * (bajo jsdom, sin un layout real, `ResponsiveContainer` mide ancho 0 y no renderiza ni el `Pie`
- * ni la `Legend`). `id` (la categoría real, sin renombrar) es la clave estable para el color y
- * `key` de React; `nombre` es lo que de verdad ve el usuario en la leyenda/tooltip
- * (`etiquetasPorCategoria[categoria]` si el usuario le puso un título propio, si no la categoría
- * tal cual) — separarlos evita que renombrar la leyenda rompa la búsqueda de color por categoría. */
-export function datosCircularConEtiquetas(data, etiquetasPorCategoria = {}) {
-  return (data?.categorias || []).map((categoria, i) => ({
-    id: categoria, nombre: etiquetasPorCategoria[categoria] || categoria, valor: data?.valores?.[i] ?? 0,
-  }))
-}
+import { datosCircularConEtiquetas } from './pieChartData'
 
 /**
  * Renderiza un componente type=chart de una sola serie (`{titulo, categorias, valores}`) como

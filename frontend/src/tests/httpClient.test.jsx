@@ -44,7 +44,10 @@ describe('httpClient — interceptores', () => {
     clienteMock.mockReset()
     axios.post.mockReset()
     assignSpy = vi.fn()
-    Object.defineProperty(window, 'location', { value: { ...window.location, assign: assignSpy }, writable: true })
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, pathname: '/app/dashboards/cartera', search: '', assign: assignSpy },
+      writable: true,
+    })
     createApiClient('/api/x')
   })
 
@@ -76,7 +79,7 @@ describe('httpClient — interceptores', () => {
     const error = { response: { status: 401 }, config: { url: '/x/y', _reintentadoTrasRefresh: true, headers: {} } }
     await expect(interceptoresRegistrados.response[0].rejected(error)).rejects.toBe(error)
     expect(axios.post).not.toHaveBeenCalled()
-    expect(assignSpy).toHaveBeenCalledWith('/login')
+    expect(assignSpy).toHaveBeenCalledWith('/login?from=%2Fapp%2Fdashboards%2Fcartera')
     expect(getAccessToken()).toBeNull()
   })
 
@@ -95,6 +98,33 @@ describe('httpClient — interceptores', () => {
     expect(resultado).toEqual({ data: 'respuesta-original' })
   })
 
+  it('guarda el refresh token rotado que devuelve el backend', async () => {
+    // El backend rota el refresh en cada refresco (`ROTATE_REFRESH_TOKENS`). Conservar el viejo
+    // lo dejaría inservible y —peor— el backend lo leería como reutilización de un token robado
+    // y revocaría la sesión completa.
+    setTokens('access-expirado', 'refresh-viejo')
+    axios.post.mockResolvedValue({ data: { access: 'access-nuevo', refresh: 'refresh-rotado' } })
+    clienteMock.mockResolvedValue({ data: 'ok' })
+
+    await interceptoresRegistrados.response[0].rejected({
+      response: { status: 401 }, config: { url: '/x/y', headers: {} },
+    })
+
+    expect(getRefreshToken()).toBe('refresh-rotado')
+  })
+
+  it('si el backend no devuelve refresh nuevo, conserva el actual', async () => {
+    setTokens('access-expirado', 'refresh-valido')
+    axios.post.mockResolvedValue({ data: { access: 'access-nuevo' } })
+    clienteMock.mockResolvedValue({ data: 'ok' })
+
+    await interceptoresRegistrados.response[0].rejected({
+      response: { status: 401 }, config: { url: '/x/y', headers: {} },
+    })
+
+    expect(getRefreshToken()).toBe('refresh-valido')
+  })
+
   it('si el refresh falla, limpia la sesión y redirige a login', async () => {
     setTokens('access-expirado', 'refresh-invalido')
     axios.post.mockRejectedValue(new Error('refresh token inválido'))
@@ -103,6 +133,48 @@ describe('httpClient — interceptores', () => {
     await expect(interceptoresRegistrados.response[0].rejected({ response: { status: 401 }, config })).rejects.toThrow()
 
     expect(getAccessToken()).toBeNull()
+    expect(assignSpy).toHaveBeenCalledWith('/login?from=%2Fapp%2Fdashboards%2Fcartera')
+  })
+})
+
+describe('httpClient — destino tras expirar la sesión', () => {
+  let assignSpy
+
+  function prepararUbicacion({ pathname, search = '' }) {
+    localStorage.clear()
+    interceptoresRegistrados.request.length = 0
+    interceptoresRegistrados.response.length = 0
+    clienteMock.mockReset()
+    axios.post.mockReset()
+    assignSpy = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, pathname, search, assign: assignSpy },
+      writable: true,
+    })
+    createApiClient('/api/cartera')
+    // Sin refresh token guardado, el refresco falla de entrada y se dispara el redirect.
+    setTokens('access-expirado', null)
+  }
+
+  it('conserva la ruta y la query en el parámetro from', async () => {
+    prepararUbicacion({ pathname: '/app/dashboards/cartera', search: '?fecha_corte=2026-08-31' })
+
+    await expect(
+      interceptoresRegistrados.response[0].rejected({ response: { status: 401 }, config: { url: '/x', headers: {} } }),
+    ).rejects.toBeDefined()
+
+    expect(assignSpy).toHaveBeenCalledWith(
+      '/login?from=%2Fapp%2Fdashboards%2Fcartera%3Ffecha_corte%3D2026-08-31',
+    )
+  })
+
+  it('no agrega from si ya está en /login (evitaría apuntarse a sí mismo)', async () => {
+    prepararUbicacion({ pathname: '/login' })
+
+    await expect(
+      interceptoresRegistrados.response[0].rejected({ response: { status: 401 }, config: { url: '/x', headers: {} } }),
+    ).rejects.toBeDefined()
+
     expect(assignSpy).toHaveBeenCalledWith('/login')
   })
 })

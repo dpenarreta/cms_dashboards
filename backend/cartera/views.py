@@ -12,12 +12,13 @@ from rest_framework.response import Response
 from . import permisos
 from .constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from .exceptions import CarteraError
-from .models import CargaArchivo, RegistroCartera
+from .models import CargaArchivo, Dashboard, RegistroCartera
 from .services import (
-    aggregations, column_mapper, dashboard_layout, export_service, excel_reader, filters,
-    generic_charts, historico, ingest, plantilla,
+    aggregations, column_mapper, dashboard_layout, db_source, export_service, excel_reader,
+    filters, fuente_bd_scheduler, generic_charts, historico, ingest, plantilla,
 )
 from .services.calculator import anotar_estado_y_mora, resumen_kpis
+from .utils.archivos import asegurar_directorio
 from .utils.dates import fecha_corte_por_defecto, parse_fecha
 
 logger = logging.getLogger(__name__)
@@ -28,15 +29,44 @@ def _acceso_denegado():
 
 
 def _tiene_acceso(request, dashboard_id, *, requiere_edicion=False):
-    """Todos los endpoints de datos de cartera de este archivo comparten el mismo permiso global
-    de respaldo (`dashboard.view` — no existe un permiso "editar datos" separado del catálogo,
-    quien puede ver el dashboard puede cargar/consultar/exportar sus datos), pero ahora también
-    respetan el control de acceso por dashboard (roles editores/lectores + dueño,
-    `permisos.tiene_acceso_dashboard`) cuando el dashboard de la carga tiene una ACL propia
-    configurada."""
-    return permisos.tiene_acceso_dashboard(
-        request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW, requiere_edicion=requiere_edicion,
+    """Autorización de los endpoints de datos de cartera de este archivo.
+
+    Los de LECTURA (consultar agregaciones, exportar, ver el histórico) siguen respaldándose en
+    `dashboard.view`. Los que MUTAN (`requiere_edicion=True`: procesar, reprocesar, borrar la
+    carga, reaplicar el mapeo, incluir/excluir del histórico) exigen `dashboard.datos.editar`, un
+    permiso propio del catálogo.
+
+    Antes ambos grupos caían a `dashboard.view`, y `requiere_edicion` solo pesaba cuando el
+    dashboard tenía una ACL propia configurada — que no es el caso por defecto. Es decir que en un
+    dashboard sin ACL cualquiera con permiso de ver podía borrar la carga completa. Mismo criterio
+    ya aplicado a `dashboard.archivo.cargar` y `dashboard.fuente_bd.configurar`.
+
+    En ambos casos se respeta además el control de acceso por dashboard (roles editores/lectores +
+    dueño, `permisos.tiene_acceso_dashboard`).
+    """
+    permiso = permisos.DASHBOARD_DATOS_EDITAR if requiere_edicion else permisos.DASHBOARD_VIEW
+    return _verificar_acceso(request, dashboard_id, permiso, requiere_edicion)
+
+
+def _tiene_acceso_con_permiso(request, dashboard_id, permiso):
+    """Igual que `_tiene_acceso`, pero con un permiso global explícito — para acciones que ya
+    tienen el suyo en el catálogo (conectar/actualizar una fuente de base de datos, cargar un
+    archivo Excel nuevo). Sigue respetando el control de acceso por-dashboard igual que el resto."""
+    return _verificar_acceso(request, dashboard_id, permiso, True)
+
+
+def _verificar_acceso(request, dashboard_id, permiso, requiere_edicion):
+    """Punto único donde se resuelve y se AUDITA el acceso por dashboard de este módulo.
+
+    El registro del rechazo vive acá y no en cada vista para que los ~24 puntos de denegación
+    queden cubiertos de una vez (ver `permisos.registrar_acceso_denegado`).
+    """
+    concedido = permisos.tiene_acceso_dashboard(
+        request, dashboard_id, permiso_global=permiso, requiere_edicion=requiere_edicion,
     )
+    if not concedido:
+        permisos.registrar_acceso_denegado(request, dashboard_id, permiso)
+    return concedido
 
 CAMPOS_VALUES = [
     'cliente', 'ruc_cliente', 'codigo_cliente', 'identificador_cliente', 'sucursal', 'ciudad',
@@ -84,9 +114,14 @@ def _df_anotado_y_filtrado(carga, request):
 
 
 class ValidarArchivoView(APIView):
+    """`POST /api/cartera/validar-archivo` — botón "Cargar otro archivo" (`DashboardAreaPage.jsx`):
+    sube un Excel nuevo que reemplaza los datos de un dashboard. Requiere `dashboard.archivo.cargar`
+    — permiso propio, separado de `dashboard.fuente_bd.configurar` (conectar a la base de datos es
+    una acción distinta) y de `dashboard.view` (antes alcanzaba con poder ver el dashboard)."""
+
     def post(self, request):
         dashboard_id = (request.data.get('dashboard_id') or 'cartera').strip() or 'cartera'
-        if not _tiene_acceso(request, dashboard_id, requiere_edicion=True):
+        if not _tiene_acceso_con_permiso(request, dashboard_id, permisos.DASHBOARD_ARCHIVO_CARGAR):
             return _acceso_denegado()
 
         archivo = request.FILES.get('archivo')
@@ -105,7 +140,7 @@ class ValidarArchivoView(APIView):
 
         _, extension = os.path.splitext(nombre_original.lower())
         nombre_temp = f'{uuid.uuid4().hex}{extension}'
-        ruta_temp = settings.CARTERA_TEMP_UPLOADS_DIR / nombre_temp
+        ruta_temp = asegurar_directorio(settings.CARTERA_TEMP_UPLOADS_DIR) / nombre_temp
         with open(ruta_temp, 'wb') as f:
             f.write(contenido)
 
@@ -147,6 +182,91 @@ class ValidarArchivoView(APIView):
         }, status=200)
 
 
+class ConectarFuenteBDView(APIView):
+    """`POST /api/cartera/conectar-fuente-bd` — botón "Conectar vista de base de datos"
+    (`DashboardAreaPage.jsx`): ejecuta la vista/procedimiento configurado para este dashboard
+    (`Dashboard.fuente_bd_tipo`/`fuente_bd_nombre`/`fuente_bd_parametros`, ver `services/db_source.py`
+    y `DashboardFuenteBDView` en `dashboard_views.py` para configurarla) contra la conexión externa
+    "por defecto" y arma una `CargaArchivo` a partir del resultado — exactamente igual que
+    `ValidarArchivoView` arma una a partir de un Excel subido (mismo directorio temporal, mismo
+    `archivo_temp_nombre` UUID, misma forma de respuesta), así el resto del asistente
+    (`RenameColumnsStep`/`TemplateMappingStep`/`AplicarMapeoPlantillaView`) no necesita saber si
+    los datos vinieron de un archivo o de una base de datos. Requiere `dashboard.fuente_bd.configurar`
+    — es parte de la misma acción de botón/modal "Conectar vista de base de datos" que guarda la
+    configuración (`DashboardFuenteBDView.put`), así que comparte su permiso."""
+
+    def post(self, request):
+        dashboard_id = (request.data.get('dashboard_id') or '').strip()
+        if not dashboard_id:
+            raise CarteraError('dashboard_id es requerido.', codigo='DASHBOARD_ID_REQUERIDO')
+        if not _tiene_acceso_con_permiso(request, dashboard_id, permisos.DASHBOARD_FUENTE_BD_CONFIGURAR):
+            return _acceso_denegado()
+
+        dashboard = get_object_or_404(Dashboard, dashboard_id=dashboard_id)
+        if not dashboard.fuente_bd_nombre:
+            raise CarteraError(
+                'Este dashboard todavía no tiene configurada una vista o procedimiento de base de datos.',
+                codigo='FUENTE_BD_NO_CONFIGURADA',
+            )
+
+        df = db_source.leer_fuente(
+            dashboard.fuente_bd_tipo, dashboard.fuente_bd_nombre, dashboard.fuente_bd_parametros,
+            fecha_formato=dashboard.fuente_bd_fecha_formato,
+        )
+
+        nombre_original = f'{dashboard.fuente_bd_nombre} (base de datos)'
+        carga = db_source.crear_carga_temporal(dashboard_id, df, nombre_original, subido_por=request.user)
+
+        mapeo_sugerido = column_mapper.detectar_mapeo(df.columns.tolist())
+        preview = excel_reader.preview_hoja(df, 20)
+
+        return Response({
+            'carga_id': str(carga.id),
+            'dashboard_id': carga.dashboard_id,
+            'columnas_detectadas': df.columns.tolist(),
+            'nombre_archivo': nombre_original,
+            'tamano_bytes': carga.tamano_bytes,
+            'fecha_carga': carga.fecha_carga.isoformat(),
+            'hojas_disponibles': [_HOJA_ARCHIVO_PERMANENTE],
+            'hoja_seleccionada': _HOJA_ARCHIVO_PERMANENTE,
+            'total_filas_detectadas': len(df),
+            'mapeo_sugerido': mapeo_sugerido,
+            'preview': preview,
+        }, status=200)
+
+
+class ActualizarFuenteBDAhoraView(APIView):
+    """`POST /api/cartera/actualizar-fuente-bd-ahora` — icono "Actualizar ahora" en
+    `DashboardAreaPage.jsx` (solo visible cuando este dashboard tiene una fuente configurada SIN
+    frecuencia automática, ver `services/dashboards.py::obtener_fuente_bd`): fuerza, en el momento,
+    la MISMA actualización sin asistente que corre `manage.py actualizar_fuentes_bd`
+    (`services/fuente_bd_scheduler.actualizar_dashboard` — reaplica el último mapeo/aliases
+    confirmados, avanza `FechaCorte` si corresponde) en vez de esperar a que alguien pase por todo
+    el asistente de columnas. Si este dashboard nunca tuvo un mapeo confirmado manualmente, la
+    respuesta viene con `ok: False` y un mensaje claro — no es un error HTTP, el frontend decide
+    qué mostrar (ver `carteraService.actualizarFuenteBDAhora`). Requiere `dashboard.fuente_bd.actualizar`
+    — a propósito separado de `dashboard.fuente_bd.configurar`: forzar una recarga con la
+    configuración ya elegida es una capacidad más liviana que poder cambiar a qué vista/
+    procedimiento apunta el dashboard."""
+
+    def post(self, request):
+        dashboard_id = (request.data.get('dashboard_id') or '').strip()
+        if not dashboard_id:
+            raise CarteraError('dashboard_id es requerido.', codigo='DASHBOARD_ID_REQUERIDO')
+        if not _tiene_acceso_con_permiso(request, dashboard_id, permisos.DASHBOARD_FUENTE_BD_ACTUALIZAR):
+            return _acceso_denegado()
+
+        dashboard = get_object_or_404(Dashboard, dashboard_id=dashboard_id)
+        if not dashboard.fuente_bd_nombre:
+            raise CarteraError(
+                'Este dashboard todavía no tiene configurada una vista o procedimiento de base de datos.',
+                codigo='FUENTE_BD_NO_CONFIGURADA',
+            )
+
+        resultado = fuente_bd_scheduler.actualizar_dashboard(dashboard)
+        return Response(resultado, status=200)
+
+
 _HOJA_ARCHIVO_PERMANENTE = 'Datos'
 
 
@@ -171,32 +291,16 @@ def _guardar_archivo_permanente(carga, df):
     (`clean_temp_uploads`) y así se pueda reconfigurar el mapeo de un componente más adelante
     desde "Configurar componente" sin volver a cargar el archivo."""
     nombre_permanente = f'{carga.id}.xlsx'
-    ruta = settings.CARTERA_ARCHIVOS_DIR / nombre_permanente
+    ruta = asegurar_directorio(settings.CARTERA_ARCHIVOS_DIR) / nombre_permanente
     df.to_excel(ruta, index=False, sheet_name=_HOJA_ARCHIVO_PERMANENTE)
     carga.archivo_permanente_nombre = nombre_permanente
     carga.save(update_fields=['archivo_permanente_nombre'])
 
 
-def _aplicar_alias_columnas(df, aliases):
-    """Renombra las columnas del archivo según el alias que haya elegido el usuario en el paso
-    "renombrar columnas" (nombre original -> nuevo nombre); a partir de acá todo el resto del
-    flujo (análisis, mapeo, cálculo de datos, títulos/descripciones generados) usa el nombre
-    nuevo como si fuera el original. Una columna sin alias (o con alias igual al original) no se
-    toca. Dos columnas que terminen con el mismo nombre son un error del usuario, no un caso a
-    resolver en silencio: con nombres duplicados, `df[nombre]` deja de devolver una única serie."""
-    if not aliases:
-        return df
-    mapa = {
-        original: str(nuevo).strip()
-        for original, nuevo in aliases.items()
-        if original in df.columns and str(nuevo or '').strip() and str(nuevo).strip() != original
-    }
-    if not mapa:
-        return df
-    resultado = [mapa.get(c, c) for c in df.columns]
-    if len(set(resultado)) != len(resultado):
-        raise CarteraError('Dos o más columnas quedarían con el mismo nombre después de renombrar.', codigo='ALIAS_DUPLICADO')
-    return df.rename(columns=mapa)
+# Reexportado desde `db_source.py` (no duplicado acá): `services/fuente_bd_scheduler.py` necesita
+# la misma lógica para reaplicar `Dashboard.fuente_bd_ultimo_aliases` en cada actualización
+# automática — un único lugar de verdad para "cómo se renombra un DataFrame por alias".
+_aplicar_alias_columnas = db_source.aplicar_alias_columnas
 
 
 def _aplicar_valores_blancos(df, valores_blancos):
@@ -284,14 +388,34 @@ class AgregarGraficaView(APIView):
     `reemplazar_existentes` limpia el dashboard antes de agregar (se usa en la primera gráfica que
     se confirma tras cargar un archivo nuevo, para no mezclar datos de dos archivos).
 
-    `calculo` (opcional, uno de 'kpi'/'chart'/'multivalor'/'multiserie'/'dispersion'/'tabla') es
-    lo que usa la "Zona Personal" del editor de dashboard (`AgregarComponentePersonalModal.jsx`)
-    para elegir explícitamente qué calcular, con los mismos selectores que ya arma
-    `SlotFields.jsx::camposParaSlot` para las 15 posiciones fijas — cuando viene, decide la rama
-    de cálculo sin ambigüedad. Si no viene (flujo legado de recomendaciones automáticas), se
-    conserva la inferencia histórica por `tipo_visualizacion`. `ancho_columnas` (1, 2 o 4) y
-    `zona` ('personal' para la Zona Personal) se reenvían tal cual a
-    `agregar_componente_generado`."""
+    `calculo` (opcional, uno de 'kpi'/'chart'/'multivalor'/'multiserie'/'dispersion'/'tabla'/
+    'tramos_antiguedad'/'cumplimiento_metas'/'concentracion') es lo que usa la "Zona Personal" del
+    editor de dashboard (`AgregarComponentePersonalModal.jsx`) para elegir explícitamente qué
+    calcular, con los mismos selectores que ya arma `SlotFields.jsx::camposParaSlot` para las 15
+    posiciones fijas — cuando viene, decide la rama de cálculo sin ambigüedad. Si no viene (flujo
+    legado de recomendaciones automáticas), se conserva la inferencia histórica por
+    `tipo_visualizacion`. `ancho_columnas` (1, 2 o 4) y `zona` ('personal' para la Zona Personal)
+    se reenvían tal cual a `agregar_componente_generado`.
+
+    `columna_fecha` (`tramos_antiguedad`/`cumplimiento_metas`), `metas` (`cumplimiento_metas`,
+    lista alineada por posición con `generic_charts.ETIQUETAS_TRAMOS_ACUMULADOS`) y `top_n`
+    (`concentracion`) son específicos de los 3 `calculo` nuevos. `meta_min`/`meta_max` (solo
+    `calculo == 'kpi'`) arman el semáforo de cumplimiento del propio KPI — se reenvían tal cual a
+    `agregar_componente_generado`, que valida/adjunta `content['meta']`. `formato` (solo
+    `calculo == 'kpi'`, uno de `dashboard_layout.FORMATOS_KPI_VALIDOS`) decide cómo se muestra el
+    valor ("numero" por defecto si no viene, "moneda" antepone "$", "porcentaje" antepone "%").
+
+    `instruccion_ia` (texto libre) y `columna_contexto_ia` (opcional, solo Zona Personal) alimentan
+    "Hallazgos clave" con una instrucción específica para este componente y un desglose adicional
+    calculado una sola vez acá (`contexto_ia_datos`, vía `generar_datos_grafica`) — no cambian el
+    cálculo ni el dibujo del componente en sí, ver `dashboard_interpretation._bloque_instruccion_ia`.
+
+    `usa_historico` (bool, `calculo in ('kpi', 'chart', 'multivalor', 'multiserie', 'tabla')`): en
+    vez de leer el archivo recién subido (`df`), arma el contenido contra el histórico de cargas
+    del dashboard (`services/historico.py`) — un KPI toma el valor de la carga histórica más
+    reciente; un gráfico/tabla arma una categoría/fila por cada carga incluida. Dispersión, tramos
+    de antigüedad, cumplimiento de metas y concentración no lo soportan (su cálculo no se traduce
+    a "una carga = un punto"), así que ahí se ignora."""
 
     def post(self, request):
         carga_id = request.data.get('carga_id')
@@ -311,6 +435,15 @@ class AgregarGraficaView(APIView):
         tipo_visualizacion = request.data.get('tipo_visualizacion') or None
         ancho_columnas = request.data.get('ancho_columnas') or None
         zona = request.data.get('zona') or None
+        instruccion_ia = (request.data.get('instruccion_ia') or '').strip()
+        columna_contexto_ia = request.data.get('columna_contexto_ia') or None
+        columna_fecha = request.data.get('columna_fecha') or None
+        metas = request.data.get('metas')
+        top_n = request.data.get('top_n')
+        meta_min = request.data.get('meta_min')
+        meta_max = request.data.get('meta_max')
+        formato = request.data.get('formato') or None
+        usa_historico = bool(request.data.get('usa_historico'))
         if not titulo:
             raise CarteraError('La gráfica necesita un título.', codigo='TITULO_REQUERIDO')
         if calculo not in ('tabla', 'multivalor') and not columna_valor:
@@ -323,18 +456,42 @@ class AgregarGraficaView(APIView):
             return _acceso_denegado()
         _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
 
-        if calculo == 'tabla':
+        if calculo == 'tabla' and usa_historico:
+            if not columnas_valor:
+                raise CarteraError('La tabla necesita al menos una columna de valor.', codigo='COLUMNA_VALOR_REQUERIDA')
+            datos_historico = historico.calcular_tabla_historica(carga.dashboard_id, columnas_valor)
+            if len(datos_historico['columnas']) <= 4:
+                raise CarteraError('La tabla necesita al menos una columna de valor elegida.', codigo='COLUMNA_VALOR_REQUERIDA')
+            datos = {
+                'tipo': 'tabla_multi', 'columnas': datos_historico['columnas'], 'filas': datos_historico['filas'], 'total': None,
+            }
+            calculo_resuelto = 'tabla'
+        elif calculo == 'tabla':
             if not columna_id or not columnas_valor:
                 raise CarteraError(
                     'La tabla necesita una identidad de fila y al menos una columna de valor.', codigo='COLUMNA_VALOR_REQUERIDA',
                 )
             datos = generic_charts.generar_datos_tabla(df, columna_id, columnas_valor)
+            calculo_resuelto = 'tabla'
+        elif calculo == 'multivalor' and usa_historico:
+            datos_hist = historico.calcular_multivalor_historico(carga.dashboard_id, columnas_valor)
+            if not datos_hist:
+                raise CarteraError('Esta visualización necesita al menos una columna de valor elegida.', codigo='COLUMNAS_VALOR_REQUERIDAS')
+            datos = {'tipo': 'multiserie', 'categorias': datos_hist['categorias'], 'series': datos_hist['series']}
+            calculo_resuelto = 'multivalor'
         elif calculo == 'multivalor':
             if not columna_categoria or not columnas_valor or len(columnas_valor) < 2:
                 raise CarteraError(
                     'Esta visualización necesita una categoría y 2 o más columnas de valor.', codigo='COLUMNAS_VALOR_REQUERIDAS',
                 )
             datos = generic_charts.generar_datos_multivalor(df, columna_categoria, columnas_valor)
+            calculo_resuelto = 'multivalor'
+        elif calculo == 'kpi' and usa_historico:
+            valor_hist = historico.calcular_kpi_historico(carga.dashboard_id, columna_valor, tipo_agregacion or 'suma')
+            if valor_hist is None:
+                raise CarteraError(f'La columna elegida para "{titulo}" no tiene datos históricos.', codigo='COLUMNA_INVALIDA')
+            datos = {'tipo': 'kpi', 'valor': valor_hist}
+            calculo_resuelto = 'kpi'
         elif calculo == 'kpi' or (calculo is None and tipo_visualizacion == 'kpi'):
             if tipo_agregacion == 'conteo_unicos':
                 datos = generic_charts.generar_conteo_valores_unicos(df, columna_valor)
@@ -342,32 +499,85 @@ class AgregarGraficaView(APIView):
                 datos = generic_charts.generar_promedio_columna(df, columna_valor)
             else:
                 datos = generic_charts.generar_datos_grafica(df, columna_valor, None)
+            calculo_resuelto = 'kpi'
         elif calculo == 'dispersion' or (calculo is None and tipo_visualizacion == 'dispersion'):
             if not columna_valor_y:
                 raise CarteraError(
                     'Esta visualización necesita una segunda columna numérica.', codigo='COLUMNA_VALOR_Y_REQUERIDA',
                 )
             datos = generic_charts.generar_datos_dispersion(df, columna_valor, columna_valor_y)
+            calculo_resuelto = 'dispersion'
+        elif calculo == 'multiserie' and usa_historico:
+            if not columna_serie:
+                raise CarteraError(
+                    'Esta visualización necesita una segunda columna de agrupación.', codigo='COLUMNA_SERIE_REQUERIDA',
+                )
+            datos_hist = historico.calcular_multiserie_historico(carga.dashboard_id, columna_valor, columna_serie, tipo_agregacion or 'suma')
+            if not datos_hist:
+                raise CarteraError(f'La columna elegida para "{titulo}" no tiene datos históricos.', codigo='COLUMNA_INVALIDA')
+            datos = {'tipo': 'multiserie', 'categorias': datos_hist['categorias'], 'series': datos_hist['series']}
+            calculo_resuelto = 'multiserie'
         elif calculo == 'multiserie' or (calculo is None and tipo_visualizacion in _TIPOS_QUE_REQUIEREN_SERIE):
             if not columna_serie:
                 raise CarteraError(
                     'Esta visualización necesita una segunda columna de agrupación.', codigo='COLUMNA_SERIE_REQUERIDA',
                 )
             datos = generic_charts.generar_datos_multiserie(df, columna_valor, columna_categoria, columna_serie)
+            calculo_resuelto = 'multiserie'
+        elif calculo == 'tramos_antiguedad':
+            if not columna_fecha:
+                raise CarteraError(
+                    'Esta visualización necesita una columna de fecha.', codigo='COLUMNA_FECHA_REQUERIDA',
+                )
+            datos = generic_charts.generar_datos_tramos_antiguedad(df, columna_fecha, columna_valor, carga.fecha_corte)
+            calculo_resuelto = 'tramos_antiguedad'
+        elif calculo == 'cumplimiento_metas':
+            if not columna_fecha:
+                raise CarteraError(
+                    'Esta visualización necesita una columna de fecha.', codigo='COLUMNA_FECHA_REQUERIDA',
+                )
+            datos = generic_charts.generar_datos_cumplimiento_tramos(df, columna_fecha, columna_valor, metas, carga.fecha_corte)
+            calculo_resuelto = 'cumplimiento_metas'
+        elif calculo == 'concentracion':
+            if not columna_id:
+                raise CarteraError(
+                    'Esta visualización necesita una columna de identidad.', codigo='COLUMNA_ID_REQUERIDA',
+                )
+            datos = generic_charts.generar_datos_concentracion(df, columna_id, columna_valor, top_n)
+            calculo_resuelto = 'concentracion'
+        elif calculo == 'chart' and usa_historico:
+            datos_hist = historico.calcular_categorico_historico(carga.dashboard_id, columna_valor, tipo_agregacion or 'suma')
+            if not datos_hist:
+                raise CarteraError(f'La columna elegida para "{titulo}" no tiene datos históricos.', codigo='COLUMNA_INVALIDA')
+            datos = {'tipo': 'chart', 'categorias': datos_hist['categorias'], 'valores': datos_hist['valores']}
+            calculo_resuelto = 'chart'
         else:
             datos = generic_charts.generar_datos_grafica(df, columna_valor, columna_categoria)
+            calculo_resuelto = 'chart'
 
         if datos is None:
             raise CarteraError(f'La columna elegida para "{titulo}" ya no existe en el archivo.', codigo='COLUMNA_INVALIDA')
 
+        # "Instrucción para la IA" (Zona Personal, ver `dashboard_layout.agregar_componente_generado`):
+        # de mejor esfuerzo — una columna de contexto inválida/inexistente no rompe la creación del
+        # componente, simplemente no queda ese desglose disponible para "Hallazgos clave".
+        contexto_ia_datos = (
+            generic_charts.generar_datos_grafica(df, columna_valor, columna_contexto_ia)
+            if columna_contexto_ia and columna_valor else None
+        )
+
         layout = dashboard_layout.agregar_componente_generado(
             carga.dashboard_id,
             {
-                'titulo': titulo, 'descripcion': descripcion, 'columna_valor': columna_valor,
+                'titulo': titulo, 'descripcion': descripcion, 'calculo': calculo_resuelto, 'columna_valor': columna_valor,
                 'columna_categoria': columna_categoria, 'columna_serie': columna_serie,
                 'columna_valor_y': columna_valor_y, 'columna_id': columna_id, 'columnas_valor': columnas_valor,
                 'tipo_visualizacion': tipo_visualizacion, 'ancho_columnas': ancho_columnas, 'zona': zona,
-                'datos': datos,
+                'tipo_agregacion': tipo_agregacion,
+                'datos': datos, 'instruccion_ia': instruccion_ia, 'columna_contexto_ia': columna_contexto_ia,
+                'contexto_ia_datos': contexto_ia_datos,
+                'columna_fecha': columna_fecha, 'metas': metas, 'top_n': top_n,
+                'meta_min': meta_min, 'meta_max': meta_max, 'formato': formato, 'usa_historico': usa_historico,
             },
             reemplazar_existentes=bool(request.data.get('reemplazar_existentes')),
             actor=request.user, request=request,
@@ -435,7 +645,7 @@ class SugerirMapeoPlantillaView(APIView):
 
         analisis = generic_charts.analizar_columnas(df)
         mapeo = plantilla.sugerir_mapeo(analisis['columnas'])
-        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        datos = plantilla.calcular_datos_mapeo(df, mapeo, fecha_referencia=carga.fecha_corte)
         columnas_con_blancos = generic_charts.columnas_con_blancos_recurrentes(df)
 
         return Response({
@@ -468,8 +678,45 @@ class PrevisualizarMapeoPlantillaView(APIView):
         df = _aplicar_alias_columnas(df, request.data.get('aliases'))
         df = _aplicar_valores_blancos(df, request.data.get('valores_blancos'))
 
-        datos = plantilla.calcular_datos_mapeo(df, mapeo)
+        datos = plantilla.calcular_datos_mapeo(df, mapeo, carga.dashboard_id, carga.fecha_corte)
         return Response({'carga_id': str(carga.id), 'datos': datos})
+
+
+class PrevisualizarMapeoComponenteView(APIView):
+    """`POST /api/cartera/plantilla/previsualizar-componente` — igual que
+    `PrevisualizarMapeoPlantillaView`, pero para UN componente que no es una de las 13 posiciones
+    fijas de la plantilla (Zona Personal): recibe `calculo`/`titulo`/`mapeo` de ese único
+    componente (no un dict indexado por slot id) y devuelve su contenido recalculado, sin
+    persistir nada — lo usa "Configurar componente" → "Datos" (`ComponentDataSection.jsx`) cada vez
+    que cambia un selector de columna. A diferencia de la plantilla fija, Zona Personal no tiene
+    dato ficticio de respaldo: `contenido` puede venir `None` si la combinación de columnas
+    elegida todavía no resuelve (columna faltante o filtro sin resultados); el frontend debe
+    conservar el contenido anterior en ese caso, no pisarlo con `None`."""
+
+    def post(self, request):
+        carga_id = request.data.get('carga_id')
+        if not carga_id:
+            raise CarteraError('carga_id es requerido.', codigo='CARGA_ID_REQUERIDO')
+
+        calculo = request.data.get('calculo')
+        if not calculo:
+            raise CarteraError('calculo es requerido.', codigo='CALCULO_REQUERIDO')
+
+        mapeo = request.data.get('mapeo')
+        if not isinstance(mapeo, dict):
+            raise CarteraError('mapeo es requerido.', codigo='MAPEO_REQUERIDO')
+
+        titulo = request.data.get('titulo') or ''
+
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        if not _tiene_acceso(request, carga.dashboard_id):
+            return _acceso_denegado()
+        _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
+        df = _aplicar_alias_columnas(df, request.data.get('aliases'))
+        df = _aplicar_valores_blancos(df, request.data.get('valores_blancos'))
+
+        contenido = plantilla.calcular_contenido_por_calculo(df, calculo, titulo, mapeo, carga.dashboard_id, carga.fecha_corte)
+        return Response({'carga_id': str(carga.id), 'contenido': contenido})
 
 
 class ValoresColumnaPlantillaView(APIView):
@@ -501,6 +748,36 @@ class ValoresColumnaPlantillaView(APIView):
         return Response({'carga_id': str(carga.id), **resultado})
 
 
+class DuplicadosColumnaPlantillaView(APIView):
+    """`POST /api/cartera/plantilla/duplicados-columna` — cantidad de valores duplicados y
+    primeros ejemplos de una columna del archivo (`carga_id`, `columna`, con el mismo `aliases`
+    del resto del flujo), para avisar al elegir esa columna como categoría de un gráfico o
+    identidad de fila de una tabla (`columna_categoria`/`columna_id` en el mapeo) — filas distintas
+    con el mismo valor ahí se van a agrupar juntas, que puede no ser lo esperado."""
+
+    def post(self, request):
+        carga_id = request.data.get('carga_id')
+        if not carga_id:
+            raise CarteraError('carga_id es requerido.', codigo='CARGA_ID_REQUERIDO')
+
+        columna = request.data.get('columna')
+        if not columna:
+            raise CarteraError('columna es requerida.', codigo='COLUMNA_REQUERIDA')
+
+        carga = get_object_or_404(CargaArchivo, id=carga_id)
+        if not _tiene_acceso(request, carga.dashboard_id):
+            return _acceso_denegado()
+        _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
+        df = _aplicar_alias_columnas(df, request.data.get('aliases'))
+        df = _aplicar_valores_blancos(df, request.data.get('valores_blancos'))
+
+        resultado = generic_charts.valores_duplicados_de_columna(df, columna)
+        if resultado is None:
+            raise CarteraError('La columna elegida ya no existe en el archivo.', codigo='COLUMNA_INVALIDA')
+
+        return Response({'carga_id': str(carga.id), **resultado})
+
+
 class AplicarMapeoPlantillaView(APIView):
     """`POST /api/cartera/plantilla/aplicar` — confirma (con los ajustes que haya hecho el
     usuario) el mapeo propuesto por `SugerirMapeoPlantillaView` y sobreescribe las 15 posiciones
@@ -509,7 +786,12 @@ class AplicarMapeoPlantillaView(APIView):
     renombrados, del paso "Renombrar columnas") reemplaza la configuración persistente de columnas
     históricas del dashboard (`historico.establecer_columnas_historicas`) y decide qué columnas se
     guardan en `FilaArchivoHistorico` para esta carga (`historico.guardar_filas_historicas`) — solo
-    esas, no la fila completa."""
+    esas, no la fila completa.
+
+    También deja `mapeo`/`aliases` guardados en `Dashboard.fuente_bd_ultimo_mapeo`/
+    `fuente_bd_ultimo_aliases` (cualquiera sea el origen de esta carga, Excel o base de datos) —
+    es la foto que `services/fuente_bd_scheduler.py` reaplica sin intervención humana en cada
+    actualización automática de "Conectar vista de base de datos"."""
 
     def post(self, request):
         carga_id = request.data.get('carga_id')
@@ -524,15 +806,22 @@ class AplicarMapeoPlantillaView(APIView):
         if not _tiene_acceso(request, carga.dashboard_id, requiere_edicion=True):
             return _acceso_denegado()
         _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
-        df = _aplicar_alias_columnas(df, request.data.get('aliases'))
+        aliases = request.data.get('aliases') or {}
+        df = _aplicar_alias_columnas(df, aliases)
         df = _aplicar_valores_blancos(df, request.data.get('valores_blancos'))
 
         columnas_historicas = request.data.get('columnas_historicas') or []
 
-        layout = plantilla.aplicar_mapeo(carga.dashboard_id, df, mapeo, actor=request.user, request=request)
+        layout = plantilla.aplicar_mapeo(
+            carga.dashboard_id, df, mapeo, actor=request.user, request=request,
+            fecha_referencia=carga.fecha_corte,
+        )
         _guardar_archivo_permanente(carga, df)
         historico.establecer_columnas_historicas(carga.dashboard_id, columnas_historicas)
         historico.guardar_filas_historicas(carga, df, columnas_historicas)
+        Dashboard.objects.filter(dashboard_id=carga.dashboard_id).update(
+            fuente_bd_ultimo_mapeo=mapeo, fuente_bd_ultimo_aliases=aliases,
+        )
 
         if carga.estado != CargaArchivo.Estado.PROCESADO:
             carga.estado = CargaArchivo.Estado.PROCESADO
@@ -780,12 +1069,36 @@ class DetalleView(APIView):
 
 
 class ExportarView(APIView):
+    """`GET /api/cartera/<carga_id>/exportar?formato=xlsx|csv&tipo=detalle|errores`.
+
+    `formato` y `tipo` se validan contra su conjunto permitido en vez de caer en silencio al
+    valor por defecto: antes cualquier valor distinto de `csv` devolvía un .xlsx y cualquiera
+    distinto de `errores` devolvía el detalle, así que un typo en el parámetro entregaba un
+    archivo distinto del pedido sin ningún aviso.
+    """
+
+    FORMATOS = ('xlsx', 'csv')
+    TIPOS = ('detalle', 'errores')
+
     def get(self, request, carga_id):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         if not _tiene_acceso(request, carga.dashboard_id):
             return _acceso_denegado()
         formato = request.query_params.get('formato', 'xlsx')
         tipo = request.query_params.get('tipo', 'detalle')
+
+        if formato not in self.FORMATOS:
+            raise CarteraError(
+                f'Formato de exportación no válido: "{formato}". Use uno de: {", ".join(self.FORMATOS)}.',
+                codigo='FORMATO_EXPORTACION_INVALIDO',
+                detalles={'permitidos': list(self.FORMATOS)},
+            )
+        if tipo not in self.TIPOS:
+            raise CarteraError(
+                f'Tipo de exportación no válido: "{tipo}". Use uno de: {", ".join(self.TIPOS)}.',
+                codigo='TIPO_EXPORTACION_INVALIDO',
+                detalles={'permitidos': list(self.TIPOS)},
+            )
 
         if tipo == 'errores':
             resumen = carga.resumen_validacion or {}
@@ -819,14 +1132,12 @@ class ArchivoView(APIView):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         if not _tiene_acceso(request, carga.dashboard_id, requiere_edicion=True):
             return _acceso_denegado()
-        if carga.archivo_temp_nombre:
-            ruta_temp = settings.CARTERA_TEMP_UPLOADS_DIR / carga.archivo_temp_nombre
-            try:
-                os.remove(ruta_temp)
-            except OSError:
-                pass
         # Borra en cascada sus `FilaArchivoHistorico` (FK `on_delete=CASCADE`, sección 28): si
-        # esta carga alimentaba una tabla histórica, esas filas dejan de existir con ella.
+        # esta carga alimentaba una tabla histórica, esas filas dejan de existir con ella. Los
+        # archivos en disco (el temporal Y la copia permanente, que antes quedaba huérfana para
+        # siempre) los borra la señal `post_delete` de `cartera/signals.py`, para que los tres
+        # caminos de borrado —este, `borrar_datos_dashboard` y `eliminar_dashboard`— queden
+        # cubiertos por el mismo lugar.
         carga.delete()
         return Response(status=204)
 

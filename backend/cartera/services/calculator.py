@@ -7,16 +7,28 @@ cualquier momento sin volver a procesar el archivo.
 import numpy as np
 import pandas as pd
 
-from ..utils.dates import calcular_rango_mora
+from ..utils.dates import a_fecha, calcular_dias_vencidos, calcular_rango_mora
 
 DIAS_120 = 120
 DIAS_360 = 360
 
 
 def _dias_vencidos(fecha_vencimiento, fecha_corte):
-    if pd.isna(fecha_vencimiento):
-        return np.nan
-    return (fecha_corte - fecha_vencimiento).days
+    """Delega en `utils.dates.calcular_dias_vencidos` y traduce su `None` a `np.nan`.
+
+    Antes calculaba la resta acá mismo, duplicando esa función pero SIN su conversión de
+    `datetime`/`Timestamp` a `date`: con un valor de ese tipo levantaba
+    `TypeError: unsupported operand type(s) for -: 'datetime.date' and 'Timestamp'`. Hoy no es
+    alcanzable —el único llamador (`views._df_anotado_y_filtrado`) arma el DataFrame desde el ORM,
+    que entrega `date`— pero cualquier llamada futura sobre un DataFrame leído de Excel (donde
+    pandas convierte las fechas a `datetime64`) rompía, y encima la columna vecina `rango_mora` sí
+    lo toleraba porque usaba la versión robusta.
+
+    Se conserva `np.nan` (no `None`): `resumen_kpis` compara la columna con `> DIAS_120`, y un
+    `None` en una columna de tipo object hace fallar esa comparación.
+    """
+    dias = calcular_dias_vencidos(fecha_vencimiento, fecha_corte)
+    return np.nan if dias is None else dias
 
 
 def anotar_estado_y_mora(df, fecha_corte):
@@ -28,22 +40,29 @@ def anotar_estado_y_mora(df, fecha_corte):
         df['rango_mora'] = pd.Series(dtype='object')
         return df
 
-    df['dias_vencidos'] = df['fecha_vencimiento'].apply(lambda f: _dias_vencidos(f, fecha_corte))
+    # La fecha se normaliza a `date` UNA vez, acá, y las tres columnas derivadas trabajan sobre
+    # esa serie. Antes cada una la trataba por su cuenta y con distinto criterio: `rango_mora`
+    # convertía `datetime`/`Timestamp` a `date` (vía `calcular_rango_mora`), `dias_vencidos` no, y
+    # la comparación de `estado` tampoco — con una columna `datetime64` (lo que produce
+    # `pd.read_excel`/`pd.to_datetime`) las dos últimas levantaban `TypeError`. Normalizar en el
+    # borde deja las tres coherentes por construcción.
+    fechas = df['fecha_vencimiento'].map(a_fecha)
 
-    def estado(row):
-        saldo = row['saldo']
+    df['dias_vencidos'] = fechas.apply(lambda f: _dias_vencidos(f, fecha_corte))
+
+    def estado(saldo, fecha):
         if saldo == 0:
             return 'SALDO CERO'
         if saldo < 0:
             return 'SALDO A FAVOR'
-        if pd.isna(row['fecha_vencimiento']):
+        if fecha is None:
             return 'SIN FECHA DE VENCIMIENTO'
-        if row['fecha_vencimiento'] <= fecha_corte:
+        if fecha <= fecha_corte:
             return 'VENCIDA'
         return 'NO VENCIDA'
 
-    df['estado_calculado'] = df.apply(estado, axis=1)
-    df['rango_mora'] = df['fecha_vencimiento'].apply(lambda f: calcular_rango_mora(f, fecha_corte))
+    df['estado_calculado'] = [estado(saldo, fecha) for saldo, fecha in zip(df['saldo'], fechas)]
+    df['rango_mora'] = fechas.apply(lambda f: calcular_rango_mora(f, fecha_corte))
     return df
 
 
@@ -71,7 +90,14 @@ def resumen_kpis(df, fecha_corte):
     valor_120, pct_120, subset_120 = bloque(mask_120)
     valor_360, pct_360, subset_360 = bloque(mask_360)
 
-    saldo_promedio_cliente = (cartera_total / total_clientes) if total_clientes else 0.0
+    # Numerador y denominador tienen que describir la misma población. `cartera_total` suma solo
+    # los saldos positivos, así que el promedio se reparte entre los clientes QUE TIENEN saldo
+    # positivo — antes dividía por todos los clientes distintos del archivo, incluidos los que
+    # solo tenían saldo cero o a favor, y el promedio salía diluido hacia abajo sin motivo.
+    # `total_clientes` y `total_documentos` se conservan como conteos del archivo completo: son
+    # datos de encabezado ("cuántos clientes trae este archivo"), no la base de este promedio.
+    clientes_con_saldo = int(con_saldo_positivo['identificador_cliente'].nunique()) if not con_saldo_positivo.empty else 0
+    saldo_promedio_cliente = (cartera_total / clientes_con_saldo) if clientes_con_saldo else 0.0
 
     return {
         'fecha_corte': fecha_corte.isoformat(),

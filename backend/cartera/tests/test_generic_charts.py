@@ -3,6 +3,7 @@ de un archivo cargado — flujo "cargar archivo → analizar columnas → recome
 agregar", sin depender del esquema fijo de cartera (`services/generic_charts.py`)."""
 
 import os
+from datetime import date, timedelta
 
 import pandas as pd
 from django.contrib.auth import get_user_model
@@ -10,7 +11,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from cartera.models import CargaArchivo, Dashboard
-from cartera.services import dashboard_layout, generic_charts
+from cartera.services import dashboard_layout, generic_charts, historico
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
 User = get_user_model()
@@ -282,6 +283,37 @@ class ValoresUnicosDeColumnaServiceTests(TestCase):
         self.assertEqual(resultado['total'], 10)
 
 
+class ValoresDuplicadosDeColumnaServiceTests(TestCase):
+    def test_devuelve_cantidad_y_ejemplos_ordenados_por_repeticiones_descendente(self):
+        df = pd.DataFrame({'ciudad': ['Quito'] * 3 + ['Guayaquil'] * 2 + ['Cuenca']})
+        resultado = generic_charts.valores_duplicados_de_columna(df, 'ciudad')
+        self.assertEqual(resultado['cantidad_valores_duplicados'], 2)
+        self.assertEqual(resultado['ejemplos'], [
+            {'valor': 'Quito', 'cantidad': 3}, {'valor': 'Guayaquil', 'cantidad': 2},
+        ])
+
+    def test_sin_duplicados_devuelve_cantidad_cero_y_ejemplos_vacios(self):
+        df = pd.DataFrame({'id': ['a', 'b', 'c']})
+        resultado = generic_charts.valores_duplicados_de_columna(df, 'id')
+        self.assertEqual(resultado, {'cantidad_valores_duplicados': 0, 'ejemplos': []})
+
+    def test_columna_inexistente_devuelve_none(self):
+        df = pd.DataFrame({'ciudad': ['Quito']})
+        self.assertIsNone(generic_charts.valores_duplicados_de_columna(df, 'no_existe'))
+
+    def test_valores_nulos_no_cuentan_como_duplicados_entre_si(self):
+        df = pd.DataFrame({'ciudad': [None, None, None]})
+        resultado = generic_charts.valores_duplicados_de_columna(df, 'ciudad')
+        self.assertEqual(resultado, {'cantidad_valores_duplicados': 0, 'ejemplos': []})
+
+    def test_respeta_la_cantidad_de_ejemplos_pero_informa_el_total_real(self):
+        df = pd.DataFrame({'ciudad': ['Quito'] * 5 + ['Guayaquil'] * 4 + ['Cuenca'] * 3 + ['Loja'] * 2})
+        resultado = generic_charts.valores_duplicados_de_columna(df, 'ciudad', cantidad_ejemplos=2)
+        self.assertEqual(resultado['cantidad_valores_duplicados'], 4)
+        self.assertEqual(len(resultado['ejemplos']), 2)
+        self.assertEqual(resultado['ejemplos'][0], {'valor': 'Quito', 'cantidad': 5})
+
+
 class ColumnaSerieSugeridaServiceTests(TestCase):
     """Cada recomendación con categoría propone una segunda columna de agrupación (para barras
     agrupadas/apiladas) cuando hay otra columna categórica disponible."""
@@ -334,7 +366,10 @@ class GenerarDatosMultiserieServiceTests(TestCase):
         df = pd.DataFrame({'saldo': [1, 2], 'ciudad': ['Quito', 'Guayaquil']})
         self.assertIsNone(generic_charts.generar_datos_multiserie(df, 'saldo', 'ciudad', 'no_existe'))
 
-    def test_limita_las_series_a_las_de_mayor_total(self):
+    def test_limita_las_series_a_las_de_mayor_total_y_colapsa_el_resto_en_otras(self):
+        """Mismo criterio que las categorías (`test_mas_de_15_categorias_se_agrupan_en_otras`):
+        las que quedan fuera del top se agrupan, no se descartan. Antes se recortaban a secas y
+        los segmentos de una categoría dejaban de sumar su total sin ninguna indicación."""
         filas = 20
         df = pd.DataFrame({
             'valor': [1] * filas,
@@ -342,7 +377,20 @@ class GenerarDatosMultiserieServiceTests(TestCase):
             'serie': [f'serie-{i}' for i in range(filas)],
         })
         resultado = generic_charts.generar_datos_multiserie(df, 'valor', 'categoria', 'serie')
-        self.assertEqual(len(resultado['series']), generic_charts.MAX_SERIES_EN_GRAFICA)
+
+        self.assertEqual(len(resultado['series']), generic_charts.MAX_SERIES_EN_GRAFICA + 1)
+        self.assertEqual(resultado['series'][-1]['nombre'], 'Otras')
+        # Nada se pierde: los segmentos siguen sumando el total real de la categoría.
+        self.assertEqual(sum(s['valores'][0] for s in resultado['series']), float(filas))
+
+    def test_con_pocas_series_no_agrega_la_serie_otras(self):
+        df = pd.DataFrame({
+            'valor': [1, 2, 3],
+            'categoria': ['cat-a'] * 3,
+            'serie': ['A', 'B', 'C'],
+        })
+        resultado = generic_charts.generar_datos_multiserie(df, 'valor', 'categoria', 'serie')
+        self.assertEqual([s['nombre'] for s in resultado['series']], ['C', 'B', 'A'])
 
     def test_mas_de_15_categorias_se_agrupan_en_otras(self):
         filas = 20
@@ -393,6 +441,39 @@ class GenerarDatosDispersionServiceTests(TestCase):
         df = pd.DataFrame({'x': list(range(filas)), 'y': list(range(filas))})
         resultado = generic_charts.generar_datos_dispersion(df, 'x', 'y')
         self.assertEqual(len(resultado['puntos']), generic_charts.LIMITE_PUNTOS_DISPERSION)
+
+
+class GenerarPromedioColumnaServiceTests(TestCase):
+    """`None` significa "la columna no existe" y nada más — es lo que los llamadores usan para
+    decidir que la posición cae al dato ficticio."""
+
+    def test_promedio_normal(self):
+        df = pd.DataFrame({'saldo': [100, 200]})
+        self.assertEqual(generic_charts.generar_promedio_columna(df, 'saldo')['valor'], 150.0)
+
+    def test_columna_inexistente_devuelve_none(self):
+        df = pd.DataFrame({'saldo': [100]})
+        self.assertIsNone(generic_charts.generar_promedio_columna(df, 'no_existe'))
+
+    def test_columna_sin_valores_numericos_devuelve_cero_no_none(self):
+        """Regresión: devolvía `None`, y cada llamador lo malinterpretaba a su manera —
+        `plantilla.calcular_datos_mapeo` caía al dato ficticio (un número inventado con la
+        descripción "Dato de ejemplo" sobre un archivo ya cargado) y `AgregarGraficaView`
+        levantaba "la columna ya no existe en el archivo", que no era la causa."""
+        df = pd.DataFrame({'observacion': ['pendiente', 'en gestion']})
+        self.assertEqual(generic_charts.generar_promedio_columna(df, 'observacion'), {'tipo': 'kpi', 'valor': 0.0})
+
+    def test_dataframe_vacio_devuelve_cero_no_none(self):
+        df = pd.DataFrame({'saldo': pd.Series([], dtype='float64')})
+        self.assertEqual(generic_charts.generar_promedio_columna(df, 'saldo'), {'tipo': 'kpi', 'valor': 0.0})
+
+    def test_coincide_con_suma_y_conteo_ante_una_columna_de_texto(self):
+        """Las tres agregaciones de KPI se comportan igual frente a la misma columna sin números:
+        ninguna devuelve `None`."""
+        df = pd.DataFrame({'observacion': ['a', 'b']})
+        self.assertIsNotNone(generic_charts.generar_datos_grafica(df, 'observacion', None))
+        self.assertIsNotNone(generic_charts.generar_conteo_valores_unicos(df, 'observacion'))
+        self.assertIsNotNone(generic_charts.generar_promedio_columna(df, 'observacion'))
 
 
 class GenerarDatosTablaServiceTests(TestCase):
@@ -491,6 +572,80 @@ class GenerarDatosTablaServiceTests(TestCase):
         self.assertTrue(all(f[-1] == 0 for f in resultado['filas']))
         self.assertEqual(resultado['total'][-1], 0)
 
+    def test_columna_manual_se_intercala_por_posicion_junto_a_columnas_reales(self):
+        # "producto" ordenado por "ventas" (suma) descendente: A=150, B=80, C=60.
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'titulo': 'Meta', 'valores': ['≥ 100', '≥ 80', '≥ 50'], 'total': None},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual(resultado['columnas'], ['producto', 'ventas', 'Meta', '% del total'])
+        filas_por_id = {f[0]: f for f in resultado['filas']}
+        self.assertEqual(filas_por_id['A'][2], '≥ 100')
+        self.assertEqual(filas_por_id['B'][2], '≥ 80')
+        self.assertEqual(filas_por_id['C'][2], '≥ 50')
+
+    def test_columna_manual_no_participa_del_orden_ni_del_porcentaje(self):
+        columnas_valor = [
+            {'manual': True, 'titulo': 'Meta', 'valores': ['x', 'y', 'z']},
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        # El orden sigue siendo por "ventas" (la única real), no por la columna manual que va primero.
+        self.assertEqual([f[0] for f in resultado['filas']], ['A', 'B', 'C'])
+        fila_a = next(f for f in resultado['filas'] if f[0] == 'A')
+        self.assertEqual(fila_a[-1], round(150 / 290 * 100, 2))
+
+    def test_columna_manual_con_menos_valores_que_filas_deja_none_en_las_faltantes(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'titulo': 'Meta', 'valores': ['≥ 100']},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        filas_por_id = {f[0]: f for f in resultado['filas']}
+        self.assertEqual(filas_por_id['A'][2], '≥ 100')
+        self.assertIsNone(filas_por_id['B'][2])
+        self.assertIsNone(filas_por_id['C'][2])
+
+    def test_columna_manual_con_mas_valores_que_filas_ignora_los_sobrantes(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'titulo': 'Meta', 'valores': ['≥ 100', '≥ 80', '≥ 50', '≥ 0', '≥ 0']},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual(len(resultado['filas']), 3)
+
+    def test_columna_manual_usa_su_propio_total_tecleado(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'titulo': 'Meta', 'valores': ['≥ 100', '≥ 80', '≥ 50'], 'total': 'Cumplido'},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual(resultado['total'][2], 'Cumplido')
+
+    def test_columna_manual_sin_total_tecleado_queda_vacia_en_el_total(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'titulo': 'Meta', 'valores': ['≥ 100', '≥ 80', '≥ 50']},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertIsNone(resultado['total'][2])
+
+    def test_sin_ninguna_columna_real_ordena_alfabetico_por_identidad_y_porcentaje_en_cero(self):
+        columnas_valor = [{'manual': True, 'titulo': 'Meta', 'valores': ['x', 'y', 'z']}]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual([f[0] for f in resultado['filas']], ['A', 'B', 'C'])
+        self.assertTrue(all(f[-1] == 0 for f in resultado['filas']))
+        self.assertEqual(resultado['columnas'], ['producto', 'Meta', '% del total'])
+
+    def test_columna_manual_sin_titulo_usa_un_nombre_por_defecto(self):
+        columnas_valor = [
+            {'columna': 'ventas', 'tipo_agregacion': 'suma'},
+            {'manual': True, 'valores': ['a', 'b', 'c']},
+        ]
+        resultado = generic_charts.generar_datos_tabla(self._df(), 'producto', columnas_valor)
+        self.assertEqual(resultado['columnas'][2], 'Manual')
+
     def test_por_defecto_ya_no_trunca_a_5_filas_el_frontend_pagina_lo_que_llegue(self):
         df = pd.DataFrame({
             'producto': [f'P{i}' for i in range(12)],
@@ -508,6 +663,279 @@ class GenerarDatosTablaServiceTests(TestCase):
         columnas_valor = [{'columna': 'ventas', 'tipo_agregacion': 'suma'}]
         resultado = generic_charts.generar_datos_tabla(df, 'producto', columnas_valor, limite=5)
         self.assertEqual(len(resultado['filas']), 5)
+
+    def test_el_porcentaje_cierra_en_100_con_cualquier_tipo_de_agregacion_primaria(self):
+        """Regresión: el denominador es el total de la columna primaria TAL COMO SE MUESTRA en la
+        fila "Total", no la columna completa reagregada.
+
+        Con 'promedio' el denominador anterior era la media global, así que dividía la media de
+        cada grupo por la media global y la columna llegaba a mostrar 166% con un total de 333%.
+        Con 'conteo_unicos', un mismo valor presente en dos grupos se contaba dos veces en las
+        filas y una sola en el denominador, y los porcentajes cerraban en 125%.
+        """
+        df = pd.DataFrame({
+            'cliente': ['A', 'A', 'B', 'B', 'C'],
+            'saldo': [100, 100, 200, 200, 300],
+            'doc': ['d1', 'd2', 'd3', 'd4', 'd1'],
+        })
+        casos = [
+            ('suma', 'saldo'),
+            ('promedio', 'saldo'),
+            ('conteo_unicos', 'doc'),
+        ]
+        for tipo, columna in casos:
+            with self.subTest(tipo=tipo):
+                resultado = generic_charts.generar_datos_tabla(
+                    df, 'cliente', [{'columna': columna, 'tipo_agregacion': tipo}],
+                )
+                self.assertEqual(resultado['total'][-1], 100.0)
+                self.assertAlmostEqual(sum(f[-1] for f in resultado['filas']), 100.0, places=1)
+                self.assertTrue(all(0 <= f[-1] <= 100 for f in resultado['filas']))
+
+    def test_el_porcentaje_se_reparte_sobre_las_filas_mostradas_cuando_el_limite_recorta(self):
+        """Con el tope de filas activo, el porcentaje sigue coincidiendo con la fila "Total" que
+        el lector tiene a la vista (antes esa fila mostraba 77.78% y las filas no cerraban)."""
+        df = pd.DataFrame({'cliente': ['A', 'B', 'C'], 'saldo': [200, 400, 300]})
+        resultado = generic_charts.generar_datos_tabla(
+            df, 'cliente', [{'columna': 'saldo', 'tipo_agregacion': 'suma'}], limite=2,
+        )
+        self.assertEqual([f[0] for f in resultado['filas']], ['B', 'C'])
+        self.assertEqual(resultado['total'][1], 700.0)
+        self.assertEqual([f[-1] for f in resultado['filas']], [57.14, 42.86])
+        self.assertEqual(resultado['total'][-1], 100.0)
+
+    def test_el_porcentaje_usa_la_columna_primaria_aunque_haya_una_manual_antes(self):
+        """La columna manual no participa del porcentaje, así que el índice de la primaria en la
+        fila no coincide con su índice en `columnas_valor` — se verifica que no se desalinee."""
+        df = pd.DataFrame({'cliente': ['A', 'B'], 'saldo': [300, 100]})
+        resultado = generic_charts.generar_datos_tabla(df, 'cliente', [
+            {'manual': True, 'titulo': 'Meta', 'valores': [1, 2], 'total': 3},
+            {'columna': 'saldo', 'tipo_agregacion': 'suma'},
+        ])
+        filas_por_id = {f[0]: f for f in resultado['filas']}
+        self.assertEqual(filas_por_id['A'][-1], 75.0)
+        self.assertEqual(filas_por_id['B'][-1], 25.0)
+        self.assertEqual(resultado['total'][-1], 100.0)
+
+class DiasTranscurridosDesdeServiceTests(TestCase):
+    def test_fecha_pasada_da_dias_positivos(self):
+        hoy = date.today()
+        serie = pd.Series([(hoy - timedelta(days=45)).isoformat()])
+        resultado = generic_charts.dias_transcurridos_desde(serie)
+        self.assertEqual(resultado.iloc[0], 45)
+
+    def test_fecha_futura_da_dias_negativos(self):
+        hoy = date.today()
+        serie = pd.Series([(hoy + timedelta(days=10)).isoformat()])
+        resultado = generic_charts.dias_transcurridos_desde(serie)
+        self.assertEqual(resultado.iloc[0], -10)
+
+    def test_fecha_hoy_da_cero(self):
+        serie = pd.Series([date.today().isoformat()])
+        resultado = generic_charts.dias_transcurridos_desde(serie)
+        self.assertEqual(resultado.iloc[0], 0)
+
+    def test_fecha_invalida_da_nan(self):
+        serie = pd.Series(['no es una fecha'])
+        resultado = generic_charts.dias_transcurridos_desde(serie)
+        self.assertTrue(pd.isna(resultado.iloc[0]))
+
+
+class GenerarDatosTramosAntiguedadServiceTests(TestCase):
+    def _df_con_dias(self, lista_dias_saldo):
+        hoy = date.today()
+        return pd.DataFrame({
+            'vencimiento': [(hoy - timedelta(days=dias)).isoformat() for dias, _ in lista_dias_saldo],
+            'saldo': [saldo for _, saldo in lista_dias_saldo],
+        })
+
+    def test_bordes_exactos_de_cada_tramo(self):
+        df = self._df_con_dias([
+            (0, 100), (30, 200), (31, 300), (60, 400), (61, 500), (120, 600), (121, 700),
+        ])
+        resultado = generic_charts.generar_datos_tramos_antiguedad(df, 'vencimiento', 'saldo')
+        self.assertEqual(resultado['categorias'], generic_charts.ETIQUETAS_TRAMOS_ANTIGUEDAD)
+        esperado = dict(zip(resultado['categorias'], resultado['valores']))
+        self.assertEqual(esperado['Anticipada'], 100.0)
+        self.assertEqual(esperado['30 días'], 200.0)
+        self.assertEqual(esperado['60 días'], 300.0 + 400.0)
+        self.assertEqual(esperado['90 días'], 500.0)
+        self.assertEqual(esperado['120 días'], 600.0)
+        self.assertEqual(esperado['+120 días'], 700.0)
+
+    def test_fecha_invalida_queda_fuera_de_todos_los_tramos(self):
+        df = pd.DataFrame({'vencimiento': ['no es una fecha'], 'saldo': [999]})
+        resultado = generic_charts.generar_datos_tramos_antiguedad(df, 'vencimiento', 'saldo')
+        self.assertEqual(sum(resultado['valores']), 0.0)
+
+    def test_columna_faltante_devuelve_none(self):
+        df = pd.DataFrame({'saldo': [100]})
+        self.assertIsNone(generic_charts.generar_datos_tramos_antiguedad(df, 'vencimiento', 'saldo'))
+        df2 = pd.DataFrame({'vencimiento': [date.today().isoformat()]})
+        self.assertIsNone(generic_charts.generar_datos_tramos_antiguedad(df2, 'vencimiento', 'saldo'))
+
+
+class EvaluarMetaServiceTests(TestCase):
+    def test_sin_meta_devuelve_none(self):
+        self.assertIsNone(generic_charts.evaluar_meta(50, None, ''))
+
+    def test_solo_minimo_cumple(self):
+        resultado = generic_charts.evaluar_meta(50, 30, None)
+        self.assertTrue(resultado['cumple'])
+        self.assertEqual(resultado['motivos'], [])
+
+    def test_solo_minimo_no_cumple(self):
+        resultado = generic_charts.evaluar_meta(10, 30, None)
+        self.assertFalse(resultado['cumple'])
+        self.assertEqual(len(resultado['motivos']), 1)
+
+    def test_solo_maximo_no_cumple(self):
+        resultado = generic_charts.evaluar_meta(90, None, 50)
+        self.assertFalse(resultado['cumple'])
+        self.assertEqual(len(resultado['motivos']), 1)
+
+    def test_ambos_cumple(self):
+        resultado = generic_charts.evaluar_meta(50, 30, 70)
+        self.assertTrue(resultado['cumple'])
+
+    def test_ambos_no_cumple_da_dos_motivos(self):
+        # meta mal configurada a propósito (min > max) para probar que se acumulan los 2 motivos.
+        resultado = generic_charts.evaluar_meta(80, 90, 10)
+        self.assertFalse(resultado['cumple'])
+        self.assertEqual(len(resultado['motivos']), 2)
+
+
+class EtiquetaCumplimientoServiceTests(TestCase):
+    def test_sin_meta(self):
+        self.assertEqual(generic_charts.etiqueta_cumplimiento(None), 'Sin meta')
+
+    def test_cumple(self):
+        meta = generic_charts.evaluar_meta(50, 30, 70)
+        self.assertEqual(generic_charts.etiqueta_cumplimiento(meta), 'Cumple')
+
+    def test_no_cumple_tiene_prefijo(self):
+        meta = generic_charts.evaluar_meta(10, 30, None)
+        self.assertTrue(generic_charts.etiqueta_cumplimiento(meta).startswith('No cumple ('))
+
+
+class GenerarDatosCumplimientoTramosServiceTests(TestCase):
+    def _df(self):
+        hoy = date.today()
+        return pd.DataFrame({
+            'vencimiento': [
+                (hoy - timedelta(days=0)).isoformat(),
+                (hoy - timedelta(days=45)).isoformat(),
+                (hoy - timedelta(days=150)).isoformat(),
+            ],
+            'saldo': [100, 200, 700],
+        })
+
+    def test_acumulacion_y_porcentaje_correctos(self):
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(self._df(), 'vencimiento', 'saldo')
+        self.assertEqual(resultado['columnas'], ['Tramo', 'saldo', '% acumulado', 'Resultado'])
+        filas_por_tramo = {fila[0]: fila for fila in resultado['filas']}
+        self.assertEqual(filas_por_tramo['Corriente'][1], 100.0)
+        self.assertEqual(filas_por_tramo['Corriente'][2], 10.0)
+        self.assertEqual(filas_por_tramo['Vencido ≤ 60 días (acum.)'][1], 300.0)
+        self.assertEqual(filas_por_tramo['Vencido ≤ 60 días (acum.)'][2], 30.0)
+        # La última fila NO es un cierre al 100%: es la cola ">120 días" sola (no acumulada).
+        self.assertEqual(filas_por_tramo['Más de 120 días'][1], 700.0)
+        self.assertEqual(filas_por_tramo['Más de 120 días'][2], 70.0)
+        self.assertIsNone(resultado['total'])
+
+    def test_metas_por_posicion_dan_resultado_cumple_o_no_cumple(self):
+        metas = [
+            {'meta_min': 5}, {}, {'meta_min': 50}, None, None, {'meta_max': 50},
+        ]
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(self._df(), 'vencimiento', 'saldo', metas)
+        filas_por_tramo = {fila[0]: fila for fila in resultado['filas']}
+        self.assertEqual(filas_por_tramo['Corriente'][3], 'Cumple')
+        self.assertEqual(filas_por_tramo['Vencido ≤ 30 días (acum.)'][3], 'Sin meta')
+        self.assertTrue(filas_por_tramo['Vencido ≤ 60 días (acum.)'][3].startswith('No cumple ('))
+        self.assertTrue(filas_por_tramo['Más de 120 días'][3].startswith('No cumple ('))
+
+    def test_sin_metas_todas_las_filas_quedan_sin_meta(self):
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(self._df(), 'vencimiento', 'saldo', None)
+        self.assertTrue(all(fila[3] == 'Sin meta' for fila in resultado['filas']))
+
+    def test_columna_faltante_devuelve_none(self):
+        df = pd.DataFrame({'saldo': [100]})
+        self.assertIsNone(generic_charts.generar_datos_cumplimiento_tramos(df, 'vencimiento', 'saldo', None))
+
+    def test_el_acumulado_hasta_120_mas_la_cola_siempre_dan_100(self):
+        """El invariante real de la tabla: las 6 filas NO suman 100% entre sí, porque las 5
+        primeras se contienen unas a otras."""
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(self._df(), 'vencimiento', 'saldo')
+        self.assertAlmostEqual(resultado['filas'][4][2] + resultado['filas'][5][2], 100.0, places=2)
+
+    def test_una_fecha_invalida_no_desbalancea_los_porcentajes(self):
+        """Regresión: las filas cuya fecha no parsea quedan fuera de todos los tramos, así que
+        tampoco pueden estar en el denominador. Antes se incluían solo ahí y los porcentajes
+        cerraban por debajo de 100% sin ninguna señal."""
+        hoy = date.today()
+        df = pd.DataFrame({
+            'vencimiento': [
+                (hoy - timedelta(days=10)).isoformat(),
+                (hoy - timedelta(days=200)).isoformat(),
+                'no-es-una-fecha',
+            ],
+            'saldo': [50, 30, 20],
+        })
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(df, 'vencimiento', 'saldo')
+
+        self.assertAlmostEqual(resultado['filas'][4][2] + resultado['filas'][5][2], 100.0, places=2)
+        # Los 20 de la fila sin fecha válida no entran en ningún tramo ni en la base: 50 de 80.
+        self.assertEqual(resultado['filas'][4][1], 50.0)
+        self.assertAlmostEqual(resultado['filas'][4][2], 62.5, places=2)
+
+    def test_una_meta_no_se_incumple_por_filas_con_fecha_invalida(self):
+        """La consecuencia práctica del test anterior, en la unidad en que el usuario configura
+        la meta: antes esta misma meta daba "No cumple" con 50%."""
+        hoy = date.today()
+        df = pd.DataFrame({
+            'vencimiento': [(hoy - timedelta(days=10)).isoformat(), 'no-es-una-fecha'],
+            'saldo': [100, 100],
+        })
+        metas = [None, {'meta_min': 90}, None, None, None, None]
+        resultado = generic_charts.generar_datos_cumplimiento_tramos(df, 'vencimiento', 'saldo', metas)
+        self.assertEqual(resultado['filas'][1][3], 'Cumple')
+
+class GenerarDatosConcentracionServiceTests(TestCase):
+    def _df(self):
+        return pd.DataFrame({
+            'cliente': ['A', 'B', 'C', 'D', 'E'],
+            'saldo': [500, 300, 100, 60, 40],
+        })
+
+    def test_top_n_menor_a_la_cardinalidad_agrega_fila_resto(self):
+        resultado = generic_charts.generar_datos_concentracion(self._df(), 'cliente', 'saldo', top_n=2)
+        self.assertEqual(resultado['columnas'], ['cliente', 'saldo', '% del total', '% acumulado'])
+        self.assertEqual(len(resultado['filas']), 3)
+        self.assertEqual(resultado['filas'][0], ['A', 500.0, 50.0, 50.0])
+        self.assertEqual(resultado['filas'][1], ['B', 300.0, 30.0, 80.0])
+        fila_resto = resultado['filas'][2]
+        self.assertEqual(fila_resto[0], 'Resto (3)')
+        self.assertEqual(fila_resto[1], 200.0)
+        self.assertEqual(fila_resto[3], 100.0)
+        self.assertEqual(resultado['total'], ['Total', 1000.0, 100.0, 100.0])
+
+    def test_top_n_mayor_o_igual_a_la_cardinalidad_no_agrega_resto(self):
+        resultado = generic_charts.generar_datos_concentracion(self._df(), 'cliente', 'saldo', top_n=10)
+        self.assertEqual(len(resultado['filas']), 5)
+        self.assertNotIn('Resto', resultado['filas'][-1][0])
+
+    def test_top_n_menor_a_uno_se_trata_como_uno(self):
+        resultado = generic_charts.generar_datos_concentracion(self._df(), 'cliente', 'saldo', top_n=0)
+        self.assertEqual(resultado['filas'][0][0], 'A')
+        self.assertEqual(resultado['filas'][1][0], 'Resto (4)')
+
+    def test_top_n_no_numerico_se_trata_como_uno(self):
+        resultado = generic_charts.generar_datos_concentracion(self._df(), 'cliente', 'saldo', top_n='no numérico')
+        self.assertEqual(resultado['filas'][0][0], 'A')
+
+    def test_columna_faltante_devuelve_none(self):
+        df = pd.DataFrame({'saldo': [100]})
+        self.assertIsNone(generic_charts.generar_datos_concentracion(df, 'cliente', 'saldo', top_n=5))
 
 
 class RecomendacionDeDispersionServiceTests(TestCase):
@@ -640,6 +1068,74 @@ class FlujoApiAnalizarRecomendarYAgregarTests(TestCase):
         self.assertEqual(resp.status_code, 201)
         titulos = sorted(c['content']['titulo'] for c in resp.json()['components'])
         self.assertEqual(titulos, ['Cartera total', 'Saldo por causal'])
+
+    def test_agregar_grafica_kpi_con_meta_adjunta_meta_al_contenido(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cartera total', 'calculo': 'kpi', 'columna_valor': 'Saldo',
+            'meta_min': 1, 'meta_max': 2,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertIn('meta', componente['content'])
+        self.assertFalse(componente['content']['meta']['cumple'])
+
+    def test_agregar_grafica_tramos_antiguedad_caso_feliz(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Antigüedad', 'calculo': 'tramos_antiguedad',
+            'columna_valor': 'Saldo', 'columna_fecha': 'Fecha de Vencimiento',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['type'], 'chart')
+        self.assertEqual(componente['content']['categorias'], generic_charts.ETIQUETAS_TRAMOS_ANTIGUEDAD)
+
+    def test_agregar_grafica_tramos_antiguedad_sin_columna_fecha_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Antigüedad', 'calculo': 'tramos_antiguedad', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_FECHA_REQUERIDA')
+
+    def test_agregar_grafica_cumplimiento_metas_caso_feliz(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cumplimiento', 'calculo': 'cumplimiento_metas',
+            'columna_valor': 'Saldo', 'columna_fecha': 'Fecha de Vencimiento', 'metas': [{'meta_min': 10}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['chart_type'], 'tabla')
+        self.assertEqual(componente['content']['columnas'], ['Tramo', 'Saldo', '% acumulado', 'Resultado'])
+
+    def test_agregar_grafica_cumplimiento_metas_sin_columna_fecha_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cumplimiento', 'calculo': 'cumplimiento_metas', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_FECHA_REQUERIDA')
+
+    def test_agregar_grafica_concentracion_caso_feliz(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Concentración', 'calculo': 'concentracion',
+            'columna_valor': 'Saldo', 'columna_id': 'Cliente', 'top_n': 5,
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['chart_type'], 'tabla')
+        self.assertEqual(componente['content']['columnas'], ['Cliente', 'Saldo', '% del total', '% acumulado'])
+
+    def test_agregar_grafica_concentracion_sin_columna_id_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Concentración', 'calculo': 'concentracion', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_ID_REQUERIDA')
 
     def test_agregar_grafica_respeta_el_tipo_de_visualizacion_elegido(self):
         carga_id = self._subir_archivo()
@@ -823,6 +1319,123 @@ class FlujoApiAnalizarRecomendarYAgregarTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['error'], 'COLUMNA_VALOR_REQUERIDA')
 
+    def test_agregar_con_calculo_tabla_usa_historico_arma_una_fila_por_carga(self):
+        carga_previa = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='enero.xlsx')
+        historico.guardar_filas_historicas(carga_previa, pd.DataFrame({'Saldo': [100, 200]}), ['Saldo'])
+
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo histórico', 'calculo': 'tabla', 'usa_historico': True,
+            'columnas_valor': [{'columna': 'Saldo', 'tipo_agregacion': 'suma'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['content']['columnas'], ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'Saldo'])
+        self.assertEqual(componente['content']['filas'][0][-1], 300.0)
+        self.assertIsNone(componente['content']['total'])
+        self.assertTrue(componente['mapeo']['usa_historico'])
+
+    def test_agregar_con_calculo_tabla_usa_historico_sin_columna_elegida_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'X', 'calculo': 'tabla', 'usa_historico': True,
+            'columnas_valor': [None],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_VALOR_REQUERIDA')
+
+    def test_agregar_con_calculo_tabla_usa_historico_sin_columnas_valor_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'X', 'calculo': 'tabla', 'usa_historico': True,
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_VALOR_REQUERIDA')
+
+    def test_agregar_con_calculo_tabla_sin_usa_historico_no_persiste_ese_campo_en_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Detalle', 'calculo': 'tabla',
+            'columna_id': 'Causal', 'columnas_valor': [{'columna': 'Saldo', 'tipo_agregacion': 'suma'}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertNotIn('usa_historico', componente['mapeo'])
+
+    def _crear_carga_historica(self, columnas):
+        carga = CargaArchivo.objects.create(dashboard_id='finanzas', nombre_original='enero.xlsx')
+        historico.guardar_filas_historicas(carga, pd.DataFrame(columnas), list(columnas.keys()))
+        return carga
+
+    def test_agregar_con_calculo_kpi_usa_historico_toma_el_valor_de_la_carga_mas_reciente(self):
+        self._crear_carga_historica({'Saldo': [100, 200]})
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo histórico', 'calculo': 'kpi', 'usa_historico': True,
+            'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['type'], 'kpi')
+        self.assertEqual(componente['content']['valor'], 300.0)
+        self.assertTrue(componente['mapeo']['usa_historico'])
+
+    def test_agregar_con_calculo_kpi_usa_historico_sin_datos_historicos_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'X', 'calculo': 'kpi', 'usa_historico': True, 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_INVALIDA')
+
+    def test_agregar_con_calculo_chart_usa_historico_arma_una_categoria_por_carga(self):
+        self._crear_carga_historica({'Saldo': [100, 200]})
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo histórico', 'calculo': 'chart', 'usa_historico': True,
+            'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['content']['categorias'], ['enero.xlsx'])
+        self.assertEqual(componente['content']['valores'], [300.0])
+        self.assertTrue(componente['mapeo']['usa_historico'])
+
+    def test_agregar_con_calculo_multivalor_usa_historico_arma_una_serie_por_columna(self):
+        self._crear_carga_historica({'Saldo': [100, 200], 'Dias credito': [10, 20]})
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Comparación histórica', 'calculo': 'multivalor', 'usa_historico': True,
+            'columnas_valor': ['Saldo', 'Dias credito'],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['content']['categorias'], ['enero.xlsx'])
+        self.assertEqual(len(componente['content']['series']), 2)
+        self.assertTrue(componente['mapeo']['usa_historico'])
+
+    def test_agregar_con_calculo_multiserie_usa_historico_arma_una_serie_por_valor_de_columna_serie(self):
+        self._crear_carga_historica({'Saldo': [100, 200], 'Causal': ['GESTIONANDO', 'PAGADO']})
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo por causal (histórico)', 'calculo': 'multiserie', 'usa_historico': True,
+            'columna_valor': 'Saldo', 'columna_serie': 'Causal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        componente = resp.json()['components'][0]
+        self.assertEqual(componente['content']['categorias'], ['enero.xlsx'])
+        nombres_serie = sorted(s['nombre'] for s in componente['content']['series'])
+        self.assertEqual(nombres_serie, ['GESTIONANDO', 'PAGADO'])
+        self.assertTrue(componente['mapeo']['usa_historico'])
+
+    def test_agregar_con_calculo_multiserie_usa_historico_sin_columna_serie_devuelve_400(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'X', 'calculo': 'multiserie', 'usa_historico': True, 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'COLUMNA_SERIE_REQUERIDA')
+
     def test_agregar_con_calculo_multivalor_calcula_series_por_columna(self):
         carga_id = self._subir_archivo()
         resp = self.client.post('/api/cartera/agregar-grafica', {
@@ -905,3 +1518,168 @@ class FlujoApiAnalizarRecomendarYAgregarTests(TestCase):
         }, format='json')
         self.assertEqual(resp.status_code, 201)
         self.assertNotIn('zona', resp.json()['components'][0]['config'])
+
+    def test_instruccion_ia_y_columna_contexto_quedan_en_config_con_su_desglose_calculado(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo por zona', 'columna_valor': 'Saldo',
+            'columna_categoria': 'Zona', 'zona': 'personal',
+            'instruccion_ia': 'Explicá los totales por la causal de gestión.',
+            'columna_contexto_ia': 'Causal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        config = resp.json()['components'][0]['config']
+        self.assertEqual(config['instruccion_ia'], 'Explicá los totales por la causal de gestión.')
+        self.assertEqual(config['contexto_ia']['columna'], 'Causal')
+        self.assertTrue(len(config['contexto_ia']['categorias']) > 0)
+        self.assertEqual(len(config['contexto_ia']['categorias']), len(config['contexto_ia']['valores']))
+
+    def test_sin_instruccion_ia_ni_columna_contexto_no_quedan_en_config(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cartera total', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        config = resp.json()['components'][0]['config']
+        self.assertNotIn('instruccion_ia', config)
+        self.assertNotIn('contexto_ia', config)
+
+    def test_columna_contexto_ia_invalida_no_rompe_ni_agrega_el_desglose(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cartera total', 'columna_valor': 'Saldo',
+            'columna_contexto_ia': 'Columna que no existe',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertNotIn('contexto_ia', resp.json()['components'][0]['config'])
+
+    def test_agregar_grafica_con_calculo_kpi_guarda_el_mapeo(self):
+        """`mapeo` es lo que permite reconfigurar después la fuente de datos desde "Configurar
+        componente" → "Datos" — sin `calculo` explícito (flujo legado) no se guarda nada acá."""
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Mi KPI', 'calculo': 'kpi', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'kpi', 'columna_valor': 'Saldo',
+        })
+
+    def test_agregar_grafica_con_calculo_kpi_y_tipo_agregacion_lo_guarda_en_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Clientes únicos', 'calculo': 'kpi',
+            'columna_valor': 'Ruc Cliente', 'tipo_agregacion': 'conteo_unicos',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'kpi', 'columna_valor': 'Ruc Cliente', 'tipo_agregacion': 'conteo_unicos',
+        })
+
+    def test_agregar_grafica_con_calculo_chart_guarda_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo por causal', 'calculo': 'chart',
+            'columna_valor': 'Saldo', 'columna_categoria': 'Causal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'chart', 'columna_valor': 'Saldo', 'columna_categoria': 'Causal',
+        })
+
+    def test_agregar_grafica_con_calculo_multivalor_guarda_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Comparación', 'calculo': 'multivalor',
+            'columna_categoria': 'Causal', 'columnas_valor': ['Saldo', 'Dias credito'],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'multivalor', 'columna_categoria': 'Causal',
+            'columnas_valor': ['Saldo', 'Dias credito'],
+        })
+
+    def test_agregar_grafica_con_calculo_multiserie_guarda_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo por ciudad y causal', 'calculo': 'multiserie',
+            'columna_valor': 'Saldo', 'columna_categoria': 'Lugar Geográfico', 'columna_serie': 'Causal',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'multiserie', 'columna_categoria': 'Lugar Geográfico',
+            'columna_serie': 'Causal', 'columna_valor': 'Saldo',
+        })
+
+    def test_agregar_grafica_con_calculo_dispersion_guarda_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Saldo vs. Dias credito', 'calculo': 'dispersion',
+            'columna_valor': 'Saldo', 'columna_valor_y': 'Dias credito',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'dispersion', 'columna_valor': 'Saldo', 'columna_valor_y': 'Dias credito',
+        })
+
+    def test_agregar_grafica_con_calculo_tabla_guarda_el_mapeo(self):
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Detalle', 'calculo': 'tabla',
+            'columna_id': 'Cliente', 'columnas_valor': ['Saldo'],
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'tabla', 'columna_id': 'Cliente', 'columnas_valor': ['Saldo'],
+        })
+
+    def test_agregar_grafica_sin_calculo_explicito_igual_guarda_el_mapeo_inferido(self):
+        """Flujo legado de recomendaciones automáticas (`calculo` no viene, se infiere por
+        `tipo_visualizacion`) — la inferencia es igual de determinística que un `calculo`
+        explícito, así que también queda reconfigurable después desde "Datos"."""
+        carga_id = self._subir_archivo()
+        resp = self.client.post('/api/cartera/agregar-grafica', {
+            'carga_id': carga_id, 'titulo': 'Cartera total', 'columna_valor': 'Saldo',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.json()['components'][0]['mapeo'], {
+            'disponible': True, 'calculo': 'chart', 'columna_valor': 'Saldo', 'columna_categoria': None,
+        })
+
+
+class ColapsoEnOtrasTests(TestCase):
+    """Nada que quede fuera del top puede desaparecer sin dejar una fila/serie 'Otras'."""
+
+    def test_otras_aparece_aunque_el_resto_sume_exactamente_cero(self):
+        """Dos categorías que se cancelan (+50 y −50) desaparecían del gráfico: el `if resto:`
+        omitía la barra y con ella toda señal de que existían."""
+        datos = {f'C{i}': 100 - i for i in range(15)}
+        datos['X'], datos['Y'] = 50, -50
+        df = pd.DataFrame({'cat': list(datos.keys()), 'val': list(datos.values())})
+
+        resultado = generic_charts.generar_datos_grafica(df, 'val', 'cat')
+
+        self.assertIn('Otras', resultado['categorias'])
+        self.assertEqual(resultado['valores'][resultado['categorias'].index('Otras')], 0.0)
+
+    def test_multivalor_rankea_las_categorias_por_la_suma_de_todas_las_columnas(self):
+        """Rankeando solo por la primera columna, los meses de mayor INGRESO quedaban colapsados
+        en 'Otras' porque eran justo los de menor GASTO — el gráfico escondía lo que se quería
+        comparar.
+
+        Los gastos bajan de 20 a 1 y los ingresos suben de 0 a 1900, así que los dos criterios
+        eligen conjuntos opuestos: por gastos entran M00..M14, por la suma entran M05..M19.
+        """
+        filas = [
+            {'mes': f'M{i:02d}', 'gastos': 20 - i, 'ingresos': i * 100}
+            for i in range(20)
+        ]
+
+        resultado = generic_charts.generar_datos_multivalor(pd.DataFrame(filas), 'mes', ['gastos', 'ingresos'])
+
+        mostradas = [c for c in resultado['categorias'] if c != 'Otras']
+        # Los 5 meses de mayor ingreso tienen que estar entre los visibles.
+        for mes in ('M19', 'M18', 'M17', 'M16', 'M15'):
+            self.assertIn(mes, mostradas)
+        # Y los de menor ingreso (y mayor gasto) son los que se colapsan.
+        self.assertNotIn('M00', mostradas)

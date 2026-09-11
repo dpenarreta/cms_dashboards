@@ -2,6 +2,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.validators import UnicodeUsernameValidator
 from rest_framework import serializers
 
+from apps.core.password import campo_password, validar_fortaleza
+
 User = get_user_model()
 
 
@@ -79,7 +81,14 @@ class AvatarUploadSerializer(serializers.Serializer):
 
 class ChangeOwnPasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(trim_whitespace=False)
-    new_password = serializers.CharField(trim_whitespace=False, min_length=8)
+    new_password = serializers.CharField(trim_whitespace=False)
+
+    def validate_new_password(self, value):
+        # Se pasa el usuario autenticado para que `UserAttributeSimilarityValidator` pueda
+        # comparar la contraseña nueva contra su username/nombre/correo — es la única de las
+        # cuatro rutas donde la instancia real está disponible sin resolver nada.
+        usuario = self.context['request'].user if self.context.get('request') else None
+        return validar_fortaleza(value, usuario)
 
 
 class PasswordResetRequestSerializer(serializers.Serializer):
@@ -111,7 +120,10 @@ class EmailTemplateUpdateSerializer(serializers.Serializer):
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     token = serializers.CharField()
-    new_password = serializers.CharField(trim_whitespace=False, min_length=8)
+    # Sin `usuario`: acá todavía no se resolvió el token, así que la comparación por similitud la
+    # hace `PasswordResetService.confirmar`, que sí tiene la instancia. Los otros tres
+    # validadores (longitud, contraseñas comunes, solo numéricas) ya aplican en este punto.
+    new_password = campo_password()
     confirm_password = serializers.CharField(trim_whitespace=False)
 
     def validate(self, data):

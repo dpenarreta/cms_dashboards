@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Alert, Button, Form, Modal, Nav, Spinner } from 'react-bootstrap'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
@@ -185,11 +185,17 @@ export default function DashboardTabsBar({ dashboardId, modoEdicion = false }) {
   const [mostrarModalEditar, setMostrarModalEditar] = useState(false)
   const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false)
 
-  const cargar = () => {
+  // `useCallback` + `cargar` en las dependencias del efecto, en vez de la supresión con
+  // `eslint-disable-line` que usan otros 13 lugares del repo: acá la corrección real es de una
+  // línea. Sin memoizar, `cargar` se recreaba en cada render y no podía listarse (habría
+  // reejecutado el efecto en bucle), así que la única dependencia declarada era `dashboardId`.
+  // Funcionaba porque es lo único que `cargar` captura hoy — pero cualquier dependencia que se le
+  // agregue después dejaría el efecto sin volver a dispararse, con la clausura vieja.
+  const cargar = useCallback(() => {
     return dashboardLayoutService.obtenerPestanas(dashboardId).then(setPestanas).catch(() => setPestanas(null))
-  }
+  }, [dashboardId])
 
-  useEffect(() => { cargar() }, [dashboardId])
+  useEffect(() => { cargar() }, [cargar])
 
   const crear = async (name) => {
     const pestana = await dashboardLayoutService.crearPestana(dashboardId, { name })

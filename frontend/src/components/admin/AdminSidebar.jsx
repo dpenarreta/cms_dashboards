@@ -24,7 +24,7 @@ export default function AdminSidebar() {
   const nombreMostrado = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username
 
   return (
-    <aside className={`admin-sidebar ${colapsado ? 'admin-sidebar--colapsado' : ''}`}>
+    <aside className={`admin-sidebar d-print-none ${colapsado ? 'admin-sidebar--colapsado' : ''}`}>
       <button
         type="button"
         className="admin-sidebar__toggle"

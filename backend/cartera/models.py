@@ -19,6 +19,78 @@ class Dashboard(models.Model):
     # (`services/dashboard_interpretation.py`) sobre qué es este dashboard y qué representan sus
     # datos — nunca se renderiza dentro del dashboard en sí, a diferencia de `description`.
     contexto = models.TextField(blank=True, default='')
+
+    class FuenteBDTipo(models.TextChoices):
+        VISTA = 'vista', 'Vista'
+        PROCEDIMIENTO = 'procedimiento', 'Procedimiento almacenado'
+
+    # Fuente de datos externa opcional para este dashboard/pestaña puntual ("Conectar vista de
+    # base de datos" en `DashboardAreaPage.jsx`) — la conexión en sí (servidor/credenciales) es
+    # una única conexión "por defecto" a nivel de app (`EXTERNAL_DB_*` en settings, ver
+    # `services/db_source.py`); acá solo se guarda QUÉ objeto de esa base consultar. Vacío (el
+    # default de todo dashboard existente) significa que este dashboard sigue alimentándose
+    # exclusivamente por carga de Excel — ambas fuentes no son excluyentes en el modelo, pero la
+    # UI expone una sola vía a la vez por dashboard.
+    fuente_bd_tipo = models.CharField(max_length=20, choices=FuenteBDTipo.choices, blank=True, default='')
+    fuente_bd_nombre = models.CharField(max_length=255, blank=True, default='')
+    # Parámetros con nombre para un `fuente_bd_tipo='procedimiento'` que los exija (ej.
+    # `{"FechaCorte": "2026-07-31"}` para `EXEC dbo.sp_x @FechaCorte = ?`) — solo aplica a
+    # procedimientos, una vista se consulta siempre como `SELECT * FROM <vista>` sin parámetros.
+    # Los VALORES se bindean como parámetro pyodbc real (nunca interpolados en el SQL, ver
+    # `services/db_source.py::leer_fuente`); solo los NOMBRES se validan por regex (van armados en
+    # el texto de la consulta como `@nombre = ?`, un identificador no se puede parametrizar).
+    fuente_bd_parametros = models.JSONField(default=dict, blank=True)
+
+    class FuenteBDFechaFormato(models.TextChoices):
+        """Formato de texto en el que se envía el VALOR de `FechaCorte` al ejecutar el
+        procedimiento (`services/db_source.py::leer_fuente`) — el valor en sí siempre se guarda en
+        `fuente_bd_parametros` como ISO (`YYYY-MM-DD`, lo único que puede entregar el
+        `<input type="date">` del frontend); este catálogo solo decide cómo se reescribe recién al
+        armar la consulta, nunca cambia lo guardado — así `services/fuente_bd_scheduler.py::
+        avanzar_fecha_corte` (que asume ISO al leer el valor guardado) sigue funcionando sin
+        cambios sea cual sea el formato de envío elegido."""
+        ISO = 'YYYY-MM-DD', 'AAAA-MM-DD (2026-07-31)'
+        DIA_MES_ANIO = 'DD/MM/YYYY', 'DD/MM/AAAA (31/07/2026)'
+        MES_DIA_ANIO = 'MM/DD/YYYY', 'MM/DD/AAAA (07/31/2026)'
+        ISO_CON_HORA = 'YYYY-MM-DD HH:mm:ss', 'AAAA-MM-DD HH:mm:ss (2026-07-31 00:00:00)'
+
+    # Solo tiene efecto cuando el procedimiento recibe `FechaCorte` (`fuente_bd_parametros` la
+    # trae) — vacío/`ISO` (el default) reproduce el comportamiento de siempre. Ver
+    # `services/db_source.py::formatear_valor_fecha_corte`.
+    fuente_bd_fecha_formato = models.CharField(
+        max_length=30, choices=FuenteBDFechaFormato.choices, blank=True, default=FuenteBDFechaFormato.ISO,
+    )
+
+    class FuenteBDFrecuencia(models.TextChoices):
+        SEMANAL = 'semanal', 'Semanal (todos los domingos)'
+        MENSUAL = 'mensual', 'Mensual (mismo día del mes)'
+
+    # Actualización automática opcional de la fuente de base de datos, sin intervención humana —
+    # `services/fuente_bd_scheduler.py` (disparado por `manage.py actualizar_fuentes_bd`, sin
+    # ningún programador de tareas propio de la app, ver docstring del comando) reconecta y
+    # reaplica el ÚLTIMO mapeo/alias confirmados por un humano (`fuente_bd_ultimo_mapeo`/
+    # `fuente_bd_ultimo_aliases` abajo) — nunca vuelve a mostrar el asistente de columnas. Vacío
+    # (default) significa que este dashboard solo se actualiza cuando alguien hace clic en
+    # "Conectar vista de base de datos" a mano.
+    fuente_bd_frecuencia_actualizacion = models.CharField(
+        max_length=20, choices=FuenteBDFrecuencia.choices, blank=True, default='',
+    )
+    # Ancla de la recurrencia: el día en que se (re)configuró la frecuencia actual (nunca se toca
+    # al reconectar manualmente sin cambiar la frecuencia). "Semanal" solo la usa para saber desde
+    # cuándo rige (la ejecución en sí siempre es domingo); "Mensual" toma el día-del-mes de acá
+    # para repetir ese mismo número todos los meses (`fuente_bd_scheduler.debe_actualizarse_hoy`).
+    fuente_bd_fecha_configuracion = models.DateField(null=True, blank=True)
+    # Última vez que la actualización AUTOMÁTICA corrió con éxito para este dashboard — evita
+    # correrla dos veces el mismo domingo/día-del-mes si el comando se invoca más de una vez, y es
+    # la referencia para saber si "hoy" ya le toca de nuevo.
+    fuente_bd_ultima_actualizacion_automatica = models.DateField(null=True, blank=True)
+    # Foto del `mapeo`/`aliases` de la ÚLTIMA vez que un humano confirmó "Aplicar a la plantilla"
+    # para este dashboard (`views.AplicarMapeoPlantillaView`, cualquiera sea el origen del archivo)
+    # — es lo que `fuente_bd_scheduler` reaplica sin intervención en cada actualización automática,
+    # así una actualización no puede "romper" un mapeo que un humano ajustó a mano, ni pedirle a
+    # nadie que lo repita.
+    fuente_bd_ultimo_mapeo = models.JSONField(default=dict, blank=True)
+    fuente_bd_ultimo_aliases = models.JSONField(default=dict, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Pestañas dentro de un mismo dashboard: cada pestaña es un `Dashboard` más (su propia

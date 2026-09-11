@@ -19,10 +19,17 @@ function renderConRuta(permission) {
 }
 
 describe('RequirePermission', () => {
-  it('mientras inicializa, no renderiza nada (evita un parpadeo a login)', () => {
+  it('mientras inicializa muestra un indicador de carga, no la pantalla protegida ni login', () => {
+    // Devolvía `null`, así que al recargar cualquier pantalla el usuario veía una página en
+    // blanco y no podía distinguir "está cargando" de "se rompió". Lo importante sigue siendo
+    // que NO parpadee a login mientras se resuelve la sesión.
     useAuth.mockReturnValue({ isInitializing: true, isAuthenticated: false, user: null })
-    const { container } = renderConRuta('dashboard.view')
-    expect(container).toBeEmptyDOMElement()
+    renderConRuta('dashboard.view')
+
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    expect(screen.getByText('Restaurando sesión…')).toBeInTheDocument()
+    expect(screen.queryByText('pagina-login')).not.toBeInTheDocument()
+    expect(screen.queryByText('contenido-protegido')).not.toBeInTheDocument()
   })
 
   it('sin autenticar, redirige a /login', () => {

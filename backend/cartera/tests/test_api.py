@@ -228,6 +228,33 @@ class FlujoCompletoApiTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn('spreadsheetml', resp['Content-Type'])
 
+    def test_exportar_csv(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/exportar/{carga_id}', {'formato': 'csv'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('text/csv', resp['Content-Type'])
+
+    def test_exportar_con_formato_invalido_es_un_error_de_negocio(self):
+        """Antes cualquier valor distinto de `csv` devolvía un .xlsx en silencio, así que un typo
+        en el parámetro entregaba un archivo distinto del pedido sin ningún aviso."""
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/exportar/{carga_id}', {'formato': 'pdf'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'FORMATO_EXPORTACION_INVALIDO')
+        self.assertEqual(resp.json()['detalles']['permitidos'], ['xlsx', 'csv'])
+
+    def test_exportar_con_tipo_invalido_es_un_error_de_negocio(self):
+        carga_id, mapeo = self._validar_y_mapear()
+        self._procesar(carga_id, mapeo)
+
+        resp = self.client.get(f'/api/cartera/exportar/{carga_id}', {'tipo': 'resumen'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'TIPO_EXPORTACION_INVALIDO')
+
     def test_page_size_no_permitido_usa_fallback_sin_error(self):
         carga_id, mapeo = self._validar_y_mapear()
         self._procesar(carga_id, mapeo)

@@ -63,29 +63,36 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('Configuración institucional guardada.')).toBeInTheDocument()
   })
 
-  it('restablecer pide confirmación y refresca el tema global', async () => {
+  it('restablecer pide confirmación en un modal y refresca el tema global al confirmar', async () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
     brandingService.reset.mockResolvedValue(TEMA)
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirmSpy = vi.spyOn(window, 'confirm')
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     await screen.findByDisplayValue('Dashboard de Cartera')
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
 
-    expect(window.confirm).toHaveBeenCalled()
+    // El clic abre el modal, no ejecuta la acción — y nunca usa el diálogo nativo.
+    expect(brandingService.reset).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByText('Restablecer configuración institucional')).toBeInTheDocument()
+
+    const botones = screen.getAllByRole('button', { name: 'Restablecer' })
+    await userEvent.click(botones[botones.length - 1])
+
     await waitFor(() => expect(brandingService.reset).toHaveBeenCalled())
     expect(reloadTheme).toHaveBeenCalled()
   })
 
-  it('si se cancela la confirmación, no restablece', async () => {
+  it('si se cancela el modal, no restablece', async () => {
     brandingService.getAdmin.mockResolvedValue(TEMA)
     brandingService.options.mockResolvedValue(OPCIONES)
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<MemoryRouter><SettingsPage /></MemoryRouter>)
 
     await screen.findByDisplayValue('Dashboard de Cartera')
     await userEvent.click(screen.getByRole('button', { name: 'Restablecer' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
     expect(brandingService.reset).not.toHaveBeenCalled()
   })

@@ -5,7 +5,8 @@ import * as historicoService from '../../services/historicoService'
 import * as carteraService from '../../services/carteraService'
 import ConfirmModal from '../../components/dashboard-editor/ConfirmModal'
 import GenericDataTable from '../../components/dashboard-generic/GenericDataTable'
-import { SelectorColumna, SelectorTipoAgregacion, normalizarColumnaValorTabla } from '../../components/dashboard-generic/SlotFields'
+import { SelectorColumna, SelectorTipoAgregacion } from '../../components/dashboard-generic/SlotFields'
+import { normalizarColumnaValorTabla } from '../../components/dashboard-generic/slotFieldsData'
 import { formatDate, formatNumber } from '../../utils/format'
 
 /**

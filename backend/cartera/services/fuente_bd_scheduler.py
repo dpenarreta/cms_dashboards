@@ -1,0 +1,193 @@
+"""Actualización automática de "Conectar vista de base de datos", sin ningún programador de
+tareas propio de la app — no hay Celery/cron configurado en este proyecto (ver
+`docs/integracion/decisions.md`, no existía ninguna infraestructura de este tipo antes de este
+módulo). El único disparador es `manage.py actualizar_fuentes_bd` (mismo patrón que
+`clean_temp_uploads`), pensado para que un programador EXTERNO al sistema operativo (Windows Task
+Scheduler en desarrollo, cron en producción) lo invoque una vez al día — este módulo decide, cada
+vez que lo llaman, cuáles de los dashboards con una frecuencia configurada les toca actualizarse
+HOY, y ejecuta esa actualización.
+
+Reglas de negocio (confirmadas explícitamente, no asumidas):
+- Solo dos frecuencias: "semanal" (siempre domingo) y "mensual" (mismo día-del-mes que cuando se
+  configuró la frecuencia, sin ajustar a fin de semana — así se pidió explícitamente).
+- Sin intervención humana: no se puede mostrar el asistente de columnas a nadie. Se reaplica el
+  ÚLTIMO mapeo/aliases que un humano confirmó a mano para ese dashboard
+  (`Dashboard.fuente_bd_ultimo_mapeo`/`fuente_bd_ultimo_aliases`, escritos por
+  `views.AplicarMapeoPlantillaView`). Si nunca hubo una confirmación manual, no hay nada que
+  reaplicar — esa actualización se salta (no es un error del dashboard, simplemente todavía no
+  tiene un mapeo de referencia).
+- El parámetro `FechaCorte` (si el procedimiento lo usa) avanza solo, un período por ejecución
+  (7 días para semanal, 1 mes para mensual) — si no avanzara, cada actualización automática
+  traería exactamente los mismos datos que la anterior.
+- Cualquier falla (conexión, columnas incompatibles con el mapeo guardado, etc.) se captura y se
+  informa — nunca interrumpe la actualización del resto de los dashboards ni dispara ninguna
+  excepción sin capturar hacia el comando.
+"""
+
+from datetime import date, timedelta
+
+from dateutil.relativedelta import relativedelta
+from django.conf import settings
+
+from ..exceptions import CarteraError
+from ..models import CargaArchivo, Dashboard
+from ..utils.archivos import asegurar_directorio
+from . import db_source, historico, plantilla
+
+
+def _dia_objetivo_del_mes(dia_ancla, anio, mes):
+    """El día-del-mes ancla, recortado al último día real de ESE mes (ej. ancla=31 en un febrero
+    de 28 días corre el 28) — necesario porque no todos los meses tienen la misma cantidad de
+    días; no se pidió explícitamente qué hacer en ese caso, así que se toma el criterio más
+    predecible (nunca "salta" al mes siguiente ni corre dos veces el mismo mes)."""
+    ultimo_dia_del_mes = (date(anio, mes % 12 + 1, 1) - relativedelta(days=1)).day if mes < 12 else 31
+    return min(dia_ancla, ultimo_dia_del_mes)
+
+
+def debe_actualizarse_hoy(dashboard, hoy=None):
+    """`True` si a `dashboard` le toca una actualización automática en la fecha `hoy` (por
+    defecto, hoy de verdad) — no ejecuta nada, solo decide."""
+    hoy = hoy or date.today()
+    if not dashboard.fuente_bd_nombre or not dashboard.fuente_bd_frecuencia_actualizacion:
+        return False
+    if dashboard.fuente_bd_ultima_actualizacion_automatica == hoy:
+        return False  # ya corrió hoy — no correr dos veces si el comando se invoca más de una vez
+
+    if dashboard.fuente_bd_frecuencia_actualizacion == Dashboard.FuenteBDFrecuencia.SEMANAL:
+        return hoy.weekday() == 6  # domingo (Python: lunes=0 .. domingo=6)
+
+    if dashboard.fuente_bd_frecuencia_actualizacion == Dashboard.FuenteBDFrecuencia.MENSUAL:
+        ancla = dashboard.fuente_bd_fecha_configuracion
+        if not ancla:
+            return False
+        return hoy.day == _dia_objetivo_del_mes(ancla.day, hoy.year, hoy.month)
+
+    return False
+
+
+def proxima_actualizacion(dashboard, hoy=None):
+    """Próxima fecha (>= hoy) en la que le tocaría una actualización automática a `dashboard`, o
+    `None` si no tiene fuente/frecuencia configurada — pura consulta, no ejecuta nada. La usa
+    `DashboardAreaPage.jsx` (vía `services/dashboards.py::obtener_fuente_bd`) para mostrar "Próxima
+    actualización automática: ...". Mismo criterio de "ya corrió hoy" que `debe_actualizarse_hoy`,
+    para no mostrar hoy mismo como próxima fecha si la actualización de hoy ya se ejecutó."""
+    hoy = hoy or date.today()
+    if not dashboard.fuente_bd_nombre or not dashboard.fuente_bd_frecuencia_actualizacion:
+        return None
+    ya_corrio_hoy = dashboard.fuente_bd_ultima_actualizacion_automatica == hoy
+
+    if dashboard.fuente_bd_frecuencia_actualizacion == Dashboard.FuenteBDFrecuencia.SEMANAL:
+        dias_hasta_domingo = (6 - hoy.weekday()) % 7  # 0 si hoy ya es domingo
+        candidato = hoy + timedelta(days=dias_hasta_domingo)
+        if candidato == hoy and ya_corrio_hoy:
+            candidato += timedelta(days=7)
+        return candidato
+
+    if dashboard.fuente_bd_frecuencia_actualizacion == Dashboard.FuenteBDFrecuencia.MENSUAL:
+        ancla = dashboard.fuente_bd_fecha_configuracion
+        if not ancla:
+            return None
+        candidato = date(hoy.year, hoy.month, _dia_objetivo_del_mes(ancla.day, hoy.year, hoy.month))
+        if candidato < hoy or (candidato == hoy and ya_corrio_hoy):
+            anio_siguiente, mes_siguiente = (hoy.year, hoy.month + 1) if hoy.month < 12 else (hoy.year + 1, 1)
+            candidato = date(anio_siguiente, mes_siguiente, _dia_objetivo_del_mes(ancla.day, anio_siguiente, mes_siguiente))
+        return candidato
+
+    return None
+
+
+def avanzar_fecha_corte(parametros, frecuencia):
+    """Devuelve una copia de `parametros` con su (único) parámetro de fecha de corte — si existe y
+    es una fecha ISO válida — avanzada un período según `frecuencia`: 7 días para semanal, 1 mes
+    calendario para mensual. El NOMBRE de ese parámetro es configurable (`ConectarFuenteBDModal.jsx`,
+    "Nombre del parámetro", guardado como la única clave de `Dashboard.fuente_bd_parametros`) —
+    esta función no asume "FechaCorte" a propósito, toma la primera (y hoy única) entrada del
+    dict, sea cual sea su nombre. Cualquier valor no parseable como fecha ISO queda sin tocar (de
+    mejor esfuerzo: un valor no-fecha no debe romper la actualización entera)."""
+    if not parametros:
+        return dict(parametros or {})
+    nombre_parametro, valor = next(iter(parametros.items()))
+    if not valor:
+        return dict(parametros)
+    try:
+        fecha = date.fromisoformat(str(valor).strip())
+    except ValueError:
+        return dict(parametros)
+
+    if frecuencia == Dashboard.FuenteBDFrecuencia.SEMANAL:
+        nueva_fecha = fecha + relativedelta(days=7)
+    elif frecuencia == Dashboard.FuenteBDFrecuencia.MENSUAL:
+        nueva_fecha = fecha + relativedelta(months=1)
+    else:
+        return dict(parametros)
+
+    return {**parametros, nombre_parametro: nueva_fecha.isoformat()}
+
+
+def actualizar_dashboard(dashboard, hoy=None):
+    """Ejecuta UNA actualización automática para `dashboard` — asume que ya se determinó que
+    corresponde hoy (`debe_actualizarse_hoy`), no lo vuelve a chequear. Nunca lanza: siempre
+    devuelve `{'ok': bool, 'mensaje': str}` para que `manage.py actualizar_fuentes_bd` pueda seguir
+    con el resto de los dashboards aunque este falle."""
+    hoy = hoy or date.today()
+
+    if not dashboard.fuente_bd_ultimo_mapeo:
+        return {
+            'ok': False,
+            'mensaje': 'Este dashboard nunca tuvo un mapeo confirmado manualmente '
+                       '("Conectar vista de base de datos" al menos una vez) — no hay nada que reaplicar.',
+        }
+
+    parametros_nuevos = avanzar_fecha_corte(dashboard.fuente_bd_parametros, dashboard.fuente_bd_frecuencia_actualizacion)
+
+    try:
+        df = db_source.leer_fuente(
+            dashboard.fuente_bd_tipo, dashboard.fuente_bd_nombre, parametros_nuevos,
+            fecha_formato=dashboard.fuente_bd_fecha_formato,
+        )
+        carga = db_source.crear_carga_temporal(
+            dashboard.dashboard_id, df, f'{dashboard.fuente_bd_nombre} (actualización automática)',
+        )
+        df = db_source.aplicar_alias_columnas(df, dashboard.fuente_bd_ultimo_aliases)
+
+        plantilla.aplicar_mapeo(
+            dashboard.dashboard_id, df, dashboard.fuente_bd_ultimo_mapeo,
+            fecha_referencia=carga.fecha_corte,
+        )
+
+        nombre_permanente = f'{carga.id}.xlsx'
+        ruta_permanente = asegurar_directorio(settings.CARTERA_ARCHIVOS_DIR) / nombre_permanente
+        df.to_excel(ruta_permanente, index=False, sheet_name=db_source.HOJA_TEMPORAL)
+        carga.archivo_permanente_nombre = nombre_permanente
+
+        columnas_historicas = historico.columnas_historicas_configuradas(dashboard.dashboard_id)
+        historico.guardar_filas_historicas(carga, df, columnas_historicas)
+
+        carga.estado = CargaArchivo.Estado.PROCESADO
+        carga.save(update_fields=['archivo_permanente_nombre', 'estado'])
+
+        dashboard.fuente_bd_parametros = parametros_nuevos
+        dashboard.fuente_bd_ultima_actualizacion_automatica = hoy
+        dashboard.save(update_fields=['fuente_bd_parametros', 'fuente_bd_ultima_actualizacion_automatica'])
+
+        return {'ok': True, 'mensaje': f'Actualizado con {len(df)} fila(s).'}
+    except CarteraError as exc:
+        return {'ok': False, 'mensaje': exc.message}
+    except Exception as exc:  # noqa: BLE001 - cualquier falla inesperada no debe tumbar el comando completo
+        return {'ok': False, 'mensaje': f'Error inesperado: {exc}'}
+
+
+def actualizar_todos(hoy=None):
+    """Recorre todos los dashboards con una frecuencia configurada y actualiza los que
+    correspondan hoy — usado por `manage.py actualizar_fuentes_bd`. Devuelve la lista de
+    resultados (uno por dashboard actualizado, con su `dashboard_id` incluido) para que el comando
+    los reporte."""
+    hoy = hoy or date.today()
+    resultados = []
+    dashboards = Dashboard.objects.exclude(fuente_bd_frecuencia_actualizacion='')
+    for dashboard in dashboards:
+        if not debe_actualizarse_hoy(dashboard, hoy):
+            continue
+        resultado = actualizar_dashboard(dashboard, hoy)
+        resultados.append({'dashboard_id': dashboard.dashboard_id, **resultado})
+    return resultados

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import * as authService from '../services/authService'
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '../services/httpClient'
 
@@ -43,6 +43,10 @@ export function AuthProvider({ children }) {
       setUser(perfil)
       return { ok: true }
     } catch (e) {
+      // Los tokens se guardan antes de resolver el perfil, así que si `me()` falla (red caída
+      // entre las dos llamadas) quedaban guardados con `user` en null: sesión presente pero
+      // `isAuthenticated` en false, un estado del que la pantalla de login no salía sola.
+      clearTokens()
       const mensaje = e.response?.data?.mensaje || 'No se pudo iniciar sesión.'
       setError(mensaje)
       return { ok: false, error: mensaje }
@@ -67,7 +71,10 @@ export function AuthProvider({ children }) {
     return perfil
   }, [])
 
-  const value = {
+  // Memoizado: sin esto el objeto se recreaba en cada render del provider y hacía re-renderizar
+  // a TODOS los consumidores del contexto (que son casi todas las pantallas), aunque la sesión no
+  // hubiera cambiado. Las tres funciones ya son estables por `useCallback`.
+  const value = useMemo(() => ({
     user,
     isAuthenticated: Boolean(user),
     isInitializing,
@@ -75,7 +82,7 @@ export function AuthProvider({ children }) {
     login,
     logout,
     refreshUser,
-  }
+  }), [user, isInitializing, error, login, logout, refreshUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

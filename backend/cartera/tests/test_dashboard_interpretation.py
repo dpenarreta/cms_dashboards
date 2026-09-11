@@ -2,6 +2,7 @@ import json
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -90,7 +91,10 @@ class GenerarInterpretacionServiceTests(TestCase):
         self.assertEqual(texto, 'El dashboard muestra una cartera total de 1000.')
         url_llamada, kwargs = post_mock.call_args
         self.assertIn('gemini-2.5-flash', url_llamada[0])
-        self.assertEqual(kwargs['params'], {'key': 'clave-de-prueba'})
+        # La credencial va en el encabezado, nunca en la cadena de consulta (donde la capturaba
+        # cualquier log de URLs). Se verifica también que no quede un `params` con la clave.
+        self.assertEqual(kwargs['headers'], {'x-goog-api-key': 'clave-de-prueba'})
+        self.assertNotIn('params', kwargs)
         self.assertIn('Total cartera', kwargs['json']['contents'][0]['parts'][0]['text'])
 
     @override_settings(GEMINI_API_KEY='clave-de-prueba')
@@ -137,7 +141,45 @@ class GenerarInterpretacionServiceTests(TestCase):
         di.generar_interpretacion('finanzas')
 
         prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
-        self.assertNotIn('Contexto adicional', prompt)
+        # La instrucción genérica de "Instrucción del usuario para este componente" siempre
+        # menciona la frase "Contexto adicional" (para cuando SÍ haya una) — lo que este test
+        # verifica es que no se agregue el bloque del contexto del DASHBOARD (`_bloque_contexto`).
+        self.assertNotIn('Contexto adicional sobre este dashboard', prompt)
+
+    @override_settings(GEMINI_API_KEY='clave-de-prueba')
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_incluye_la_instruccion_ia_de_un_componente_de_zona_personal_en_el_prompt(self, post_mock):
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Saldo por gestor', 'columna_valor': 'saldo', 'columna_categoria': 'gestor',
+            'datos': {'tipo': 'chart', 'titulo': 'Saldo por gestor', 'categorias': ['Ana'], 'valores': [100.0]},
+            'zona': 'personal', 'instruccion_ia': 'Explicá los totales por la causal de gestión.',
+            'columna_contexto_ia': 'causal',
+            'contexto_ia_datos': {'categorias': ['Pago parcial', 'Sin contacto'], 'valores': [60.0, 40.0]},
+        })
+        post_mock.return_value = _respuesta_gemini('texto')
+
+        di.generar_interpretacion('finanzas')
+
+        prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        self.assertIn('Instrucción del usuario para este componente: "Explicá los totales por la causal de gestión."', prompt)
+        self.assertIn('Contexto adicional (desglose por "causal")', prompt)
+        self.assertIn('Pago parcial: 60.00', prompt)
+
+    @override_settings(GEMINI_API_KEY='clave-de-prueba')
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_sin_instruccion_ia_no_agrega_nada_para_ese_componente(self, post_mock):
+        dl.agregar_componente_generado('finanzas', {
+            'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
+            'datos': {'tipo': 'kpi', 'valor': 1.0},
+        })
+        post_mock.return_value = _respuesta_gemini('texto')
+
+        di.generar_interpretacion('finanzas')
+
+        prompt = post_mock.call_args.kwargs['json']['contents'][0]['parts'][0]['text']
+        # La instrucción genérica siempre menciona la frase (para cuando SÍ haya una) — lo que
+        # este test verifica es que no se agregue el bloque CON CONTENIDO real de este componente.
+        self.assertNotIn('Instrucción del usuario para este componente: "', prompt)
 
     @override_settings(GEMINI_API_KEY='clave-de-prueba')
     @mock.patch('cartera.services.dashboard_interpretation.requests.post')
@@ -146,7 +188,10 @@ class GenerarInterpretacionServiceTests(TestCase):
             'titulo': 'Total', 'columna_valor': 'saldo', 'columna_categoria': None,
             'datos': {'tipo': 'kpi', 'valor': 1.0},
         })
-        post_mock.return_value = mock.Mock(status_code=500)
+        # `text` explícito: el servicio ahora registra el cuerpo del error en el log del servidor
+        # para poder diagnosticarlo (antes se descartaba), así que el doble tiene que parecerse a
+        # una `requests.Response` de verdad, donde `text` siempre es un str.
+        post_mock.return_value = mock.Mock(status_code=500, text='quota exceeded')
 
         with self.assertRaises(CarteraError) as ctx:
             di.generar_interpretacion('finanzas')
@@ -220,6 +265,11 @@ def _respuesta_gemini_json(hallazgos):
 class GenerarHallazgosIAServiceTests(TestCase):
     def setUp(self):
         Dashboard.objects.create(dashboard_id='finanzas', name='Finanzas', area='Finanzas y Contabilidad')
+        # `generar_hallazgos_ia` cachea por hash del prompt para no repetir la llamada externa en
+        # cada apertura del dashboard. La caché por defecto es en memoria del proceso, así que sin
+        # limpiarla dos tests que armen el mismo prompt se contaminan entre sí.
+        cache.clear()
+        self.addCleanup(cache.clear)
 
     @override_settings(GEMINI_API_KEY='')
     def test_sin_api_key_configurada_lanza_error_de_negocio(self):

@@ -280,4 +280,49 @@ describe('DashboardTabsBar', () => {
 
     expect(await screen.findByText('No se pudo eliminar la pestaña.')).toBeInTheDocument()
   })
+
+  describe('carga de las pestañas', () => {
+    // `cargar` está memoizado con `useCallback([dashboardId])` y listado en las dependencias del
+    // efecto. Estas dos pruebas fijan justamente lo que ese cambio pone en juego: que la función
+    // memoizada no cambie de identidad en cada render (lo que reejecutaría el efecto en bucle) y
+    // que sí cambie cuando cambia el dashboard (lo que antes dependía de que `dashboardId`
+    // estuviera declarado a mano).
+    it('consulta las pestañas una sola vez por dashboard, sin reejecutarse en bucle', async () => {
+      dashboardLayoutService.obtenerPestanas.mockResolvedValue([
+        { dashboard_id: 'finanzas', name: 'Finanzas', orden: 1 },
+      ])
+      renderBarra('finanzas')
+
+      await screen.findByRole('link', { name: 'Finanzas' })
+      // Una resolución de promesa provoca un render más: si el efecto dependiera de una función
+      // recreada en cada render, ese render volvería a dispararlo y el contador seguiría subiendo.
+      expect(dashboardLayoutService.obtenerPestanas).toHaveBeenCalledTimes(1)
+      expect(dashboardLayoutService.obtenerPestanas).toHaveBeenCalledWith('finanzas')
+    })
+
+    it('vuelve a consultar cuando cambia el dashboard', async () => {
+      dashboardLayoutService.obtenerPestanas.mockResolvedValue([
+        { dashboard_id: 'finanzas', name: 'Finanzas', orden: 1 },
+      ])
+      useAuth.mockReturnValue({ user: { permissions: [] } })
+      const { rerender } = render(
+        <MemoryRouter initialEntries={['/x']}>
+          <DashboardTabsBar dashboardId="finanzas" />
+        </MemoryRouter>,
+      )
+      await screen.findByRole('link', { name: 'Finanzas' })
+
+      dashboardLayoutService.obtenerPestanas.mockResolvedValue([
+        { dashboard_id: 'logistica', name: 'Logística', orden: 1 },
+      ])
+      rerender(
+        <MemoryRouter initialEntries={['/x']}>
+          <DashboardTabsBar dashboardId="logistica" />
+        </MemoryRouter>,
+      )
+
+      expect(await screen.findByRole('link', { name: 'Logística' })).toBeInTheDocument()
+      expect(dashboardLayoutService.obtenerPestanas).toHaveBeenLastCalledWith('logistica')
+    })
+  })
 })

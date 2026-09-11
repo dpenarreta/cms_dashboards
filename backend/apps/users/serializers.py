@@ -1,6 +1,8 @@
 from django.contrib.auth.models import Group
 from rest_framework import serializers
 
+from apps.core.password import campo_password, validar_fortaleza
+
 from .models import User
 
 
@@ -40,11 +42,25 @@ class UserAdminDetailSerializer(UserAdminListSerializer):
 
 
 class UserAdminCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = campo_password(write_only=True)
 
     class Meta:
         model = User
         fields = ('username', 'email', 'first_name', 'last_name', 'password', 'must_change_password')
+
+    def validate(self, data):
+        # El usuario todavía no existe, así que se arma una instancia sin guardar solo para que
+        # `UserAttributeSimilarityValidator` pueda comparar la contraseña contra el username, el
+        # nombre y el correo que vienen en el mismo formulario (es justo el caso que ese validador
+        # cubre: "juan.perez" con contraseña "juanperez2026"). Los otros tres validadores ya
+        # corrieron a nivel de campo.
+        password = data.get('password')
+        if password:
+            validar_fortaleza(password, User(
+                username=data.get('username', ''), email=data.get('email', ''),
+                first_name=data.get('first_name', ''), last_name=data.get('last_name', ''),
+            ))
+        return data
 
     def validate_username(self, value):
         if User.objects.filter(username__iexact=value).exists():

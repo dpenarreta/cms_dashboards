@@ -202,4 +202,43 @@ describe('GenericDataTable', () => {
       expect(screen.getByText(/Mostrando 1 a 5 de 6 registros/)).toBeInTheDocument()
     })
   })
+
+  describe('columna "Resultado" (tabla de cumplimiento de metas)', () => {
+    function tablaCumplimiento(resultados) {
+      return {
+        titulo: 'Cumplimiento',
+        columnas: ['Tramo', 'Saldo', '% acumulado', 'Resultado'],
+        filas: resultados.map((resultado, i) => [`Tramo ${i + 1}`, 100, 10, resultado]),
+        total: null,
+      }
+    }
+
+    it('"Cumple" se muestra como badge verde (bg="success")', () => {
+      const { container } = render(<GenericDataTable data={tablaCumplimiento(['Cumple'])} />)
+      const badge = container.querySelector('tbody .badge')
+      expect(badge).toHaveTextContent('Cumple')
+      expect(badge).toHaveClass('bg-success')
+    })
+
+    it('"Sin meta" se muestra como badge gris (bg="secondary")', () => {
+      const { container } = render(<GenericDataTable data={tablaCumplimiento(['Sin meta'])} />)
+      const badge = container.querySelector('tbody .badge')
+      expect(badge).toHaveTextContent('Sin meta')
+      expect(badge).toHaveClass('bg-secondary')
+    })
+
+    it('"No cumple (...)" se muestra como badge rojo (bg="danger")', () => {
+      const { container } = render(<GenericDataTable data={tablaCumplimiento(['No cumple (menor al mínimo (50))'])} />)
+      const badge = container.querySelector('tbody .badge')
+      expect(badge).toHaveTextContent('No cumple (menor al mínimo (50))')
+      expect(badge).toHaveClass('bg-danger')
+    })
+
+    it('una tabla sin columna "Resultado" sigue mostrando texto plano, sin badges', () => {
+      const { container } = render(
+        <GenericDataTable data={{ titulo: 'Tabla', columnas: ['Producto', 'Ventas'], filas: [['A', 100]], total: ['Total', 100] }} />,
+      )
+      expect(container.querySelector('.badge')).not.toBeInTheDocument()
+    })
+  })
 })

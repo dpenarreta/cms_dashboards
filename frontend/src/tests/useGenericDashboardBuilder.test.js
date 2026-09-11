@@ -356,6 +356,42 @@ describe('useGenericDashboardBuilder', () => {
     })
   })
 
+  describe('conectarFuenteBD', () => {
+    it('conecta a la fuente configurada y pasa a la fase RENOMBRAR con las columnas detectadas', async () => {
+      carteraService.conectarFuenteBD.mockResolvedValue({
+        carga_id: 'carga-db-1', nombre_archivo: 'dbo.sp_reporte (base de datos)', tamano_bytes: 500,
+        total_filas_detectadas: 40, hojas_disponibles: ['Datos'], hoja_seleccionada: 'Datos',
+        columnas_detectadas: COLUMNAS_DETECTADAS,
+      })
+      const { result } = renderHook(() => useGenericDashboardBuilder('finanzas'))
+
+      let resultado
+      await act(async () => { resultado = await result.current.conectarFuenteBD() })
+
+      expect(resultado.ok).toBe(true)
+      expect(carteraService.conectarFuenteBD).toHaveBeenCalledWith('finanzas')
+      expect(carteraService.validarArchivo).not.toHaveBeenCalled()
+      expect(result.current.fase).toBe(result.current.FASE.RENOMBRAR)
+      expect(result.current.archivoInfo.cargaId).toBe('carga-db-1')
+      expect(result.current.columnasOriginales).toEqual(COLUMNAS_DETECTADAS)
+      expect(result.current.aliases).toEqual({ Saldo: 'Saldo', Ciudad: 'Ciudad' })
+    })
+
+    it('propaga el error cuando la conexión falla, devuelve ok:false y se queda en la fase CARGA', async () => {
+      carteraService.conectarFuenteBD.mockRejectedValue({
+        response: { data: { mensaje: 'No se pudo conectar con la base de datos externa.' } },
+      })
+      const { result } = renderHook(() => useGenericDashboardBuilder('finanzas'))
+
+      let resultado
+      await act(async () => { resultado = await result.current.conectarFuenteBD() })
+
+      expect(resultado.ok).toBe(false)
+      expect(result.current.error).toBe('No se pudo conectar con la base de datos externa.')
+      expect(result.current.fase).toBe(result.current.FASE.CARGA)
+    })
+  })
+
   describe('limpiar', () => {
     it('elimina el archivo temporal y regresa a la fase CARGA', async () => {
       carteraService.eliminarArchivo.mockResolvedValue({})

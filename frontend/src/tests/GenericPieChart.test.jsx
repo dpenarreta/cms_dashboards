@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
-import GenericPieChart, { datosCircularConEtiquetas } from '../components/dashboard-generic/GenericPieChart'
+import GenericPieChart from '../components/dashboard-generic/GenericPieChart'
+import { datosCircularConEtiquetas } from '../components/dashboard-generic/pieChartData'
 
 const DATA = { titulo: 'Distribución', categorias: ['Electrónica', 'Hogar'], valores: [700, 300] }
 

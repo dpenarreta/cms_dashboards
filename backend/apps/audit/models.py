@@ -71,3 +71,21 @@ class AuditEvent(models.Model):
 
     def __str__(self):
         return f'[{self.domain}] {self.action} ({self.result})'
+
+    @property
+    def actor_username_actual(self):
+        """Nombre del actor resuelto por la clave foránea cuando la cuenta todavía existe, y solo
+        entonces cae a la foto guardada en `actor_username`.
+
+        Un usuario puede cambiar su propio `username` (`UpdateMyProfileSerializer`), así que la
+        foto se vuelve engañosa: los eventos viejos siguen mostrando el nombre anterior y —peor—
+        alguien puede adoptar un nombre que otra persona dejó libre y aparecer con él en el
+        historial ajeno. La clave foránea es la identidad real; `actor_username` queda como
+        respaldo para cuentas ya eliminadas (`on_delete=SET_NULL`), que es el caso para el que se
+        agregó.
+
+        Requiere `select_related('actor')` en el queryset para no hacer una consulta por fila.
+        """
+        if self.actor_id and self.actor is not None:
+            return self.actor.username
+        return self.actor_username or ''

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TemplateMappingStep from '../components/dashboard-generic/TemplateMappingStep'
 import { PLANTILLA_SLOTS } from '../utils/plantillaSlots'
@@ -11,6 +11,7 @@ const COLUMNAS = [
   { nombre: 'Saldo', tipo: 'numerico', apta_para_valor: true, apta_para_categoria: false },
   { nombre: 'Ciudad', tipo: 'categorico', apta_para_valor: false, apta_para_categoria: true },
   { nombre: 'Causal', tipo: 'categorico', apta_para_valor: false, apta_para_categoria: true },
+  { nombre: 'Fecha de Vencimiento', tipo: 'fecha', apta_para_valor: false, apta_para_categoria: true },
 ]
 
 const MAPEO = {
@@ -27,6 +28,7 @@ const DATOS = {
 beforeEach(() => {
   vi.clearAllMocks()
   carteraService.obtenerValoresColumnaPlantilla.mockResolvedValue({ valores: ['GESTIONANDO', 'PAGADO'], total: 2 })
+  carteraService.obtenerDuplicadosColumna.mockResolvedValue({ cantidad_valores_duplicados: 0, ejemplos: [] })
 })
 
 function renderComponente(overrides = {}) {
@@ -93,7 +95,7 @@ describe('TemplateMappingStep', () => {
     const { props } = renderComponente()
     const selector = screen.getByLabelText('Columna de filtro de KPI 1')
     await userEvent.selectOptions(selector, 'Causal')
-    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { columna_filtro: 'Causal', valor_filtro: null })
+    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { columna_filtro: 'Causal', valor_filtro: null, dias_filtro: null })
   })
 
   it('con una columna de filtro elegida, carga y muestra sus valores distintos', async () => {
@@ -113,6 +115,60 @@ describe('TemplateMappingStep', () => {
     const selectorValor = await screen.findByLabelText('Valor de filtro de KPI 1')
     await userEvent.selectOptions(selectorValor, 'GESTIONANDO')
     expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { valor_filtro: 'GESTIONANDO' })
+  })
+
+  describe('filtro "Días desde una fecha" (solo KPI)', () => {
+    it('un KPI muestra el selector "Tipo de filtro", un gráfico no', () => {
+      renderComponente()
+      expect(screen.getByLabelText('Tipo de filtro de KPI 1')).toHaveValue('igualdad')
+      expect(screen.queryByLabelText('Tipo de filtro de Gráfico 1')).not.toBeInTheDocument()
+    })
+
+    it('elegir "Días desde una fecha" ofrece solo columnas de tipo fecha en el selector de columna', () => {
+      renderComponente({
+        mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], tipo_filtro: 'dias_vencidos' } },
+      })
+      const selectorColumna = screen.getByLabelText('Columna de fecha de KPI 1')
+      const opciones = Array.from(selectorColumna.querySelectorAll('option')).map((o) => o.textContent)
+      expect(opciones).toEqual(['Sin usar', 'Fecha de Vencimiento'])
+    })
+
+    it('cambiar "Tipo de filtro" invoca onActualizarSlot limpiando todos los campos de filtro anteriores', async () => {
+      const { props } = renderComponente({
+        mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], columna_filtro: 'Causal', valor_filtro: 'PAGADO' } },
+      })
+      await userEvent.selectOptions(screen.getByLabelText('Tipo de filtro de KPI 1'), 'dias_vencidos')
+      expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', {
+        tipo_filtro: 'dias_vencidos', columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+      })
+    })
+
+    it('con la columna de fecha elegida, muestra selector de comparación y campo de días', async () => {
+      renderComponente({
+        mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], tipo_filtro: 'dias_vencidos', columna_filtro: 'Fecha de Vencimiento' } },
+      })
+      const selectorComparacion = screen.getByLabelText('Comparación de días de KPI 1')
+      expect(selectorComparacion).toHaveValue('mayor')
+      expect(screen.getByLabelText('Cantidad de días de KPI 1')).toHaveValue(null)
+      const opciones = Array.from(selectorComparacion.querySelectorAll('option')).map((o) => o.value)
+      expect(opciones).toEqual(['mayor', 'mayor_igual', 'menor', 'menor_igual'])
+    })
+
+    it('cambiar la comparación invoca onActualizarSlot', async () => {
+      const { props } = renderComponente({
+        mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], tipo_filtro: 'dias_vencidos', columna_filtro: 'Fecha de Vencimiento' } },
+      })
+      await userEvent.selectOptions(screen.getByLabelText('Comparación de días de KPI 1'), 'mayor_igual')
+      expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { operador_filtro: 'mayor_igual' })
+    })
+
+    it('escribir la cantidad de días invoca onActualizarSlot con un número', () => {
+      const { props } = renderComponente({
+        mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], tipo_filtro: 'dias_vencidos', columna_filtro: 'Fecha de Vencimiento' } },
+      })
+      fireEvent.change(screen.getByLabelText('Cantidad de días de KPI 1'), { target: { value: '30' } })
+      expect(props.onActualizarSlot).toHaveBeenLastCalledWith('kpi-1', { dias_filtro: 30 })
+    })
   })
 
   it('un gráfico muestra el selector de tipo de gráfico, con el tipo por defecto del slot', () => {

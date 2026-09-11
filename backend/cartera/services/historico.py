@@ -146,8 +146,15 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
     de armar una selección efímera. Pasar `carga_ids` explícito sigue siendo una selección puntual
     que puede incluir una carga deshabilitada — la usan los tests y queda disponible para casos
     futuros que necesiten esa precisión."""
-    entradas = [generic_charts.normalizar_columna_valor_tabla(c) for c in (columnas_valor or [])]
-    nombres_columna = [e['columna'] for e in entradas if e['columna']]
+    # Las entradas sin columna elegida (el usuario agregó la fila en la UI y todavía no eligió
+    # cuál) se descartan por completo, encabezado Y celda. Antes se filtraban solo del encabezado
+    # pero igual aportaban un `None` por fila, así que `columnas` y `filas` quedaban con distinto
+    # largo (4 encabezados contra 5 celdas) y la tabla se renderizaba desalineada.
+    entradas = [
+        e for e in (generic_charts.normalizar_columna_valor_tabla(c) for c in (columnas_valor or []))
+        if e['columna']
+    ]
+    nombres_columna = [e['columna'] for e in entradas]
 
     cargas_qs = (
         CargaArchivo.objects.filter(dashboard_id=dashboard_id, filas_historicas__isnull=False)
@@ -159,10 +166,22 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
         cargas_qs = cargas_qs.filter(incluir_en_historico=True)
     cargas = list(cargas_qs.order_by('fecha_carga'))
 
+    # Una sola consulta para TODAS las cargas, agrupada en memoria por `carga_id`: antes se hacía
+    # una consulta por carga dentro del bucle, así que el costo crecía con el histórico (un
+    # dashboard con dos años de cargas mensuales eran 24 consultas para armar una tabla).
+    filas_por_carga = {}
+    for carga_id, datos in (
+        FilaArchivoHistorico.objects
+        .filter(carga__in=cargas)
+        .order_by('carga_id', 'orden')
+        .values_list('carga_id', 'datos')
+    ):
+        filas_por_carga.setdefault(carga_id, []).append(datos)
+
     columnas = ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte'] + nombres_columna
     filas = []
     for carga in cargas:
-        valores_por_fila = FilaArchivoHistorico.objects.filter(carga=carga).order_by('orden').values_list('datos', flat=True)
+        valores_por_fila = filas_por_carga.get(carga.id, [])
         fila = [
             carga.nombre_original,
             carga.subido_por.username if carga.subido_por else 'Desconocido',
@@ -170,9 +189,6 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
             carga.fecha_corte.isoformat() if carga.fecha_corte else '',
         ]
         for entrada in entradas:
-            if not entrada['columna']:
-                fila.append(None)
-                continue
             serie = pd.Series([datos.get(entrada['columna']) for datos in valores_por_fila])
             valor = generic_charts.valor_agregado(serie, entrada['tipo_agregacion'])
             if not pd.notna(valor):
@@ -184,3 +200,134 @@ def calcular_tabla_historica(dashboard_id, columnas_valor, carga_ids=None):
         filas.append(fila)
 
     return {'columnas': columnas, 'filas': filas}
+
+
+def calcular_kpi_historico(dashboard_id, columna_valor, tipo_agregacion='suma', carga_ids=None):
+    """Valor de `columna_valor` agregado (mismo `tipo_agregacion` que un KPI normal) sobre la
+    carga histórica MÁS RECIENTE incluida — no todas: a diferencia de una Tabla histórica (una
+    fila por carga, cada una comparable por separado), un KPI es un único número, y sumar/
+    promediar entre cargas sería engañoso (cada carga es una foto completa del archivo en ese
+    momento, no un período aparte que se puede acumular con el siguiente). Reusa
+    `calcular_tabla_historica` con una sola columna y toma su última fila (ya viene ordenada de
+    más antigua a más nueva). `None` si no hay ninguna carga histórica con esa columna."""
+    tabla = calcular_tabla_historica(dashboard_id, [{'columna': columna_valor, 'tipo_agregacion': tipo_agregacion}], carga_ids)
+    if not tabla['filas']:
+        return None
+    return tabla['filas'][-1][-1]
+
+
+def calcular_categorico_historico(dashboard_id, columna_valor, tipo_agregacion='suma', carga_ids=None):
+    """`{categorias, valores}` — una categoría por carga incluida (su nombre de archivo), con
+    `columna_valor` agregada dentro de esa carga. Mismo cálculo que `calcular_tabla_historica`
+    con una sola columna, solo que reacomodado a la forma que espera un Gráfico de una columna
+    (`GenericChartRenderer`) en vez de una tabla. `None` si no hay ninguna carga histórica con esa
+    columna."""
+    tabla = calcular_tabla_historica(dashboard_id, [{'columna': columna_valor, 'tipo_agregacion': tipo_agregacion}], carga_ids)
+    if not tabla['filas']:
+        return None
+    return {
+        'categorias': [fila[0] for fila in tabla['filas']],
+        'valores': [fila[-1] for fila in tabla['filas']],
+    }
+
+
+def calcular_multivalor_historico(dashboard_id, columnas_valor, carga_ids=None):
+    """`{categorias, series}` — igual concepto que `calcular_tabla_historica` (una categoría por
+    carga incluida) pero pivotado a series: una serie por cada columna de `columnas_valor`
+    (siempre agregada con "suma", mismo criterio que un `multivalor` normal —
+    `generic_charts.generar_datos_multivalor` tampoco deja elegir otro tipo de cálculo por
+    columna), en vez de una columna de tabla por cada una. `None` si `columnas_valor` no trae
+    ninguna columna elegida, o si no hay ninguna carga histórica."""
+    entradas = [generic_charts.normalizar_columna_valor_tabla(c) for c in (columnas_valor or [])]
+    nombres = [e['columna'] for e in entradas if e['columna']]
+    if not nombres:
+        return None
+    tabla = calcular_tabla_historica(dashboard_id, [{'columna': n, 'tipo_agregacion': 'suma'} for n in nombres], carga_ids)
+    if not tabla['filas']:
+        return None
+    categorias = [fila[0] for fila in tabla['filas']]
+    series = [
+        {'nombre': nombre, 'valores': [fila[4 + i] for fila in tabla['filas']]}
+        for i, nombre in enumerate(nombres)
+    ]
+    return {'categorias': categorias, 'series': series}
+
+
+def calcular_multiserie_historico(dashboard_id, columna_valor, columna_serie, tipo_agregacion='suma', carga_ids=None):
+    """`{categorias, series}` — a diferencia de `calcular_multivalor_historico` (una serie por
+    COLUMNA elegida), acá hay una sola columna de valor pero se abre en una serie por cada valor
+    DISTINTO de `columna_serie` dentro de cada carga (mismo concepto que un `multiserie` normal:
+    categoría + serie + valor, salvo que la "categoría" pasa a ser la propia carga). Ambas columnas
+    deben estar marcadas como históricas — si `columna_serie` no lo está, ninguna carga tiene datos
+    para agrupar y el resultado queda vacío. A diferencia del resto de funciones de este módulo, acá
+    hace falta leer la fila completa de cada carga (`FilaArchivoHistorico`, no solo una columna) para
+    poder agrupar por `columna_serie` — no hay forma de resolverlo reusando `calcular_tabla_historica`.
+    `None` si no hay ninguna carga histórica con ambas columnas."""
+    cargas_qs = (
+        CargaArchivo.objects.filter(dashboard_id=dashboard_id, filas_historicas__isnull=False).distinct()
+    )
+    if carga_ids:
+        cargas_qs = cargas_qs.filter(id__in=carga_ids)
+    else:
+        cargas_qs = cargas_qs.filter(incluir_en_historico=True)
+    cargas = list(cargas_qs.order_by('fecha_carga'))
+    if not cargas:
+        return None
+
+    # Un gráfico dibuja números: `valor_celda` devuelve el texto de la celda, que no se puede
+    # graficar y hacía reventar el `float(...)` de más abajo con
+    # `ValueError: could not convert string to float`, propagado como un 500 al aplicar el mapeo.
+    # Se cae a "suma", que es además lo que hace SIEMPRE el multiserie no histórico
+    # (`generic_charts.generar_datos_multiserie` ni siquiera acepta un tipo de agregación) — mismo
+    # criterio de "valor inválido cae al de por defecto" que ya usan el operador de filtro por días
+    # y el `tipo_agregacion` ausente de un KPI.
+    if tipo_agregacion == 'valor_celda':
+        tipo_agregacion = 'suma'
+
+    categorias = []
+    valores_por_carga = []
+    nombres_serie = []
+    for carga in cargas:
+        registros = list(FilaArchivoHistorico.objects.filter(carga=carga).order_by('orden').values_list('datos', flat=True))
+        df = pd.DataFrame(registros)
+        if columna_valor not in df.columns or columna_serie not in df.columns:
+            continue
+        categorias.append(carga.nombre_original)
+        agregados = {}
+        for valor_serie, grupo in df.groupby(columna_serie, dropna=False):
+            valor = generic_charts.valor_agregado(grupo[columna_valor], tipo_agregacion)
+            nombre = str(valor_serie) if pd.notna(valor_serie) else 'Sin dato'
+            agregados[nombre] = None if not pd.notna(valor) else round(float(valor), 2)
+            if nombre not in nombres_serie:
+                nombres_serie.append(nombre)
+        valores_por_carga.append(agregados)
+
+    if not categorias:
+        return None
+
+    # Mismo tope de series que el multiserie no histórico (`MAX_SERIES_EN_GRAFICA`), con el resto
+    # colapsado en 'Otras'. Sin tope, una columna de serie de alta cardinalidad devolvía una serie
+    # por cada valor distinto — 40 en el sondeo — con la leyenda inutilizable y una respuesta
+    # pesada, mientras el gráfico equivalente sobre el archivo actual cortaba en 6.
+    totales = {
+        nombre: sum(a.get(nombre) or 0 for a in valores_por_carga)
+        for nombre in nombres_serie
+    }
+    principales = sorted(nombres_serie, key=lambda n: totales[n], reverse=True)[:generic_charts.MAX_SERIES_EN_GRAFICA]
+    # Se respeta el orden de aparición original entre las que sobreviven, no el orden por total.
+    incluidas = [n for n in nombres_serie if n in set(principales)]
+    resto = [n for n in nombres_serie if n not in set(principales)]
+
+    series = [
+        {'nombre': nombre, 'valores': [agregados.get(nombre) for agregados in valores_por_carga]}
+        for nombre in incluidas
+    ]
+    if resto:
+        series.append({
+            'nombre': 'Otras',
+            'valores': [
+                round(sum(agregados.get(n) or 0 for n in resto), 2)
+                for agregados in valores_por_carga
+            ],
+        })
+    return {'categorias': categorias, 'series': series}

@@ -29,7 +29,7 @@ PERMISSION_CATALOG = [
     {'module': 'dashboard', 'codename': 'dashboard.crear', 'name': 'Crear nuevos dashboards por área'},
     {'module': 'dashboard', 'codename': 'dashboard.editar', 'name': 'Editar el nombre y área de un dashboard'},
     {'module': 'dashboard', 'codename': 'dashboard.eliminar', 'name': 'Eliminar un dashboard'},
-    {'module': 'dashboard', 'codename': 'dashboard.view', 'name': 'Ver el dashboard de cartera'},
+    {'module': 'dashboard', 'codename': 'dashboard.view', 'name': 'Ver Dashboards'},
     {'module': 'dashboard', 'codename': 'dashboard.edit', 'name': 'Entrar en modo edición del dashboard'},
     {'module': 'dashboard', 'codename': 'dashboard.layout.edit', 'name': 'Editar el diseño (orden/tamaño) del dashboard'},
     {'module': 'dashboard', 'codename': 'dashboard.component.style', 'name': 'Editar estilos de un componente del dashboard'},
@@ -40,6 +40,19 @@ PERMISSION_CATALOG = [
     # costo/uso del LLM sin depender de quién puede simplemente ver el dashboard -------------
     {'module': 'dashboard', 'codename': 'dashboard.interpretar', 'name': 'Generar la interpretación completa del dashboard con IA'},
     {'module': 'dashboard', 'codename': 'dashboard.hallazgos_ia', 'name': 'Generar hallazgos clave por componente con IA'},
+    # --- Conexión a base de datos externa — separados de dashboard.editar/dashboard.view porque
+    # exponen la conexión a la base de datos productiva configurada por el sistema, no un permiso
+    # genérico de "editar contenido del dashboard" -----------------------------------------------
+    {'module': 'dashboard', 'codename': 'dashboard.fuente_bd.configurar', 'name': 'Elegir/cambiar la vista o procedimiento de base de datos, sus parámetros y la frecuencia de actualización automática de un dashboard'},
+    {'module': 'dashboard', 'codename': 'dashboard.fuente_bd.actualizar', 'name': 'Forzar una actualización inmediata de los datos desde la base de datos ya configurada'},
+    # --- Carga de archivo Excel — separado de dashboard.view: antes "quien puede ver, puede
+    # cargar", ahora es un permiso propio, igual criterio que dashboard.fuente_bd.configurar -----
+    {'module': 'dashboard', 'codename': 'dashboard.archivo.cargar', 'name': 'Cargar un archivo Excel nuevo que reemplaza los datos de un dashboard ("Cargar otro archivo")'},
+    # --- Mutación de los datos ya cargados — separado de dashboard.view, mismo criterio que
+    # dashboard.archivo.cargar y dashboard.fuente_bd.configurar. Antes estas acciones caían al
+    # genérico "quien puede ver el dashboard puede mutar sus datos", así que cualquiera con
+    # `dashboard.view` podía BORRAR la carga completa de un dashboard sin ACL propia -------------
+    {'module': 'dashboard', 'codename': 'dashboard.datos.editar', 'name': 'Procesar, reprocesar, borrar o remapear los datos ya cargados de un dashboard'},
 ]
 
 

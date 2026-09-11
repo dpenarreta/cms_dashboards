@@ -3,9 +3,11 @@ Django settings for config project (Dashboard de Cartera).
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,11 +21,30 @@ def env_bool(name, default=False):
     return value.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev-key-change-me')
-DEBUG = env_bool('DEBUG', True)
+# `DEBUG` por defecto en False y `SECRET_KEY` sin valor de respaldo: un despliegue al que le falta
+# una variable debe fallar ruidosamente, no arrancar en modo desarrollo ni firmar con una clave
+# que está publicada en el repositorio. Para desarrollo local, `backend/.env` define DEBUG=True.
+DEBUG = env_bool('DEBUG', False)
+SECRET_KEY = os.getenv('SECRET_KEY') or ('django-insecure-solo-para-desarrollo' if DEBUG else '')
 ALLOWED_HOSTS = [h.strip() for h in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if h.strip()]
 if DEBUG:
     ALLOWED_HOSTS.append('testserver')
+
+# Claves de firma: sin ellas, cualquiera que conozca el default del repositorio puede emitir
+# tokens válidos para cualquier usuario. Con DEBUG=False se exige que estén definidas de verdad y
+# se corta el arranque si falta alguna, en vez de dejar que la cascada
+# JWT_SECRET_KEY -> SECRET_KEY -> literal público pase inadvertida.
+JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY') or SECRET_KEY
+if not DEBUG:
+    _faltantes = [
+        nombre for nombre, valor in (('SECRET_KEY', SECRET_KEY), ('JWT_SECRET_KEY', JWT_SECRET_KEY))
+        if not valor or valor.startswith('django-insecure') or valor == 'change-me'
+    ]
+    if _faltantes:
+        raise ImproperlyConfigured(
+            'Con DEBUG=False hay que definir una clave real en: ' + ', '.join(_faltantes) +
+            '. Generá una con: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -89,8 +110,11 @@ if os.getenv('DB_ENGINE', 'mssql') == 'sqlite':
     }
 else:
     extra_params = []
-    encrypt = os.getenv('DB_ENCRYPT', 'no')
-    trust_cert = os.getenv('DB_TRUST_SERVER_CERTIFICATE', 'yes')
+    # Cifrado activado y certificado validado por defecto: el tráfico hacia SQL Server lleva
+    # credenciales y datos de cartera, así que ir en claro tiene que ser una excepción que el
+    # entorno declara a mano (DB_ENCRYPT=no en `.env` de desarrollo), no el comportamiento base.
+    encrypt = os.getenv('DB_ENCRYPT', 'yes')
+    trust_cert = os.getenv('DB_TRUST_SERVER_CERTIFICATE', 'no')
     extra_params.append(f'Encrypt={encrypt}')
     extra_params.append(f'TrustServerCertificate={trust_cert}')
 
@@ -108,6 +132,24 @@ else:
             },
         }
     }
+
+# --- Conexión externa de solo lectura ("Conectar vista de base de datos") --
+# Conexión "por defecto" de la app hacia una base productiva de origen — separada de DATABASES de
+# arriba (que es la base propia de esta app). No se modela como una segunda entrada de DATABASES
+# a propósito: se usa vía pyodbc directo (`cartera/services/db_source.py`) para una única consulta
+# de solo lectura por carga, no para que el ORM la enrute — evita el riesgo de que una migración o
+# un query de Django termine apuntando por error a la base productiva. Sin EXTERNAL_DB_HOST
+# configurado, `db_source.conectar` lanza un error de negocio claro en vez de intentar conectar a
+# 'localhost' por defecto.
+EXTERNAL_DB_HOST = os.getenv('EXTERNAL_DB_HOST', '')
+EXTERNAL_DB_PORT = os.getenv('EXTERNAL_DB_PORT', '1433')
+EXTERNAL_DB_NAME = os.getenv('EXTERNAL_DB_NAME', '')
+EXTERNAL_DB_USER = os.getenv('EXTERNAL_DB_USER', '')
+EXTERNAL_DB_PASSWORD = os.getenv('EXTERNAL_DB_PASSWORD', '')
+# Mismo criterio que DB_ENCRYPT/DB_TRUST_SERVER_CERTIFICATE de arriba: cifrado y validación de
+# certificado por defecto, ir en claro se declara explícitamente en el entorno.
+EXTERNAL_DB_ENCRYPT = os.getenv('EXTERNAL_DB_ENCRYPT', 'yes')
+EXTERNAL_DB_TRUST_SERVER_CERTIFICATE = os.getenv('EXTERNAL_DB_TRUST_SERVER_CERTIFICATE', 'no')
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -130,6 +172,11 @@ PASSWORD_HASHERS = [
 # --- JWT (apps.authentication) ------------------------------------------------
 LOGIN_MAX_FAILED_ATTEMPTS = int(os.getenv('LOGIN_MAX_FAILED_ATTEMPTS', 5))
 LOGIN_LOCKOUT_MINUTES = int(os.getenv('LOGIN_LOCKOUT_MINUTES', 15))
+# Umbral por IP, agregado a los intentos por cuenta: el conteo por cuenta no detecta el patrón de
+# probar una contraseña habitual contra muchas cuentas distintas desde la misma máquina (cada
+# cuenta recibe un solo fallo). Más alto que el por-cuenta a propósito, para no castigar a una
+# oficina detrás de una única IP saliente. 0 lo desactiva.
+LOGIN_MAX_FAILED_ATTEMPTS_PER_IP = int(os.getenv('LOGIN_MAX_FAILED_ATTEMPTS_PER_IP', 30))
 
 # --- Correo / recuperación de contraseña (apps.authentication, Módulo D) -------
 # Por defecto, backend de consola: nunca se envía un correo real sin configurar EMAIL_BACKEND
@@ -157,10 +204,16 @@ GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-flash-latest')
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(os.getenv('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', 15))),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_LIFETIME_DAYS', 7))),
-    'ROTATE_REFRESH_TOKENS': False,
+    # Rotación activada: cada refresco emite un refresh nuevo y `Session.refresh_token_jti` se
+    # actualiza, con lo cual la detección de reutilización de `refresh_tokens` (comparar el `jti`
+    # presentado contra el vigente) pasa a poder dispararse de verdad — antes era una rama
+    # inalcanzable, porque el `jti` nunca cambiaba. `BLACKLIST_AFTER_ROTATION` sigue en False a
+    # propósito: la revocación es por el modelo `Session` propio, no por la blacklist de
+    # simplejwt (ver `@.claude/rules/security.md`).
+    'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
     'ALGORITHM': os.getenv('JWT_ALGORITHM', 'HS256'),
-    'SIGNING_KEY': os.getenv('JWT_SECRET_KEY', SECRET_KEY),
+    'SIGNING_KEY': JWT_SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
@@ -193,10 +246,53 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': ['rest_framework.renderers.JSONRenderer'],
     'EXCEPTION_HANDLER': 'cartera.exceptions.cartera_exception_handler',
     # `password_reset`: usado por `PasswordResetRequestView` (sección 7.6, prevención de abuso).
+    # `login`: límite por IP, complementario al bloqueo por cuenta de
+    # `BruteForceProtectionService` — ese cuenta fallos de UNA cuenta, así que no ve el patrón de
+    # probar una contraseña habitual contra cientos de cuentas desde la misma IP.
+    # `ia`: los endpoints de Gemini cuestan dinero por llamada y `hallazgos-ia` se dispara al
+    # abrir un dashboard, así que necesitan tope propio.
     'DEFAULT_THROTTLE_RATES': {
         'password_reset': os.getenv('PASSWORD_RESET_THROTTLE_RATE', '5/hour'),
+        # 60/min por IP: generoso a propósito. La defensa real contra fuerza bruta es el conteo
+        # de FALLOS de `BruteForceProtectionService` (por cuenta y por IP); esto solo acota la
+        # ráfaga. Un límite ajustado castigaría a una oficina entera detrás de una única IP
+        # saliente, que es un caso normal y no un ataque.
+        'login': os.getenv('LOGIN_THROTTLE_RATE', '60/min'),
+        'ia': os.getenv('IA_THROTTLE_RATE', '20/hour'),
     },
 }
+
+# Los throttles de DRF llevan su contador en la caché, y la caché NO se reinicia entre tests
+# (`django.test.TestCase` solo revierte la base). Con los límites activos, el test número N que
+# inicia sesión falla por el consumo acumulado de los N-1 anteriores: una falla que depende del
+# orden de ejecución y no de la corrección del código. Se desactivan durante `manage.py test` y
+# los tests que verifican los límites los reactivan con `override_settings`
+# (`apps.authentication.tests.LoginThrottleTests`). Mismo criterio con el que Django ya fuerza
+# `EMAIL_BACKEND` a `locmem` durante las pruebas.
+if 'test' in sys.argv:
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
+        clave: None for clave in REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
+    }
+
+# --- Cabeceras y cookies de seguridad ------------------------------------------
+# Todo esto se activa fuera de desarrollo (los 6 avisos de `manage.py check --deploy`). En
+# desarrollo queda apagado porque el servidor local es HTTP y una cookie `Secure` no viajaría.
+SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', not DEBUG)
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+SECURE_HSTS_PRELOAD = not DEBUG
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+# Detrás de un proxy/balanceador que termina TLS, para que Django reconozca la petición como
+# segura y `SECURE_SSL_REDIRECT` no entre en un bucle de redirecciones.
+if env_bool('USE_X_FORWARDED_PROTO', False):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # --- CORS --------------------------------------------------------------------
 CORS_ALLOWED_ORIGINS = [
@@ -209,15 +305,57 @@ CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 UPLOAD_MAX_SIZE_BYTES = int(os.getenv('UPLOAD_MAX_SIZE_BYTES', 25 * 1024 * 1024))
 DATA_UPLOAD_MAX_MEMORY_SIZE = UPLOAD_MAX_SIZE_BYTES
 FILE_UPLOAD_MAX_MEMORY_SIZE = UPLOAD_MAX_SIZE_BYTES
+# Los directorios NO se crean acá: importar este módulo no debe tocar el sistema de archivos (ver
+# `cartera/utils/archivos.py::asegurar_directorio`, que los crea justo antes de escribir).
+# Se retiró además `CARTERA_EXPORTS_DIR`: no lo usaba ninguna línea del proyecto y solo dejaba un
+# directorio vacío en cada arranque — la exportación arma el archivo en memoria y lo devuelve en
+# la respuesta (`services/export_service.py`), nunca lo escribe a disco.
 CARTERA_TEMP_UPLOADS_DIR = MEDIA_ROOT / 'uploads_temp'
-CARTERA_TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-CARTERA_EXPORTS_DIR = MEDIA_ROOT / 'exports_temp'
-CARTERA_EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
 # A diferencia de CARTERA_TEMP_UPLOADS_DIR (se limpia a las 24h, `clean_temp_uploads`), el archivo
 # que queda aplicado a un dashboard se copia acá para que su mapeo de columnas se pueda seguir
 # ajustando después desde "Configurar componente" sin tener que volver a cargarlo.
 CARTERA_ARCHIVOS_DIR = MEDIA_ROOT / 'archivos_dashboard'
-CARTERA_ARCHIVOS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Fila máxima insertada por lote hacia SQL Server (sección 16 - rendimiento).
 CARTERA_BULK_BATCH_SIZE = 2000
+
+# --- Logging -------------------------------------------------------------------
+# Sin este bloque, los loggers propios (`cartera.*`, `apps.*`) no tenían ningún handler: caían al
+# `lastResort` de Python, que escribe a stderr sin formato, sin nivel configurable y sin el nombre
+# del logger. Los `logger.exception` que diagnostican una conexión fallida a la base externa o un
+# error del servicio de IA se volvían casi ilegibles justo cuando hacen falta.
+#
+# Solo consola a propósito: la rotación de archivos y el envío a un agregador son decisiones del
+# entorno de despliegue (systemd/journald, Docker, IIS), no de la aplicación. `LOG_LEVEL` permite
+# subir a DEBUG en un incidente sin tocar código.
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'DEBUG' if DEBUG else 'INFO')
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'detallado': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'consola': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'detallado',
+        },
+    },
+    'root': {
+        'handlers': ['consola'],
+        'level': 'WARNING',
+    },
+    'loggers': {
+        # Código propio: se sigue al nivel elegido.
+        'cartera': {'handlers': ['consola'], 'level': LOG_LEVEL, 'propagate': False},
+        'apps': {'handlers': ['consola'], 'level': LOG_LEVEL, 'propagate': False},
+        # Django: se conserva su comportamiento habitual, sin bajar a DEBUG el log de consultas
+        # SQL (`django.db.backends`), que es ruidosísimo y se activa aparte cuando se lo necesita.
+        'django': {'handlers': ['consola'], 'level': 'INFO', 'propagate': False},
+        'django.db.backends': {'handlers': ['consola'], 'level': 'WARNING', 'propagate': False},
+    },
+}

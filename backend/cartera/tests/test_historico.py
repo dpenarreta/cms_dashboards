@@ -10,6 +10,7 @@ from rest_framework.test import APIClient
 
 from cartera.models import CargaArchivo, Dashboard, FilaArchivoHistorico
 from cartera.services import dashboards as dashboards_service
+from cartera.services import generic_charts
 from cartera.services import historico, plantilla
 
 FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'cartera_ejemplo.xlsx')
@@ -241,6 +242,100 @@ class CalcularTablaHistoricaServiceTests(TestCase):
             'finanzas', [{'columna': 'cliente', 'tipo_agregacion': 'valor_celda'}], carga_ids=[str(self.carga_febrero.id)],
         )
         self.assertIsNone(resultado['filas'][0][-1])
+
+
+class CalcularKpiHistoricoServiceTests(TestCase):
+    def setUp(self):
+        self.carga_enero = _crear_carga()
+        self.carga_febrero = _crear_carga()
+        _guardar_todo(self.carga_enero, pd.DataFrame({'ventas': [100, 200, 300]}))
+        _guardar_todo(self.carga_febrero, pd.DataFrame({'ventas': [500, 500]}))
+
+    def test_toma_el_valor_de_la_carga_mas_reciente_no_la_suma_de_todas(self):
+        valor = historico.calcular_kpi_historico('finanzas', 'ventas', 'suma')
+        self.assertEqual(valor, 1000.0)  # febrero (500+500), NO 600+1000=1600
+
+    def test_promedio(self):
+        valor = historico.calcular_kpi_historico('finanzas', 'ventas', 'promedio')
+        self.assertAlmostEqual(valor, 500.0)  # promedio de febrero, la más reciente
+
+    def test_columna_sin_datos_historicos_con_promedio_devuelve_none(self):
+        # A diferencia de "suma" (una columna ausente suma 0, mismo criterio que
+        # `calcular_tabla_historica` ya usaba antes de esta función), "promedio" de ninguna fila
+        # es NaN -> None, mismo criterio que ya prueba `test_valor_celda_en_columna_que_no_existe...`.
+        valor = historico.calcular_kpi_historico('finanzas', 'no_existe', 'promedio')
+        self.assertIsNone(valor)
+
+    def test_sin_ninguna_carga_historica_devuelve_none(self):
+        valor = historico.calcular_kpi_historico('otro-dashboard-sin-historico', 'ventas', 'suma')
+        self.assertIsNone(valor)
+
+
+class CalcularCategoricoHistoricoServiceTests(TestCase):
+    def setUp(self):
+        self.carga_enero = _crear_carga()
+        self.carga_febrero = _crear_carga()
+        _guardar_todo(self.carga_enero, pd.DataFrame({'ventas': [100, 200, 300]}))
+        _guardar_todo(self.carga_febrero, pd.DataFrame({'ventas': [500, 500]}))
+
+    def test_una_categoria_por_carga_en_orden_cronologico(self):
+        resultado = historico.calcular_categorico_historico('finanzas', 'ventas', 'suma')
+        self.assertEqual(resultado['categorias'], [self.carga_enero.nombre_original, self.carga_febrero.nombre_original])
+        self.assertEqual(resultado['valores'], [600.0, 1000.0])
+
+    def test_columna_sin_datos_historicos_da_valores_none_por_carga_sin_romper(self):
+        # Sigue habiendo una categoría por carga (hay cargas históricas) — la columna elegida
+        # simplemente no tiene datos guardados en ninguna, cada valor queda `None`.
+        resultado = historico.calcular_categorico_historico('finanzas', 'no_existe', 'promedio')
+        self.assertEqual(resultado['valores'], [None, None])
+
+    def test_sin_ninguna_carga_historica_devuelve_none(self):
+        self.assertIsNone(historico.calcular_categorico_historico('otro-dashboard-sin-historico', 'ventas', 'suma'))
+
+
+class CalcularMultivalorHistoricoServiceTests(TestCase):
+    def setUp(self):
+        self.carga_enero = _crear_carga()
+        self.carga_febrero = _crear_carga()
+        _guardar_todo(self.carga_enero, pd.DataFrame({'ventas': [100, 200], 'costo': [10, 20]}))
+        _guardar_todo(self.carga_febrero, pd.DataFrame({'ventas': [500], 'costo': [50]}))
+
+    def test_una_serie_por_columna_de_valor_con_la_carga_como_categoria(self):
+        resultado = historico.calcular_multivalor_historico('finanzas', ['ventas', 'costo'])
+        self.assertEqual(resultado['categorias'], [self.carga_enero.nombre_original, self.carga_febrero.nombre_original])
+        self.assertEqual(resultado['series'], [
+            {'nombre': 'ventas', 'valores': [300.0, 500.0]},
+            {'nombre': 'costo', 'valores': [30.0, 50.0]},
+        ])
+
+    def test_sin_columnas_valor_devuelve_none(self):
+        self.assertIsNone(historico.calcular_multivalor_historico('finanzas', []))
+        self.assertIsNone(historico.calcular_multivalor_historico('finanzas', None))
+
+
+class CalcularMultiserieHistoricoServiceTests(TestCase):
+    def setUp(self):
+        self.carga_enero = _crear_carga()
+        self.carga_febrero = _crear_carga()
+        historico.guardar_filas_historicas(self.carga_enero, pd.DataFrame({
+            'ventas': [100, 200, 50], 'region': ['Norte', 'Norte', 'Sur'],
+        }), ['ventas', 'region'])
+        historico.guardar_filas_historicas(self.carga_febrero, pd.DataFrame({
+            'ventas': [300, 400], 'region': ['Norte', 'Sur'],
+        }), ['ventas', 'region'])
+
+    def test_una_serie_por_valor_distinto_de_columna_serie_agrupado_dentro_de_cada_carga(self):
+        resultado = historico.calcular_multiserie_historico('finanzas', 'ventas', 'region', 'suma')
+        self.assertEqual(resultado['categorias'], [self.carga_enero.nombre_original, self.carga_febrero.nombre_original])
+        series_por_nombre = {s['nombre']: s['valores'] for s in resultado['series']}
+        self.assertEqual(series_por_nombre['Norte'], [300.0, 300.0])  # enero: 100+200=300; febrero: 300
+        self.assertEqual(series_por_nombre['Sur'], [50.0, 400.0])
+
+    def test_columna_serie_no_historica_devuelve_none(self):
+        self.assertIsNone(historico.calcular_multiserie_historico('finanzas', 'ventas', 'no_es_historica', 'suma'))
+
+    def test_sin_ninguna_carga_historica_devuelve_none(self):
+        self.assertIsNone(historico.calcular_multiserie_historico('otro-dashboard-sin-historico', 'ventas', 'region', 'suma'))
 
 
 class EstablecerCargaIncluidaEnHistoricoServiceTests(TestCase):
@@ -479,3 +574,108 @@ class HistoricoCargaIncluidaViewTests(TestCase):
         self.client.force_authenticate(user=None)
         resp = self.client.patch(f'/api/cartera/historico/cargas/{self.carga.id}/incluir', {'incluir': False}, format='json')
         self.assertIn(resp.status_code, (401, 403))
+
+
+class HistoricoCasosBordeTests(TestCase):
+    """Casos borde encontrados auditando el núcleo de cálculo."""
+
+    def setUp(self):
+        self.carga = _crear_carga()
+        self.carga.incluir_en_historico = True
+        self.carga.save(update_fields=['incluir_en_historico'])
+        df = pd.DataFrame({'zona': ['norte', 'norte', 'sur'], 'saldo': [10, 20, 30]})
+        _guardar_todo(self.carga, df)
+
+    def test_una_entrada_sin_columna_elegida_no_desalinea_encabezados_y_celdas(self):
+        """Regresión: las entradas sin columna se filtraban del encabezado pero igual aportaban un
+        `None` por fila, así que `columnas` quedaba con 4 elementos y cada fila con 5 — la tabla se
+        renderizaba corrida."""
+        tabla = historico.calcular_tabla_historica('finanzas', [
+            {'columna': None, 'tipo_agregacion': 'suma'},
+            {'columna': 'saldo', 'tipo_agregacion': 'suma'},
+        ])
+        self.assertEqual(tabla['columnas'], ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte', 'saldo'])
+        for fila in tabla['filas']:
+            self.assertEqual(len(fila), len(tabla['columnas']))
+        self.assertEqual(tabla['filas'][0][-1], 60.0)
+
+    def test_todas_las_entradas_sin_columna_dejan_la_tabla_solo_con_la_identidad(self):
+        tabla = historico.calcular_tabla_historica('finanzas', [{'columna': None, 'tipo_agregacion': 'suma'}])
+        self.assertEqual(tabla['columnas'], ['Archivo', 'Usuario', 'Fecha de carga', 'Fecha de corte'])
+        for fila in tabla['filas']:
+            self.assertEqual(len(fila), 4)
+
+    def test_multiserie_historico_con_valor_celda_no_revienta(self):
+        """Regresión: `valor_celda` devuelve el texto de la celda y el `float(...)` levantaba
+        `ValueError: could not convert string to float`, que salía como un 500 al aplicar el
+        mapeo. Un gráfico dibuja números, así que cae a "suma" — lo que hace siempre el multiserie
+        no histórico."""
+        resultado = historico.calcular_multiserie_historico('finanzas', 'saldo', 'zona', 'valor_celda')
+
+        self.assertEqual(resultado['categorias'], ['datos.xlsx'])
+        valores_por_serie = {s['nombre']: s['valores'] for s in resultado['series']}
+        self.assertEqual(valores_por_serie['norte'], [30.0])
+        self.assertEqual(valores_por_serie['sur'], [30.0])
+
+    def test_multiserie_historico_con_suma_da_el_mismo_resultado(self):
+        con_suma = historico.calcular_multiserie_historico('finanzas', 'saldo', 'zona', 'suma')
+        con_celda = historico.calcular_multiserie_historico('finanzas', 'saldo', 'zona', 'valor_celda')
+        self.assertEqual(con_suma, con_celda)
+
+
+class HistoricoRendimientoYTopeTests(TestCase):
+    """Consultas de la tabla histórica y tope de series del multiserie histórico."""
+
+    def _cargas(self, dashboard_id, cantidad):
+        CargaArchivo.objects.filter(dashboard_id=dashboard_id).delete()
+        for i in range(cantidad):
+            carga = CargaArchivo.objects.create(
+                dashboard_id=dashboard_id, nombre_original=f'{i}.xlsx', incluir_en_historico=True,
+            )
+            _guardar_todo(carga, pd.DataFrame({'saldo': [1, 2]}))
+
+    def test_el_numero_de_consultas_no_crece_con_la_cantidad_de_cargas(self):
+        """Antes se consultaban las filas históricas una vez POR CARGA dentro del bucle: un
+        dashboard con dos años de cargas mensuales eran 24 consultas para armar una tabla."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        columnas = [{'columna': 'saldo', 'tipo_agregacion': 'suma'}]
+
+        self._cargas('perf', 1)
+        with CaptureQueriesContext(connection) as pocas:
+            historico.calcular_tabla_historica('perf', columnas)
+
+        self._cargas('perf', 6)
+        with CaptureQueriesContext(connection) as muchas:
+            resultado = historico.calcular_tabla_historica('perf', columnas)
+
+        self.assertEqual(len(resultado['filas']), 6)
+        self.assertEqual(len(pocas), len(muchas))
+
+    def test_el_multiserie_historico_aplica_el_mismo_tope_de_series_que_el_normal(self):
+        """Sin tope devolvía una serie por cada valor distinto de la columna (40 en el sondeo),
+        con la leyenda inutilizable, mientras el gráfico equivalente sobre el archivo actual
+        cortaba en 6."""
+        carga = _crear_carga()
+        carga.incluir_en_historico = True
+        carga.save(update_fields=['incluir_en_historico'])
+        df = pd.DataFrame({'serie': [f'S{i}' for i in range(40)], 'saldo': list(range(1, 41))})
+        _guardar_todo(carga, df)
+
+        resultado = historico.calcular_multiserie_historico('finanzas', 'saldo', 'serie')
+
+        self.assertEqual(len(resultado['series']), generic_charts.MAX_SERIES_EN_GRAFICA + 1)
+        self.assertEqual(resultado['series'][-1]['nombre'], 'Otras')
+        # Nada se pierde: las series siguen sumando el total real de la carga.
+        self.assertAlmostEqual(sum(s['valores'][0] for s in resultado['series']), float(df['saldo'].sum()), places=2)
+
+    def test_con_pocas_series_el_multiserie_historico_no_agrega_otras(self):
+        carga = _crear_carga()
+        carga.incluir_en_historico = True
+        carga.save(update_fields=['incluir_en_historico'])
+        _guardar_todo(carga, pd.DataFrame({'serie': ['A', 'B'], 'saldo': [10, 20]}))
+
+        resultado = historico.calcular_multiserie_historico('finanzas', 'saldo', 'serie')
+
+        self.assertEqual([s['nombre'] for s in resultado['series']], ['A', 'B'])

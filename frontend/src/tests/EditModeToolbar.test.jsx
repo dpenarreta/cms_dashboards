@@ -75,15 +75,20 @@ describe('EditModeToolbar', () => {
     expect(props.onRestablecer).toHaveBeenCalledTimes(1)
   })
 
-  it('guardar invoca onGuardar con el nombre ingresado para auditoría', async () => {
+  it('guardar invoca onGuardar', async () => {
     const { props } = renderToolbar({ modoEdicion: true })
 
-    const campoNombre = screen.getByLabelText('Nombre para el registro de auditoría')
-    await userEvent.clear(campoNombre)
-    await userEvent.type(campoNombre, 'Ana')
-
     await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
-    expect(props.onGuardar).toHaveBeenCalledWith('Ana')
+    expect(props.onGuardar).toHaveBeenCalledTimes(1)
+  })
+
+  it('no ofrece un campo para escribir el nombre del autor del cambio', () => {
+    // El autor lo resuelve el backend desde el usuario autenticado. El campo que había acá
+    // permitía firmar un cambio de diseño con el nombre de otra persona, y era ese el nombre que
+    // mostraba el historial de versiones.
+    renderToolbar({ modoEdicion: true })
+    expect(screen.queryByLabelText('Nombre para el registro de auditoría')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('Tu nombre (auditoría)')).not.toBeInTheDocument()
   })
 
   it('los botones quedan deshabilitados mientras cargando es true', () => {

@@ -254,3 +254,120 @@ class UserAdminViewSetTests(TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertIsNotNone(resp.json()['ultima_conexion'])
+
+
+class EscaladaDePrivilegiosTests(TestCase):
+    """Cierre de las rutas por las que un permiso asignable alcanzaba para llegar al control total.
+
+    Cada test corresponde a un hallazgo de la revisión de seguridad: SEC-01 (auto-otorgamiento de
+    permisos), SEC-02 (toma de la cuenta superusuario vía reset de contraseña o cambio de correo).
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.superusuario = User.objects.create_superuser(
+            username='admin', email='admin@example.com', password='Clave-Segura-123',
+        )
+        # Operador con `usuarios.editar` y `usuarios.restablecer_password`, sin ser superusuario:
+        # el perfil exacto al que estaban expuestas las escaladas.
+        self.operador = User.objects.create_user(
+            username='operador', email='op@example.com', password='Clave-Segura-123',
+        )
+        for codename in ('usuarios.ver', 'usuarios.editar', 'usuarios.restablecer_password', 'usuarios.deshabilitar'):
+            self.operador.user_permissions.add(
+                Permission.objects.get(codename=codename, content_type__app_label='permissions'),
+            )
+        self.otro = User.objects.create_user(username='otro', email='otro@example.com', password='Clave-Segura-123')
+
+    # --- SEC-01 -----------------------------------------------------------------------------
+    def test_no_puede_asignarse_permisos_a_si_mismo(self):
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(
+            f'/api/users/{self.operador.id}/permissions/',
+            {'codenames': ['auditoria.ver', 'configuracion.editar']}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'AUTO_MODIFICACION_NO_PERMITIDA')
+        self.assertEqual(self.operador.user_permissions.filter(codename='auditoria.ver').count(), 0)
+
+    def test_no_puede_asignarse_roles_a_si_mismo(self):
+        rol = Group.objects.create(name='PODEROSO')
+        rol.permissions.add(Permission.objects.get(codename='auditoria.ver', content_type__app_label='permissions'))
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(f'/api/users/{self.operador.id}/roles/', {'role_ids': [rol.id]}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'AUTO_MODIFICACION_NO_PERMITIDA')
+        self.assertFalse(self.operador.groups.exists())
+
+    def test_no_puede_otorgar_a_otro_un_permiso_que_no_tiene(self):
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(
+            f'/api/users/{self.otro.id}/permissions/', {'codenames': ['auditoria.ver']}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'PERMISO_NO_DELEGABLE')
+        self.assertIn('auditoria.ver', resp.json()['detalles']['codenames'])
+        self.assertFalse(self.otro.user_permissions.exists())
+
+    def test_si_puede_otorgar_a_otro_un_permiso_que_si_tiene(self):
+        """La delegación sigue funcionando — lo que se corta es otorgar más de lo propio."""
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(
+            f'/api/users/{self.otro.id}/permissions/', {'codenames': ['usuarios.ver']}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(self.otro.user_permissions.filter(codename='usuarios.ver').exists())
+
+    def test_un_superusuario_puede_otorgar_todo_el_catalogo(self):
+        self.client.force_authenticate(user=self.superusuario)
+        resp = self.client.post(
+            f'/api/users/{self.otro.id}/permissions/',
+            {'codenames': ['auditoria.ver', 'configuracion.editar']}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self.otro.user_permissions.count(), 2)
+
+    # --- SEC-02 -----------------------------------------------------------------------------
+    def test_no_puede_restablecer_la_contrasena_de_un_superusuario(self):
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(f'/api/users/{self.superusuario.id}/reset_password/', {}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'OBJETIVO_SUPERUSUARIO')
+        self.assertNotIn('temporary_password', resp.json())
+        self.superusuario.refresh_from_db()
+        self.assertTrue(self.superusuario.check_password('Clave-Segura-123'))
+
+    def test_no_puede_cambiar_el_correo_de_un_superusuario(self):
+        """El correo gobierna la recuperación de contraseña: apuntarlo al buzón propio era la
+        misma toma de control que el reset, por otra puerta."""
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.patch(
+            f'/api/users/{self.superusuario.id}/', {'email': 'atacante@example.com'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'OBJETIVO_SUPERUSUARIO')
+        self.superusuario.refresh_from_db()
+        self.assertEqual(self.superusuario.email, 'admin@example.com')
+
+    def test_no_puede_deshabilitar_ni_bloquear_a_un_superusuario(self):
+        self.client.force_authenticate(user=self.operador)
+        for accion in ('disable', 'block'):
+            resp = self.client.post(f'/api/users/{self.superusuario.id}/{accion}/', {}, format='json')
+            self.assertEqual(resp.json()['error'], 'OBJETIVO_SUPERUSUARIO', accion)
+        self.superusuario.refresh_from_db()
+        self.assertEqual(self.superusuario.status, User.Status.ACTIVE)
+
+    def test_un_superusuario_si_puede_restablecer_la_contrasena_de_otro_superusuario(self):
+        otro_admin = User.objects.create_superuser(
+            username='admin2', email='admin2@example.com', password='Clave-Segura-123',
+        )
+        self.client.force_authenticate(user=self.superusuario)
+        resp = self.client.post(f'/api/users/{otro_admin.id}/reset_password/', {}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('temporary_password', resp.json())
+
+    def test_sigue_pudiendo_restablecer_la_contrasena_de_un_usuario_normal(self):
+        self.client.force_authenticate(user=self.operador)
+        resp = self.client.post(f'/api/users/{self.otro.id}/reset_password/', {}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('temporary_password', resp.json())

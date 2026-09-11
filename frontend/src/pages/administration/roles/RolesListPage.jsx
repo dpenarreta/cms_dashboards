@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Button, Spinner, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 import UsersRolesTabsBar from '../../../components/admin/UsersRolesTabsBar'
+import ConfirmModal from '../../../components/dashboard-editor/ConfirmModal'
 import * as rolesService from '../../../services/rolesService'
 
 export default function RolesListPage() {
@@ -9,6 +10,7 @@ export default function RolesListPage() {
   const [pagina, setPagina] = useState(1)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
+  const [rolAEliminar, setRolAEliminar] = useState(null)
 
   const cargar = () => {
     setCargando(true)
@@ -21,8 +23,12 @@ export default function RolesListPage() {
 
   useEffect(cargar, [pagina]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const eliminar = async (rol) => {
-    if (!window.confirm(`¿Eliminar el rol "${rol.name}"? Esta acción no se puede deshacer.`)) return
+  // Confirmación con `ConfirmModal` y no `window.confirm`: el diálogo nativo no es accesible ni
+  // testeable, y la regla del repo (`.claude/rules/dashboards.md`) lo prohíbe explícitamente para
+  // acciones destructivas — que es justo lo que es eliminar un rol.
+  const eliminar = async () => {
+    const rol = rolAEliminar
+    setRolAEliminar(null)
     setError('')
     try {
       await rolesService.remove(rol.id)
@@ -60,7 +66,7 @@ export default function RolesListPage() {
                   <td><Link to={`/admin/roles/${rol.id}`}>{rol.name}</Link></td>
                   <td>{rol.permission_codenames.length}</td>
                   <td>
-                    <Button size="sm" variant="outline-danger" onClick={() => eliminar(rol)}>Eliminar</Button>
+                    <Button size="sm" variant="outline-danger" onClick={() => setRolAEliminar(rol)}>Eliminar</Button>
                   </td>
                 </tr>
               ))}
@@ -79,6 +85,17 @@ export default function RolesListPage() {
           <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
         </div>
       </div>
+
+      <ConfirmModal
+        show={Boolean(rolAEliminar)}
+        title="Eliminar rol"
+        confirmLabel="Eliminar"
+        onConfirm={eliminar}
+        onCancel={() => setRolAEliminar(null)}
+      >
+        Se eliminará el rol <strong>{rolAEliminar?.name}</strong> y sus permisos dejarán de
+        aplicarse a quienes lo tengan asignado. Esta acción no se puede deshacer.
+      </ConfirmModal>
     </div>
   )
 }

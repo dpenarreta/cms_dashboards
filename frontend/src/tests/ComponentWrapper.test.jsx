@@ -105,4 +105,36 @@ describe('ComponentWrapper', () => {
     expect(props.onEliminar).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Eliminar' })).toBeInTheDocument()
   })
+
+  describe('componente bloqueado (config.bloqueado)', () => {
+    function componenteBloqueado(extra = {}) {
+      return componenteDePrueba({ config: { bloqueado: true }, ...extra })
+    }
+
+    it('sin superusuario, la manija de arrastre queda deshabilitada', () => {
+      renderWrapper({ componente: componenteBloqueado() })
+      expect(screen.getByRole('button', { name: 'Arrastrar para reordenar kpi-cartera-vencida' })).toBeDisabled()
+    })
+
+    it('sin superusuario, no muestra "Ocultar" ni "Eliminar"', () => {
+      renderWrapper({ componente: componenteBloqueado() })
+      expect(screen.queryByRole('button', { name: 'Ocultar' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Eliminar' })).not.toBeInTheDocument()
+    })
+
+    it('sin superusuario, los botones de mover quedan deshabilitados', () => {
+      renderWrapper({ componente: componenteBloqueado() })
+      expect(screen.getByRole('button', { name: 'Mover abajo' })).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Mover arriba' })).toBeDisabled()
+    })
+
+    it('con superusuario, se comporta como un componente sin bloquear', () => {
+      const { props } = renderWrapper({ componente: componenteBloqueado(), esSuperusuario: true })
+      expect(screen.getByRole('button', { name: 'Arrastrar para reordenar kpi-cartera-vencida' })).not.toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Ocultar' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Eliminar' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Mover abajo' })).not.toBeDisabled()
+      expect(props.onOcultar).not.toHaveBeenCalled()
+    })
+  })
 })

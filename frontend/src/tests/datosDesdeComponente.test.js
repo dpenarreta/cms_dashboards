@@ -9,6 +9,12 @@ describe('datosDesdeComponente', () => {
     expect(resultado).toEqual({ datos: { valor: 100, formato: 'moneda', tendencia: { valor: 5 } } })
   })
 
+  it('un KPI con meta también la incluye (regresión: se perdía al reconstruir `datos`)', () => {
+    const meta = { meta_min: 50, meta_max: 200, cumple: true, motivos: [] }
+    const resultado = datosDesdeComponente({ type: 'kpi', content: { valor: 100, formato: 'numero', meta } })
+    expect(resultado.datos.meta).toEqual(meta)
+  })
+
   it('dispersión usa los puntos', () => {
     const resultado = datosDesdeComponente({ type: 'chart', chart_type: 'dispersion', content: { puntos: [{ x: 1, y: 2 }] } })
     expect(resultado).toEqual({ datos: { puntos: [{ x: 1, y: 2 }] } })

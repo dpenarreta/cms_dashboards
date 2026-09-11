@@ -1,6 +1,7 @@
 import { Alert, Badge, Button, Spinner } from 'react-bootstrap'
 import GenericChartRenderer from './GenericChartRenderer'
-import { FiltroSlot, camposParaSlot, datosParaPreview, tipoVisualizacionElegido } from './SlotFields'
+import { CamposParaSlot, FiltroSlot } from './SlotFields'
+import { datosParaPreview, tipoVisualizacionElegido } from './slotFieldsData'
 import { ETIQUETAS_TIPO_VISUALIZACION, PLANTILLA_SLOTS } from '../../utils/plantillaSlots'
 import { tratamientoColumnaEnBlanco } from '../../utils/tratamientoBlancos'
 
@@ -68,7 +69,13 @@ export default function TemplateMappingStep({
     const propuesta = mapeo[slot.id] || {}
     const cambiar = (campo) => (valor) => onActualizarSlot(slot.id, { [campo]: valor })
     const cambiarLista = (campo) => (nuevaLista) => onActualizarSlot(slot.id, { [campo]: nuevaLista })
-    return camposParaSlot({ slot, propuesta, columnas, cambiar, cambiarLista })
+    return (
+      <CamposParaSlot
+        slot={slot} propuesta={propuesta} columnas={columnas}
+        cambiar={cambiar} cambiarLista={cambiarLista}
+        cargaId={archivoInfo?.cargaId} aliases={aliases}
+      />
+    )
   }
 
   return (
@@ -128,10 +135,19 @@ export default function TemplateMappingStep({
                             aliases={aliases}
                             valoresBlancos={valoresBlancos}
                             columnas={columnas}
+                            esKPI={slot.calculo === 'kpi'}
                             columnaFiltro={propuesta.columna_filtro}
+                            tipoFiltro={propuesta.tipo_filtro}
                             valorFiltro={propuesta.valor_filtro}
-                            onCambiarColumna={(valor) => onActualizarSlot(slot.id, { columna_filtro: valor, valor_filtro: null })}
+                            operadorFiltro={propuesta.operador_filtro}
+                            diasFiltro={propuesta.dias_filtro}
+                            onCambiarColumna={(valor) => onActualizarSlot(slot.id, { columna_filtro: valor, valor_filtro: null, dias_filtro: null })}
                             onCambiarValor={(valor) => onActualizarSlot(slot.id, { valor_filtro: valor })}
+                            onCambiarTipoFiltro={(valor) => onActualizarSlot(slot.id, {
+                              tipo_filtro: valor, columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+                            })}
+                            onCambiarOperador={(valor) => onActualizarSlot(slot.id, { operador_filtro: valor })}
+                            onCambiarDias={(valor) => onActualizarSlot(slot.id, { dias_filtro: valor })}
                           />
                         </>
                       )}

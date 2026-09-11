@@ -230,3 +230,18 @@
   padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
+
+/* `.admin-shell`/`.admin-shell__page` fijan `height: 100vh` + `overflow-y: auto` para que solo esa
+   región interna haga scroll (ver comentario más arriba) — al imprimir eso recorta todo el
+   contenido que no entra en un único alto de pantalla, porque el motor de impresión no pagina
+   dentro de un contenedor con scroll propio. `.d-print-none` (Bootstrap, ya usado en sidebar/
+   topbar/botones) ya oculta el cromo de la app; esto además libera el alto fijo para que el
+   dashboard completo fluya en tantas páginas como haga falta. */
+@media print {
+  .admin-shell,
+  .admin-shell__content,
+  .admin-shell__page {
+    height: auto;
+    overflow: visible;
+  }
+}

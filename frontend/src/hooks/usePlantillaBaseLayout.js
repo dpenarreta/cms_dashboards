@@ -125,14 +125,13 @@ export function usePlantillaBaseLayout() {
     })
   }, [])
 
-  const guardar = useCallback(async (changedBy) => {
+  const guardar = useCallback(async () => {
     setCargando(true)
     setError(null)
     try {
       const data = await plantillaBaseService.guardarLayout({
         version: layoutGuardado.version,
         components: recalcularFilas(borrador),
-        changedBy,
       })
       setLayoutGuardado(data)
       setBorrador(clonar(data.components))

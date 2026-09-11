@@ -50,16 +50,17 @@ export const ETIQUETAS_TIPO_VISUALIZACION = {
  * los sigue pudiendo dibujar (no se tocó, para no romper componentes ya creados con esos tipos
  * antes de este cambio), pero ya no aparecen en `SelectorTipoGrafico`.
  *
- * `pastel`/`dona` también aparecen en `multivalor`/`multiserie` (2+ columnas de valor) aunque un
- * gráfico circular solo puede mostrar una porción por categoría: `GenericChartRenderer` colapsa
- * automáticamente las columnas/series en una sola (sumadas por categoría) cuando se elige uno de
- * estos dos tipos sobre una posición de varias columnas — el usuario no tiene que rehacer el
- * mapeo para "bajar" a una sola columna.
+ * Barras verticales/horizontales, pastel y dona son el mínimo que SIEMPRE debe estar disponible,
+ * también en `multivalor`/`multiserie` (2+ columnas de valor) — aunque esos 4 tipos solo pueden
+ * mostrar una cantidad por categoría, nunca varias series/columnas a la vez:
+ * `GenericChartRenderer` colapsa automáticamente las columnas/series en una sola (sumadas por
+ * categoría) cuando se elige uno de estos 4 tipos sobre una posición de varias columnas — el
+ * usuario no tiene que rehacer el mapeo para "bajar" a una sola columna.
  */
 export const TIPOS_COMPATIBLES = {
   chart: ['barras_verticales', 'barras_horizontales', 'pastel', 'dona'],
-  multivalor: ['barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'],
-  multiserie: ['barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'],
+  multivalor: ['barras_verticales', 'barras_horizontales', 'barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'],
+  multiserie: ['barras_verticales', 'barras_horizontales', 'barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'],
 }
 
 /**

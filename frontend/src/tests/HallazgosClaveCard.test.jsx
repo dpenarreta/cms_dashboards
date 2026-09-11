@@ -9,23 +9,28 @@ describe('HallazgosClaveCard', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('con hallazgos, empieza expandido (el párrafo se ve sin hacer clic)', () => {
-    render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} />)
-    const boton = screen.getByRole('button', { name: /Hallazgos clave/ })
-    expect(boton).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText(/El valor actual es/)).toBeInTheDocument()
+  it('con hallazgos, se marca como oculto al imprimir (d-print-none)', () => {
+    const { container } = render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} />)
+    expect(container.querySelector('.hallazgos-clave')).toHaveClass('d-print-none')
   })
 
-  it('un clic en el encabezado contrae el párrafo, y un segundo clic lo vuelve a expandir', async () => {
+  it('con hallazgos, empieza cerrado (hace falta un clic para verlo)', () => {
+    render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} />)
+    const boton = screen.getByRole('button', { name: /Hallazgos clave/ })
+    expect(boton).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('un clic en el encabezado expande el párrafo, y un segundo clic lo vuelve a cerrar', async () => {
     const usuario = userEvent.setup()
     render(<HallazgosClaveCard variante="kpi" datos={{ valor: 100, formato: 'numero' }} />)
     const boton = screen.getByRole('button', { name: /Hallazgos clave/ })
 
     await usuario.click(boton)
-    expect(boton).toHaveAttribute('aria-expanded', 'false')
+    expect(boton).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(/El valor actual es/)).toBeInTheDocument()
 
     await usuario.click(boton)
-    expect(boton).toHaveAttribute('aria-expanded', 'true')
+    expect(boton).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('resalta en negrita los números y nombres importantes del párrafo', () => {

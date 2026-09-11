@@ -3,7 +3,32 @@ import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 
-const DASHBOARD_POR_DEFECTO = '/app/dashboards/cartera'
+/**
+ * Tras iniciar sesión se abre el listado de dashboards, no un dashboard fijo: el listado
+ * (`/app/dashboards`) ya muestra únicamente los dashboards a los que el usuario tiene acceso —
+ * de lectura o de edición — resueltos en backend (`GET /api/dashboards/authorized`). Apuntar a un
+ * dashboard concreto llevaba a un 403 a cualquier usuario sin acceso a ese dashboard puntual.
+ */
+const RUTA_POR_DEFECTO = '/app/dashboards'
+
+/**
+ * A dónde volver después de iniciar sesión, en orden de preferencia:
+ *
+ * 1. `location.state.from`, que pone `RequirePermission` cuando rebota una navegación interna.
+ * 2. `?from=`, que pone `httpClient.redirigirALogin` cuando la sesión vence a mitad de camino —
+ *    ese redirect recarga el documento, así que el `state` no sobrevive.
+ * 3. El listado de dashboards.
+ *
+ * Solo se aceptan rutas internas (`/algo`): un `from` con host propio permitiría que un enlace
+ * preparado por un tercero mandara al usuario a un dominio externo justo después de autenticarse.
+ */
+function rutaDeRetorno(location) {
+  const desdeEstado = location.state?.from
+  if (desdeEstado) return desdeEstado
+  const desdeQuery = new URLSearchParams(location.search).get('from')
+  if (desdeQuery && desdeQuery.startsWith('/') && !desdeQuery.startsWith('//')) return desdeQuery
+  return RUTA_POR_DEFECTO
+}
 
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth()
@@ -15,7 +40,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
 
   if (isAuthenticated) {
-    return <Navigate to={location.state?.from || DASHBOARD_POR_DEFECTO} replace />
+    return <Navigate to={rutaDeRetorno(location)} replace />
   }
 
   const enviar = async (e) => {
@@ -28,7 +53,7 @@ export default function LoginPage() {
       setError(resultado.error)
       return
     }
-    navigate(location.state?.from || DASHBOARD_POR_DEFECTO, { replace: true })
+    navigate(rutaDeRetorno(location), { replace: true })
   }
 
   return (

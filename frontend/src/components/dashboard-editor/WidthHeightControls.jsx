@@ -22,14 +22,14 @@ const ALTURAS = [
  * arrastre libre de bordes en píxeles: es mucho más accesible y evita superposiciones por
  * construcción (el contenedor usa flex-wrap sobre estos anchos discretos).
  */
-export default function WidthHeightControls({ width, height, onCambiarAncho, onCambiarAlto }) {
+export default function WidthHeightControls({ width, height, onCambiarAncho, onCambiarAlto, disabled }) {
   const alturaPreset = ALTURAS.some((a) => a.valor === height) ? height : 'personalizado'
 
   return (
     <div className="d-flex gap-2 align-items-end flex-wrap">
       <Form.Group controlId="control-ancho">
         <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>Ancho</Form.Label>
-        <Form.Select size="sm" value={width} onChange={(e) => onCambiarAncho(Number(e.target.value))}>
+        <Form.Select size="sm" value={width} onChange={(e) => onCambiarAncho(Number(e.target.value))} disabled={disabled}>
           {ANCHOS.map((a) => <option key={a.valor} value={a.valor}>{a.etiqueta}</option>)}
         </Form.Select>
       </Form.Group>
@@ -42,6 +42,7 @@ export default function WidthHeightControls({ width, height, onCambiarAncho, onC
             const valor = e.target.value
             if (valor !== 'personalizado') onCambiarAlto(Number(valor))
           }}
+          disabled={disabled}
         >
           {ALTURAS.map((a) => <option key={a.etiqueta} value={a.valor}>{a.etiqueta}</option>)}
         </Form.Select>
@@ -56,6 +57,7 @@ export default function WidthHeightControls({ width, height, onCambiarAncho, onC
             max={1200}
             value={height}
             onChange={(e) => onCambiarAlto(Math.min(1200, Math.max(60, Number(e.target.value) || 60)))}
+            disabled={disabled}
           />
         </Form.Group>
       )}

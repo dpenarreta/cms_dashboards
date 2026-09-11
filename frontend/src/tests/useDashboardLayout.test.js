@@ -168,11 +168,14 @@ describe('useDashboardLayout', () => {
       act(() => result.current.moverComponente('b', 'abajo'))
 
       dashboardLayoutService.guardarLayout.mockResolvedValue(layoutDePrueba(2))
-      await act(async () => { await result.current.guardar('Ana') })
+      await act(async () => { await result.current.guardar() })
 
+      // Sin `changedBy`: el autor del cambio lo resuelve el backend desde el usuario
+      // autenticado, ya no viaja desde el cliente (era falsificable).
       expect(dashboardLayoutService.guardarLayout).toHaveBeenCalledWith('cartera', expect.objectContaining({
-        version: 1, changedBy: 'Ana',
+        version: 1,
       }))
+      expect(dashboardLayoutService.guardarLayout.mock.calls[0][1]).not.toHaveProperty('changedBy')
       expect(result.current.modoEdicion).toBe(false)
     })
 
@@ -203,9 +206,9 @@ describe('useDashboardLayout', () => {
       const layoutPorDefecto = layoutDePrueba(1)
       dashboardLayoutService.restablecerLayout.mockResolvedValue(layoutPorDefecto)
 
-      await act(async () => { await result.current.restablecer('Ana') })
+      await act(async () => { await result.current.restablecer() })
 
-      expect(dashboardLayoutService.restablecerLayout).toHaveBeenCalledWith('cartera', { changedBy: 'Ana' })
+      expect(dashboardLayoutService.restablecerLayout).toHaveBeenCalledWith('cartera')
       expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
     })
 

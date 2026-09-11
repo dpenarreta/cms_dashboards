@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap'
 import SettingsTabsBar from '../../../components/admin/SettingsTabsBar'
+import ConfirmModal from '../../../components/dashboard-editor/ConfirmModal'
 import * as brandingService from '../../../services/brandingService'
 import { useTheme } from '../../../context/ThemeContext'
 import { cumpleContrasteAA } from '../../../utils/colorContrast'
@@ -88,6 +89,7 @@ export default function SettingsPage() {
   const [opciones, setOpciones] = useState({ fonts: [], border_radii: [] })
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
+  const [confirmandoReset, setConfirmandoReset] = useState(false)
   const [error, setError] = useState('')
   const [exito, setExito] = useState('')
 
@@ -123,8 +125,11 @@ export default function SettingsPage() {
     }
   }
 
+  // Confirmación con `ConfirmModal`, no `window.confirm`: restablecer afecta la identidad visual
+  // que ven TODOS los usuarios y no se puede deshacer, así que es exactamente el tipo de acción
+  // para la que la regla del repo pide un modal accesible (`.claude/rules/dashboards.md`).
   const restablecer = async () => {
-    if (!window.confirm('¿Restablecer la configuración institucional a sus valores por defecto?')) return
+    setConfirmandoReset(false)
     setGuardando(true)
     setError('')
     try {
@@ -241,9 +246,22 @@ export default function SettingsPage() {
 
         <div className="d-flex gap-2">
           <Button type="submit" disabled={guardando}>{guardando ? <Spinner size="sm" animation="border" /> : 'Guardar cambios'}</Button>
-          <Button type="button" variant="outline-secondary" disabled={guardando} onClick={restablecer}>Restablecer</Button>
+          <Button type="button" variant="outline-secondary" disabled={guardando} onClick={() => setConfirmandoReset(true)}>Restablecer</Button>
         </div>
       </Form>
+
+      <ConfirmModal
+        show={confirmandoReset}
+        title="Restablecer configuración institucional"
+        confirmLabel="Restablecer"
+        onConfirm={restablecer}
+        onCancel={() => setConfirmandoReset(false)}
+      >
+        <Alert variant="warning" className="mb-0">
+          Se descartarán los colores, la tipografía y el logo configurados, y se volverá a los
+          valores por defecto. El cambio afecta a todos los usuarios y no se puede deshacer.
+        </Alert>
+      </ConfirmModal>
     </div>
   )
 }

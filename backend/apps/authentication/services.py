@@ -15,6 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.audit.models import AuditEvent
 from apps.audit.services import log_event
+from apps.core.password import validar_fortaleza
 from cartera.exceptions import CarteraError
 
 from .models import EmailTemplate, LoginAttempt, PasswordResetToken, Session
@@ -32,16 +33,61 @@ _DUMMY_PASSWORD_HASH = 'argon2$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$ZmFrZWh
 
 
 class BruteForceProtectionService:
+    """Bloqueo temporal de intentos de login, en dos ejes independientes.
+
+    **Por cuenta**, contra un identificador CANÓNICO (`identificador_canonico`), no contra el
+    texto que se escribió. Antes se contaba el valor crudo, y como el login acepta indistintamente
+    el username o el email, `admin` y `admin@empresa.com` llevaban contadores separados: 5
+    intentos con uno y 5 más con el otro, sobre la misma cuenta, sin bloqueo — y cada alias de
+    correo sumaba otros 5. La variación de mayúsculas era el mismo agujero, tapado solo por la
+    colación case-insensitive de SQL Server, así que reaparecía con `DB_ENGINE=sqlite`.
+
+    **Por IP**, con un umbral propio más alto. El eje por cuenta no ve el patrón de probar una
+    contraseña habitual contra cientos de cuentas distintas desde la misma máquina, porque cada
+    cuenta recibe un único intento fallido. Complementa (no reemplaza) el `ScopedRateThrottle` de
+    `LoginView`, que limita la tasa; esto limita el total acumulado en la ventana.
+    """
+
     @staticmethod
-    def esta_bloqueado(identifier):
+    def identificador_canonico(identifier, usuario=None):
+        """Un único valor por cuenta, sea cual sea el campo por el que se intente entrar.
+
+        Cuando el identificador resuelve a un usuario se usa su clave primaria; cuando no resuelve
+        (cuenta inexistente) se cae al texto normalizado en minúsculas, que además evita depender
+        de cómo compare cadenas el motor de base de datos. Se sigue contando por identificador y
+        nunca por usuario "ya resuelto y existente", así que enumerar cuentas no se vuelve gratis:
+        un identificador inexistente también acumula y también bloquea.
+        """
+        if usuario is not None:
+            return f'user:{usuario.pk}'
+        return (identifier or '').strip().lower()[:255]
+
+    @staticmethod
+    def esta_bloqueado(identificador_canonico, ip_address=None):
         limite = getattr(settings, 'LOGIN_MAX_FAILED_ATTEMPTS', 5)
+        limite_ip = getattr(settings, 'LOGIN_MAX_FAILED_ATTEMPTS_PER_IP', 30)
         minutos = getattr(settings, 'LOGIN_LOCKOUT_MINUTES', 15)
         desde = timezone.now() - timezone.timedelta(minutes=minutos)
-        fallidos = LoginAttempt.objects.filter(identifier=identifier, successful=False, created_at__gte=desde).count()
+
+        fallidos = LoginAttempt.objects.filter(
+            identifier=identificador_canonico, successful=False, created_at__gte=desde,
+        ).count()
         exitosos_recientes = LoginAttempt.objects.filter(
-            identifier=identifier, successful=True, created_at__gte=desde,
+            identifier=identificador_canonico, successful=True, created_at__gte=desde,
         ).exists()
-        return fallidos >= limite and not exitosos_recientes
+        if fallidos >= limite and not exitosos_recientes:
+            return True
+
+        # El eje por IP no tiene la salida de "hubo un éxito reciente": un atacante que acierta
+        # una cuenta entre cientos no debería con eso habilitarse a seguir probando el resto.
+        if ip_address and limite_ip:
+            fallidos_ip = LoginAttempt.objects.filter(
+                ip_address=ip_address, successful=False, created_at__gte=desde,
+            ).count()
+            if fallidos_ip >= limite_ip:
+                return True
+
+        return False
 
     @staticmethod
     def registrar_intento(*, identifier, ip_address, user=None, successful):
@@ -61,32 +107,50 @@ class SessionService:
     def revocar_todas(user):
         Session.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
 
+    @staticmethod
+    def revocar_todas_menos(user, sesion_id):
+        """Revoca todas las sesiones del usuario salvo una — la que está usando ahora mismo.
+
+        Lo usa el cambio de contraseña propio: quien cambia su clave porque sospecha que le
+        robaron el acceso espera que las demás sesiones caigan, pero no que lo expulse a él de la
+        pantalla en la que está.
+        """
+        Session.objects.filter(user=user, revoked_at__isnull=True).exclude(id=sesion_id).update(
+            revoked_at=timezone.now(),
+        )
+
 
 class AuthenticationService:
     @staticmethod
     def login(*, identifier, password, ip_address=None, user_agent=''):
-        if BruteForceProtectionService.esta_bloqueado(identifier):
+        # El usuario se resuelve ANTES de consultar el bloqueo para poder canonicalizar el
+        # identificador (ver `BruteForceProtectionService.identificador_canonico`): sin eso, el
+        # contador dependía del texto exacto que se escribió y alternar username/email lo
+        # duplicaba. Resolver primero no filtra información — la respuesta y el tiempo de
+        # respuesta siguen siendo los mismos exista o no la cuenta.
+        usuario = User.objects.filter(Q(username__iexact=identifier) | Q(email__iexact=identifier)).first()
+        canonico = BruteForceProtectionService.identificador_canonico(identifier, usuario)
+
+        if BruteForceProtectionService.esta_bloqueado(canonico, ip_address=ip_address):
             raise CarteraError(
                 'Demasiados intentos fallidos. Intenta de nuevo más tarde.', codigo='CUENTA_BLOQUEADA_TEMPORALMENTE',
             )
 
-        usuario = User.objects.filter(Q(username__iexact=identifier) | Q(email__iexact=identifier)).first()
-
         if usuario is None:
             check_password('cualquier-cosa', _DUMMY_PASSWORD_HASH)
-            BruteForceProtectionService.registrar_intento(identifier=identifier, ip_address=ip_address, successful=False)
+            BruteForceProtectionService.registrar_intento(identifier=canonico, ip_address=ip_address, successful=False)
             raise CarteraError('Usuario o contraseña incorrectos.', codigo='CREDENCIALES_INVALIDAS')
 
         credenciales_validas = usuario.check_password(password)
         if not credenciales_validas or not usuario.is_active:
-            BruteForceProtectionService.registrar_intento(identifier=identifier, ip_address=ip_address, user=usuario, successful=False)
+            BruteForceProtectionService.registrar_intento(identifier=canonico, ip_address=ip_address, user=usuario, successful=False)
             log_event(
                 domain=AuditEvent.Domain.AUTHENTICATION, action='LOGIN_FAILED', result=AuditEvent.Result.FAILED,
                 actor=usuario, entity_type='user', entity_id=usuario.id, ip_address=ip_address, user_agent=user_agent,
             )
             raise CarteraError('Usuario o contraseña incorrectos.', codigo='CREDENCIALES_INVALIDAS')
 
-        BruteForceProtectionService.registrar_intento(identifier=identifier, ip_address=ip_address, user=usuario, successful=True)
+        BruteForceProtectionService.registrar_intento(identifier=canonico, ip_address=ip_address, user=usuario, successful=True)
 
         refresh = RefreshToken.for_user(usuario)
         sesion = SessionService.crear(user=usuario, refresh_token_jti=str(refresh['jti']), user_agent=user_agent, ip_address=ip_address)
@@ -122,10 +186,19 @@ class AuthenticationService:
         if not sesion.is_active:
             raise CarteraError('La sesión expiró o fue revocada.', codigo='SESION_INACTIVA')
 
-        access = token.access_token
-        access['sid'] = str(sesion.id)
-        sesion.save(update_fields=['last_used_at'])
-        return {'access': str(access)}
+        # Rotación: se emite un refresh nuevo y se guarda su `jti` como el único vigente de la
+        # sesión. Es lo que vuelve efectiva la detección de reutilización de unas líneas más
+        # arriba — sin rotar, el `jti` nunca cambiaba y esa rama era inalcanzable. A partir de
+        # acá, presentar un refresh viejo (por ejemplo uno robado, después de que el usuario
+        # legítimo refrescó) revoca la sesión completa en vez de pasar inadvertido.
+        refresh_nuevo = RefreshToken.for_user(sesion.user)
+        refresh_nuevo['sid'] = str(sesion.id)
+        access_nuevo = refresh_nuevo.access_token
+        access_nuevo['sid'] = str(sesion.id)
+        sesion.refresh_token_jti = str(refresh_nuevo['jti'])
+        sesion.save(update_fields=['refresh_token_jti', 'last_used_at'])
+
+        return {'access': str(access_nuevo), 'refresh': str(refresh_nuevo)}
 
     @staticmethod
     def logout(*, refresh_token_str):
@@ -277,6 +350,11 @@ class PasswordResetService:
 
         if not usuario.is_active:
             raise CarteraError('El enlace de recuperación no es válido.', codigo='TOKEN_INVALIDO')
+
+        # Recién acá se conoce a quién pertenece el token, así que este es el único punto donde
+        # `UserAttributeSimilarityValidator` puede comparar la contraseña nueva contra los datos
+        # del usuario. Los demás validadores ya corrieron en el serializer.
+        validar_fortaleza(new_password, usuario)
 
         usuario.set_password(new_password)
         usuario.must_change_password = False

@@ -24,7 +24,13 @@ from apps.audit.models import AuditEvent
 from apps.audit.services import log_event
 
 from ..models import DashboardComponent
-from . import dashboard_layout, generic_charts
+from . import dashboard_layout, generic_charts, historico
+
+# Operadores de `_aplicar_filtro_dias_vencidos` — solo KPIs (`calculo == 'kpi'`, ver
+# `_aplicar_filtro_slot`) pueden usar el filtro por días desde una fecha, a diferencia del filtro
+# por igualdad exacta que sirve para cualquier `calculo`. Decisión explícita del usuario: dejar
+# gráficos/tablas con el filtro de igualdad únicamente por ahora.
+_OPERADORES_DIAS_VENCIDOS = {'mayor', 'mayor_igual', 'menor', 'menor_igual'}
 
 KPI_ANCHO, KPI_ALTO = 3, 180
 GRAFICO_MEDIO_ANCHO, GRAFICO_ALTO = 6, 380
@@ -97,15 +103,18 @@ DASHBOARD_ID_PLANTILLA_BASE = 'plantilla-base-sistema'
 # `GenericChartRenderer.jsx` en el frontend, que los sigue dibujando si los encuentra, aunque ya
 # no se puedan elegir de nuevo).
 #
-# `pastel`/`dona` también son compatibles con `multivalor`/`multiserie` (2+ columnas de valor):
-# el contenido calculado sigue siendo `{categorias, series}` igual que para el resto de tipos de
-# ese `calculo` (este módulo no sabe ni le importa cómo se va a dibujar) — es el frontend
+# Barras verticales/horizontales, pastel y dona son el mínimo que SIEMPRE debe estar disponible en
+# cualquier posición de gráfico, sea de una sola columna (`chart`) o de 2+ (`multivalor`/
+# `multiserie`) — decisión explícita del usuario. El contenido calculado para `multivalor`/
+# `multiserie` sigue siendo `{categorias, series}` igual que para el resto de tipos de ese
+# `calculo` (este módulo no sabe ni le importa cómo se va a dibujar) — es el frontend
 # (`GenericChartRenderer`) el que colapsa las series en una sola porción por categoría cuando el
-# tipo elegido es circular, así el usuario no tiene que rehacer el mapeo a una sola columna.
+# tipo elegido es de una sola columna (circular o de barras simples), así el usuario no tiene que
+# rehacer el mapeo a una sola columna.
 TIPOS_COMPATIBLES = {
     'chart': ('barras_verticales', 'barras_horizontales', 'pastel', 'dona'),
-    'multivalor': ('barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
-    'multiserie': ('barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
+    'multivalor': ('barras_verticales', 'barras_horizontales', 'barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
+    'multiserie': ('barras_verticales', 'barras_horizontales', 'barras_agrupadas', 'lineas_multiples', 'pastel', 'dona'),
 }
 
 
@@ -328,41 +337,249 @@ def sugerir_mapeo(columnas):
     return mapeo
 
 
-def _aplicar_filtro_slot(df, propuesta):
-    """Filtra el archivo a las filas donde `columna_filtro` == `valor_filtro` (ambos opcionales,
-    parte de la propuesta de mapeo de la posición) — aplica igual sin importar el `calculo` de la
-    posición, así que sirve tanto para un KPI como para cualquier gráfica o tabla. Sin filtro
-    elegido, devuelve el archivo tal cual. Si la columna de filtro ya no existe, `None` (la
-    posición cae al dato ficticio, igual que con cualquier otra columna inválida). Un valor que no
-    coincide con ninguna fila no es un error: el resultado real es simplemente vacío/cero."""
+def _aplicar_filtro_dias_vencidos(df, columna_filtro, propuesta, fecha_referencia=None):
+    """Filtra a las filas según cuántos días pasaron entre `columna_filtro` (una fecha) y HOY,
+    comparados contra `dias_filtro` con uno de los 4 operadores (`mayor`/`mayor_igual`/`menor`/
+    `menor_igual`) — ej. "Fecha de Vencimiento" con 30 días y `mayor` deja solo las filas vencidas
+    hace más de 30 días; `menor` con 0 días deja las que TODAVÍA no vencieron (fecha en el
+    futuro). Un valor de esa columna que no parsea como fecha nunca cuenta como vencido NI como
+    no vencido (se excluye siempre, no se incluye "por las dudas" en ningún operador). Sin días
+    elegidos todavía, devuelve el archivo tal cual — mismo criterio de "filtro incompleto no
+    filtra nada" que el de igualdad. `operador_filtro` ausente/inválido cae a `'mayor'` (mismo
+    criterio que `tipo_agregacion` ausente cae a "suma" en un KPI): el selector de la UI ya
+    muestra "Mayor que (>)" preseleccionado apenas se elige la columna de fecha, así que el dato
+    debe comportarse igual aunque el usuario nunca haya tocado ese selector a mano."""
+    dias_filtro = propuesta.get('dias_filtro')
+    if dias_filtro in (None, ''):
+        return df
+    operador = propuesta.get('operador_filtro')
+    if operador not in _OPERADORES_DIAS_VENCIDOS:
+        operador = 'mayor'
+    try:
+        dias_filtro = int(dias_filtro)
+    except (TypeError, ValueError):
+        return df
+
+    dias_transcurridos = generic_charts.dias_transcurridos_desde(df[columna_filtro], fecha_referencia)
+    if operador == 'mayor_igual':
+        mascara = dias_transcurridos >= dias_filtro
+    elif operador == 'menor':
+        mascara = dias_transcurridos < dias_filtro
+    elif operador == 'menor_igual':
+        mascara = dias_transcurridos <= dias_filtro
+    else:
+        mascara = dias_transcurridos > dias_filtro
+    return df[mascara.fillna(False)]
+
+
+def _aplicar_filtro_slot(df, propuesta, calculo, fecha_referencia=None):
+    """Filtra el archivo según el filtro (opcional) elegido para la posición — dos formas
+    posibles, distinguidas por `tipo_filtro`:
+    - `'igualdad'` (default, retrocompatible con mapeos guardados antes de que existiera
+      `tipo_filtro`): `columna_filtro` == `valor_filtro`. Aplica sin importar el `calculo` de la
+      posición, así que sirve tanto para un KPI como para cualquier gráfica o tabla.
+    - `'dias_vencidos'`: solo para KPI (`calculo == 'kpi'` — decisión explícita del usuario, ver
+      `_OPERADORES_DIAS_VENCIDOS`); cualquier otro `calculo` cae al filtro de igualdad como si
+      `tipo_filtro` no se hubiera elegido, para no dejar un gráfico/tabla en un estado indefinido
+      si el payload trae `tipo_filtro='dias_vencidos'` de todos modos (nunca debería pasar desde
+      la UI, que ya restringe la opción, pero el backend no confía solo en eso).
+
+    Sin columna de filtro elegida, devuelve el archivo tal cual. Si la columna elegida ya no
+    existe, `None` (la posición cae al dato ficticio, igual que con cualquier otra columna
+    inválida). Un filtro que no deja ninguna fila no es un error: el resultado real es
+    simplemente vacío/cero."""
     columna_filtro = propuesta.get('columna_filtro')
-    valor_filtro = propuesta.get('valor_filtro')
-    if not columna_filtro or valor_filtro in (None, ''):
+    if not columna_filtro:
         return df
     if columna_filtro not in df.columns:
         return None
+
+    if propuesta.get('tipo_filtro') == 'dias_vencidos' and calculo == 'kpi':
+        return _aplicar_filtro_dias_vencidos(df, columna_filtro, propuesta, fecha_referencia)
+
+    valor_filtro = propuesta.get('valor_filtro')
+    if valor_filtro in (None, ''):
+        return df
     return df[df[columna_filtro].astype(str) == str(valor_filtro)]
 
 
-def _descripcion_con_filtro(descripcion, propuesta):
-    """Agrega "donde <columna_filtro> = <valor_filtro>" al final de una descripción ya armada
-    (que siempre termina en '.') cuando la posición tiene un filtro elegido."""
+def _descripcion_con_filtro(descripcion, propuesta, calculo):
+    """Agrega una cláusula "donde ..." al final de una descripción ya armada (que siempre termina
+    en '.') cuando la posición tiene un filtro elegido — mismo criterio de forma (igualdad vs.
+    días vencidos, y la misma restricción de "días vencidos" solo aplica a KPI) que
+    `_aplicar_filtro_slot`."""
     columna_filtro = propuesta.get('columna_filtro')
+    if not columna_filtro:
+        return descripcion
+
+    if propuesta.get('tipo_filtro') == 'dias_vencidos' and calculo == 'kpi':
+        dias_filtro = propuesta.get('dias_filtro')
+        if dias_filtro in (None, ''):
+            return descripcion
+        operador = propuesta.get('operador_filtro')
+        if operador not in _OPERADORES_DIAS_VENCIDOS:
+            operador = 'mayor'
+        simbolo = {'mayor': '>', 'mayor_igual': '≥', 'menor': '<', 'menor_igual': '≤'}[operador]
+        return f'{descripcion[:-1]} donde los días transcurridos desde "{columna_filtro}" son {simbolo} {dias_filtro}.'
+
     valor_filtro = propuesta.get('valor_filtro')
-    if not columna_filtro or valor_filtro in (None, ''):
+    if valor_filtro in (None, ''):
         return descripcion
     return f'{descripcion[:-1]} donde "{columna_filtro}" = "{valor_filtro}".'
 
 
-def _calcular_contenido_slot(df, slot, propuesta):
+def _con_meta(resultado, valor, propuesta):
+    """Adjunta `meta` a un `content` de KPI ya armado cuando `propuesta` trae `meta_min`/
+    `meta_max` — `evaluar_meta` ya devuelve `None` si ninguna de las dos vino, en cuyo caso no se
+    agrega la clave `meta` en absoluto (un KPI sin meta configurada queda igual que antes de esta
+    función, sin `content['meta']`)."""
+    meta = generic_charts.evaluar_meta(valor, propuesta.get('meta_min'), propuesta.get('meta_max'))
+    if meta is not None:
+        resultado['meta'] = meta
+    return resultado
+
+
+def _contenido_tabla_historica(titulo, propuesta, dashboard_id):
+    """Contenido de una Tabla (`calculo == 'tabla'`) cuando `propuesta['usa_historico']` está
+    activo: en vez de leer el archivo actualmente cargado, arma una fila por CADA CARGA incluida
+    en el histórico del dashboard (`historico.calcular_tabla_historica`, mismo cálculo que ya usa
+    "Tabla 3" — sección 28) para las columnas elegidas en `columnas_valor`. No hay "Identidad de
+    fila" que elegir (a diferencia del modo normal): la identidad de cada fila es la propia carga
+    (columna "Archivo", siempre la primera). `dashboard_id` puede venir `None` en contextos que
+    todavía no lo resuelven (ninguno hoy, pero evita un `AttributeError` si algún llamador futuro
+    lo omite) — en ese caso se comporta como "sin resultado", igual que una columna faltante."""
+    if not dashboard_id:
+        return None
+    columnas_valor = propuesta.get('columnas_valor') or []
+    if not columnas_valor:
+        return None
+    datos = historico.calcular_tabla_historica(dashboard_id, columnas_valor)
+    nombres_valor = datos['columnas'][4:]
+    if not nombres_valor:
+        return None
+    return {
+        'titulo': titulo,
+        'descripcion': f'Histórico de {" y ".join(nombres_valor)}, una fila por carga incluida en el histórico.',
+        'columnas': datos['columnas'], 'filas': datos['filas'], 'total': None,
+    }
+
+
+def _contenido_kpi_historico(titulo, propuesta, dashboard_id):
+    """Contenido de un KPI (`calculo == 'kpi'`) cuando `propuesta['usa_historico']` está activo:
+    el valor de la columna elegida agregado (mismo `tipo_agregacion` que un KPI normal) SOLO sobre
+    la carga histórica más reciente incluida — no todas, ver `historico.calcular_kpi_historico`.
+    Meta/formato se reusan tal cual (`_con_meta`) — el semáforo y el formato de presentación no
+    dependen de si el valor vino del archivo actual o del histórico."""
+    if not dashboard_id:
+        return None
+    columna_valor = propuesta.get('columna_valor')
+    if not columna_valor:
+        return None
+    tipo_agregacion = propuesta.get('tipo_agregacion') or 'suma'
+    valor = historico.calcular_kpi_historico(dashboard_id, columna_valor, tipo_agregacion)
+    if valor is None:
+        return None
+    formato = propuesta.get('formato') or 'numero'
+    return _con_meta({
+        'titulo': titulo,
+        'descripcion': f'"{columna_valor}" en la carga histórica más reciente incluida en el histórico.',
+        'valor': valor, 'formato': formato,
+    }, valor, propuesta)
+
+
+def _contenido_chart_historico(titulo, propuesta, dashboard_id):
+    """Contenido de un Gráfico de una columna (`calculo == 'chart'`) cuando
+    `propuesta['usa_historico']` está activo: una categoría por CADA CARGA incluida en el
+    histórico (`historico.calcular_categorico_historico`), no por valor distinto de una columna
+    del archivo — no hay "Categoría" que elegir (a diferencia del modo normal), solo la columna de
+    valor a agregar por carga."""
+    if not dashboard_id:
+        return None
+    columna_valor = propuesta.get('columna_valor')
+    if not columna_valor:
+        return None
+    tipo_agregacion = propuesta.get('tipo_agregacion') or 'suma'
+    datos = historico.calcular_categorico_historico(dashboard_id, columna_valor, tipo_agregacion)
+    if not datos:
+        return None
+    return {
+        'titulo': titulo,
+        'descripcion': f'Histórico de "{columna_valor}", una categoría por carga incluida en el histórico.',
+        'categorias': datos['categorias'], 'valores': datos['valores'],
+    }
+
+
+def _contenido_multivalor_historico(titulo, propuesta, dashboard_id):
+    """Contenido de un Gráfico de 2+ columnas comparando métricas (`calculo == 'multivalor'`)
+    cuando `propuesta['usa_historico']` está activo: una serie por cada columna de
+    `columnas_valor` (`historico.calcular_multivalor_historico`), con la carga como categoría —
+    no hay "Categoría" que elegir, igual que en `_contenido_chart_historico`."""
+    if not dashboard_id:
+        return None
+    datos = historico.calcular_multivalor_historico(dashboard_id, propuesta.get('columnas_valor'))
+    if not datos:
+        return None
+    return {
+        'titulo': titulo,
+        'descripcion': 'Histórico por carga incluida en el histórico.',
+        'categorias': datos['categorias'], 'series': datos['series'],
+    }
+
+
+def _contenido_multiserie_historico(titulo, propuesta, dashboard_id):
+    """Contenido de un Gráfico de categoría + serie (`calculo == 'multiserie'`) cuando
+    `propuesta['usa_historico']` está activo: la carga es la categoría, y la serie sale de los
+    valores distintos de `columna_serie` DENTRO de cada carga
+    (`historico.calcular_multiserie_historico`) — a diferencia del resto de posiciones históricas,
+    acá `columna_serie` también debe estar marcada como histórica (si no, ninguna carga tiene con
+    qué agrupar)."""
+    if not dashboard_id:
+        return None
+    columna_valor = propuesta.get('columna_valor')
+    columna_serie = propuesta.get('columna_serie')
+    if not columna_valor or not columna_serie:
+        return None
+    tipo_agregacion = propuesta.get('tipo_agregacion') or 'suma'
+    datos = historico.calcular_multiserie_historico(dashboard_id, columna_valor, columna_serie, tipo_agregacion)
+    if not datos:
+        return None
+    return {
+        'titulo': titulo,
+        'descripcion': f'Histórico de "{columna_valor}" por "{columna_serie}", una categoría por carga incluida en el histórico.',
+        'categorias': datos['categorias'], 'series': datos['series'],
+    }
+
+
+def _calcular_contenido_slot(df, slot, propuesta, dashboard_id=None, fecha_referencia=None):
     """Calcula el contenido real de una posición a partir de la propuesta de mapeo (ya
     confirmada/ajustada por el usuario). `None` si falta alguna columna requerida o si la
     columna elegida (de cálculo o de filtro) ya no existe en el archivo — en ese caso el llamador
-    cae al dato ficticio."""
+    cae al dato ficticio.
+
+    `propuesta['usa_historico']` activo en KPI/Gráfico de una o más columnas/Tabla
+    (`calculo in ('kpi', 'chart', 'multivalor', 'multiserie', 'tabla')`) es la única combinación
+    que no lee `df` en absoluto (se resuelve contra el histórico de cargas del dashboard,
+    `dashboard_id`) — se resuelve ANTES que `_aplicar_filtro_slot` a propósito: el filtro
+    (`columna_filtro`) es un concepto del archivo actual sin sentido acá (la UI ya lo oculta
+    cuando `usa_historico` está activo), así que ni conviene ni hace falta aplicarlo contra `df`.
+    Dispersión, tramos de antigüedad, cumplimiento de metas y concentración quedan fuera de
+    alcance (su cálculo no se traduce naturalmente a "una carga = un punto") — `usa_historico` en
+    su `propuesta` simplemente se ignora."""
     calculo = slot['calculo']
     titulo = slot['titulo']
 
-    df = _aplicar_filtro_slot(df, propuesta)
+    if propuesta.get('usa_historico') and calculo == 'tabla':
+        return _contenido_tabla_historica(titulo, propuesta, dashboard_id)
+    if propuesta.get('usa_historico') and calculo == 'kpi':
+        return _contenido_kpi_historico(titulo, propuesta, dashboard_id)
+    if propuesta.get('usa_historico') and calculo == 'chart':
+        return _contenido_chart_historico(titulo, propuesta, dashboard_id)
+    if propuesta.get('usa_historico') and calculo == 'multivalor':
+        return _contenido_multivalor_historico(titulo, propuesta, dashboard_id)
+    if propuesta.get('usa_historico') and calculo == 'multiserie':
+        return _contenido_multiserie_historico(titulo, propuesta, dashboard_id)
+
+    df = _aplicar_filtro_slot(df, propuesta, calculo, fecha_referencia)
     if df is None:
         return None
 
@@ -370,31 +587,32 @@ def _calcular_contenido_slot(df, slot, propuesta):
         columna_valor = propuesta.get('columna_valor')
         if not columna_valor:
             return None
+        formato = propuesta.get('formato') or 'numero'
         if propuesta.get('tipo_agregacion') == 'conteo_unicos':
             datos = generic_charts.generar_conteo_valores_unicos(df, columna_valor)
             if not datos:
                 return None
-            return {
+            return _con_meta({
                 'titulo': titulo,
-                'descripcion': _descripcion_con_filtro(f'Cantidad de valores únicos de "{columna_valor}".', propuesta),
-                'valor': datos['valor'], 'formato': 'numero',
-            }
+                'descripcion': _descripcion_con_filtro(f'Cantidad de valores únicos de "{columna_valor}".', propuesta, calculo),
+                'valor': datos['valor'], 'formato': formato,
+            }, datos['valor'], propuesta)
         if propuesta.get('tipo_agregacion') == 'promedio':
             datos = generic_charts.generar_promedio_columna(df, columna_valor)
             if not datos:
                 return None
-            return {
+            return _con_meta({
                 'titulo': titulo,
-                'descripcion': _descripcion_con_filtro(f'Promedio de "{columna_valor}".', propuesta),
-                'valor': datos['valor'], 'formato': 'numero',
-            }
+                'descripcion': _descripcion_con_filtro(f'Promedio de "{columna_valor}".', propuesta, calculo),
+                'valor': datos['valor'], 'formato': formato,
+            }, datos['valor'], propuesta)
         datos = generic_charts.generar_datos_grafica(df, columna_valor, None)
         if not datos:
             return None
-        return {
-            'titulo': titulo, 'descripcion': _descripcion_con_filtro(f'Suma de "{columna_valor}".', propuesta),
-            'valor': datos['valor'], 'formato': 'numero',
-        }
+        return _con_meta({
+            'titulo': titulo, 'descripcion': _descripcion_con_filtro(f'Suma de "{columna_valor}".', propuesta, calculo),
+            'valor': datos['valor'], 'formato': formato,
+        }, datos['valor'], propuesta)
 
     if calculo == 'chart':
         columna_categoria = propuesta.get('columna_categoria')
@@ -406,7 +624,7 @@ def _calcular_contenido_slot(df, slot, propuesta):
             return None
         return {
             'titulo': titulo,
-            'descripcion': _descripcion_con_filtro(f'Suma de "{columna_valor}" agrupada por "{columna_categoria}".', propuesta),
+            'descripcion': _descripcion_con_filtro(f'Suma de "{columna_valor}" agrupada por "{columna_categoria}".', propuesta, calculo),
             'categorias': datos['categorias'], 'valores': datos['valores'],
         }
 
@@ -420,7 +638,7 @@ def _calcular_contenido_slot(df, slot, propuesta):
             return None
         return {
             'titulo': titulo,
-            'descripcion': _descripcion_con_filtro(f'Comparación de {" y ".join(columnas_valor)} por "{columna_categoria}".', propuesta),
+            'descripcion': _descripcion_con_filtro(f'Comparación de {" y ".join(columnas_valor)} por "{columna_categoria}".', propuesta, calculo),
             'categorias': datos['categorias'], 'series': datos['series'],
         }
 
@@ -436,7 +654,7 @@ def _calcular_contenido_slot(df, slot, propuesta):
         return {
             'titulo': titulo,
             'descripcion': _descripcion_con_filtro(
-                f'Suma de "{columna_valor}" agrupada por "{columna_categoria}" y "{columna_serie}".', propuesta,
+                f'Suma de "{columna_valor}" agrupada por "{columna_categoria}" y "{columna_serie}".', propuesta, calculo,
             ),
             'categorias': datos['categorias'], 'series': datos['series'],
         }
@@ -451,7 +669,7 @@ def _calcular_contenido_slot(df, slot, propuesta):
             return None
         return {
             'titulo': titulo,
-            'descripcion': _descripcion_con_filtro(f'Relación entre "{columna_valor}" y "{columna_valor_y}".', propuesta),
+            'descripcion': _descripcion_con_filtro(f'Relación entre "{columna_valor}" y "{columna_valor_y}".', propuesta, calculo),
             'puntos': datos['puntos'],
         }
 
@@ -469,23 +687,81 @@ def _calcular_contenido_slot(df, slot, propuesta):
         nombres_valor = datos['columnas'][1:-1]
         return {
             'titulo': titulo,
-            'descripcion': _descripcion_con_filtro(f'Detalle de {" y ".join(nombres_valor)} por "{columna_id}".', propuesta),
+            'descripcion': _descripcion_con_filtro(f'Detalle de {" y ".join(nombres_valor)} por "{columna_id}".', propuesta, calculo),
+            'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
+        }
+
+    if calculo == 'tramos_antiguedad':
+        columna_fecha = propuesta.get('columna_fecha')
+        columna_valor = propuesta.get('columna_valor')
+        if not columna_fecha or not columna_valor:
+            return None
+        datos = generic_charts.generar_datos_tramos_antiguedad(df, columna_fecha, columna_valor, fecha_referencia)
+        if not datos:
+            return None
+        return {
+            'titulo': titulo,
+            'descripcion': _descripcion_con_filtro(f'Antigüedad de "{columna_valor}" según "{columna_fecha}".', propuesta, calculo),
+            'categorias': datos['categorias'], 'valores': datos['valores'],
+        }
+
+    if calculo == 'cumplimiento_metas':
+        columna_fecha = propuesta.get('columna_fecha')
+        columna_valor = propuesta.get('columna_valor')
+        if not columna_fecha or not columna_valor:
+            return None
+        datos = generic_charts.generar_datos_cumplimiento_tramos(df, columna_fecha, columna_valor, propuesta.get('metas'), fecha_referencia)
+        if not datos:
+            return None
+        return {
+            'titulo': titulo,
+            'descripcion': _descripcion_con_filtro(
+                f'Cumplimiento de metas de antigüedad de "{columna_valor}" según "{columna_fecha}".', propuesta, calculo,
+            ),
+            'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
+        }
+
+    if calculo == 'concentracion':
+        columna_id = propuesta.get('columna_id')
+        columna_valor = propuesta.get('columna_valor')
+        if not columna_id or not columna_valor:
+            return None
+        datos = generic_charts.generar_datos_concentracion(df, columna_id, columna_valor, propuesta.get('top_n'))
+        if not datos:
+            return None
+        return {
+            'titulo': titulo,
+            'descripcion': _descripcion_con_filtro(f'Concentración de "{columna_valor}" por "{columna_id}".', propuesta, calculo),
             'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
         }
 
     return None
 
 
-def calcular_datos_mapeo(df, mapeo):
+def calcular_contenido_por_calculo(df, calculo, titulo, propuesta, dashboard_id=None, fecha_referencia=None):
+    """Igual que `_calcular_contenido_slot`, pero para un componente que no es una de las 13
+    posiciones fijas de la plantilla (Zona Personal, ver `dashboard_layout.agregar_componente_generado`
+    y `ComponentDataSection.jsx`) — arma el "slot sintético" mínimo que esa función necesita
+    (solo lee `slot['calculo']`/`slot['titulo']`, nada más). `None` si falta alguna columna
+    requerida o si la elegida ya no existe; a diferencia de las posiciones fijas, acá no hay dato
+    ficticio de respaldo — el llamador debe conservar el contenido anterior en ese caso.
+    `dashboard_id` solo lo necesita `calculo == 'tabla'` con `propuesta['usa_historico']` (ver
+    `_contenido_tabla_historica`); el resto de `calculo` lo ignora."""
+    return _calcular_contenido_slot(df, {'calculo': calculo, 'titulo': titulo}, propuesta, dashboard_id, fecha_referencia)
+
+
+def calcular_datos_mapeo(df, mapeo, dashboard_id=None, fecha_referencia=None):
     """Contenido final de las 13 posiciones: el calculado a partir del mapeo cuando la posición
     está `disponible` y sus columnas siguen existiendo, o el dato ficticio en cualquier otro
-    caso — nunca deja una posición sin contenido."""
+    caso — nunca deja una posición sin contenido. `dashboard_id` (ver
+    `calcular_contenido_por_calculo`) solo lo necesita una posición de tipo `tabla` con
+    `usa_historico` activo — el resto de posiciones lo ignora."""
     fijos = datos_ficticios()
     resultado = {}
     for slot in PLANTILLA_SLOTS:
         slot_id = slot['id']
         propuesta = mapeo.get(slot_id) or {}
-        contenido = _calcular_contenido_slot(df, slot, propuesta) if propuesta.get('disponible') else None
+        contenido = _calcular_contenido_slot(df, slot, propuesta, dashboard_id, fecha_referencia) if propuesta.get('disponible') else None
         resultado[slot_id] = contenido or fijos[slot_id]
     return resultado
 
@@ -604,13 +880,13 @@ def sembrar_plantilla_desde_base(dashboard_id):
     return _escribir_plantilla(dashboard_id, datos_ficticios(), slots=slots_efectivos())
 
 
-def aplicar_mapeo(dashboard_id, df, mapeo, actor=None, request=None):
+def aplicar_mapeo(dashboard_id, df, mapeo, actor=None, request=None, fecha_referencia=None):
     """Recalcula las 13 posiciones a partir de un mapeo ya confirmado por el usuario y
     sobreescribe los mismos 13 componentes (nunca agrega otros) — se puede llamar varias veces
     (p. ej. tras cargar un archivo distinto) sin duplicar nada. El `chart_type` de cada posición
     (`_chart_type_elegido`) también sale del mapeo, así que cambiar cómo se dibuja una gráfica (p.
     ej. de barras a líneas) se aplica junto con el resto de ajustes."""
-    contenidos = calcular_datos_mapeo(df, mapeo)
+    contenidos = calcular_datos_mapeo(df, mapeo, dashboard_id, fecha_referencia)
     layout = _escribir_plantilla(dashboard_id, contenidos, mapeo)
 
     log_event(

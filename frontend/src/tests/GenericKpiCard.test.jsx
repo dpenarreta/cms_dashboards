@@ -44,4 +44,35 @@ describe('GenericKpiCard', () => {
     render(<GenericKpiCard data={{ titulo: 'KPI 1', valor: 100, formato: 'numero', descripcion: 'Suma de "Ventas".' }} />)
     expect(screen.getByText('Suma de "Ventas".')).toBeInTheDocument()
   })
+
+  describe('estado de meta', () => {
+    it('sin meta, no muestra ningún estado de cumplimiento', () => {
+      render(<GenericKpiCard data={{ titulo: 'KPI 1', valor: 100, formato: 'numero' }} />)
+      expect(screen.queryByText(/Cumple la meta/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/No cumple la meta/)).not.toBeInTheDocument()
+    })
+
+    it('con meta cumplida, muestra "Cumple la meta"', () => {
+      const meta = { meta_min: 50, meta_max: 200, cumple: true, motivos: [] }
+      render(<GenericKpiCard data={{ titulo: 'KPI 1', valor: 100, formato: 'numero', meta }} />)
+      expect(screen.getByText(/✓ Cumple la meta/)).toBeInTheDocument()
+    })
+
+    it('con meta incumplida, muestra "No cumple la meta" con los motivos', () => {
+      const meta = { meta_min: 500, meta_max: null, cumple: false, motivos: ['menor al mínimo (500)'] }
+      render(<GenericKpiCard data={{ titulo: 'KPI 1', valor: 100, formato: 'numero', meta }} />)
+      expect(screen.getByText(/✗ No cumple la meta \(menor al mínimo \(500\)\)/)).toBeInTheDocument()
+    })
+
+    it('el estado de meta se muestra junto con la tendencia (no son excluyentes)', () => {
+      const meta = { meta_min: 50, meta_max: 200, cumple: true, motivos: [] }
+      render(
+        <GenericKpiCard
+          data={{ titulo: 'KPI 1', valor: 100, formato: 'numero', meta, tendencia: { valor: 8.5, texto: 'vs. mes anterior' } }}
+        />,
+      )
+      expect(screen.getByText(/✓ Cumple la meta/)).toBeInTheDocument()
+      expect(screen.getByText(/↑ 8.5% vs\. mes anterior/)).toBeInTheDocument()
+    })
+  })
 })

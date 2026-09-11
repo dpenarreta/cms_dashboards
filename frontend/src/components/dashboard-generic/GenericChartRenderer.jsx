@@ -27,14 +27,17 @@ function categoricoDesdeMultiserie(datosMultiserie) {
  * ya agregado al dashboard (`component.chart_type`). Así "los gráficos sugeridos se pueden
  * visualizar de cualquiera de estas formas" sin duplicar la lógica de despacho en dos lugares.
  */
+// Los 4 tipos "de una sola columna" (mínimo que siempre debe estar disponible, ver
+// `utils/plantillaSlots.js::TIPOS_COMPATIBLES`) son compatibles con posiciones de 2+ columnas de
+// valor (`multivalor`/`multiserie`) aunque su contenido calculado siga llegando como
+// `datosMultiserie` (varias series) — se colapsan en una sola porción/barra por categoría en vez
+// de pedirle al usuario que rehaga el mapeo a una columna.
+const TIPOS_DE_UNA_SOLA_COLUMNA = new Set(['pastel', 'dona', 'barras_verticales', 'barras_horizontales'])
+
 export default function GenericChartRenderer({ tipoVisualizacion, datos, datosMultiserie, titulo, override, config, esHistorica, hallazgoIA }) {
-  // Pastel/dona son compatibles con posiciones de 2+ columnas de valor (`multivalor`/`multiserie`,
-  // ver `utils/plantillaSlots.js::TIPOS_COMPATIBLES`) aunque su contenido calculado siga llegando
-  // como `datosMultiserie` (varias series) — acá, y solo para estos dos tipos, se colapsa en una
-  // sola porción por categoría en vez de pedirle al usuario que rehaga el mapeo a una columna.
-  const esCircular = tipoVisualizacion === 'pastel' || tipoVisualizacion === 'dona'
-  const datosCirculares = esCircular ? (datos || categoricoDesdeMultiserie(datosMultiserie)) : datos
-  const datosConTitulo = datosCirculares ? { ...datosCirculares, titulo } : null
+  const esDeUnaSolaColumna = TIPOS_DE_UNA_SOLA_COLUMNA.has(tipoVisualizacion)
+  const datosColapsados = esDeUnaSolaColumna ? (datos || categoricoDesdeMultiserie(datosMultiserie)) : datos
+  const datosConTitulo = datosColapsados ? { ...datosColapsados, titulo } : null
   const datosMultiserieConTitulo = datosMultiserie ? { ...datosMultiserie, titulo } : null
   const leyendaPosicion = config?.leyenda_posicion
 
