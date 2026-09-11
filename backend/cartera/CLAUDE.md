@@ -22,17 +22,20 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
 - `permisos.py` — resolución de permisos legacy + control de acceso por-dashboard.
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
 - `services/directorio_cartera.py` + `management/commands/sembrar_directorio_cartera.py` — el
-  "Dashboard Directorio" es la **excepción declarada** del proyecto: replica la pestaña "6. Cartera"
-  de un informe financiero mensual (`Mockup_Directorio_Cartera_Junio2026.pdf`) con 8 componentes
-  propios —4 KPI, gráfico de antigüedad con etiquetas sobre las barras, tabla de cumplimiento de
-  metas con columna META y ✓/✗, concentración Top-N con dos tarjetas resumen, y antigüedad de los
-  dos mayores deudores—. No usa las 13 posiciones de la plantilla (quedan ocultas y bloqueadas) ni
-  los renderers genéricos: cada componente lleva `config.render = 'directorio'` y lo dibuja
-  `frontend/src/components/dashboard-directorio/`. `python manage.py sembrar_directorio_cartera
-  --archivo X.xlsx [--aplicar]` lo reconstruye con datos reales (simula por defecto).
-  El "Anexo — evolución del saldo" del mockup NO está: necesita el saldo del cliente al cierre de
-  cada mes y un corte de cobranza es una foto única (el propio mockup dice que esos números vienen
-  de otro informe).
+  "Dashboard Directorio" replica la pestaña "6. Cartera" de un informe financiero mensual
+  (`Mockup_Directorio_Cartera_Junio2026.pdf`). Es la excepción del proyecto en PRESENTACIÓN, no en
+  datos: sus 7 secciones se dibujan con renderers propios
+  (`frontend/src/components/dashboard-directorio/`, activados por `config.render == 'directorio'`)
+  porque los genéricos no saben mostrar etiquetas sobre las barras, la meta al lado del valor con
+  ✓/✗ ni tarjetas resumen dentro de una sección.
+  IMPORTANT: el CONTENIDO es el genérico de siempre y cada componente guarda su `mapeo` — es lo que
+  hace que las secciones se puedan reconfigurar desde "Configurar componente → Datos" sin tocar
+  código (columnas, metas, Top-N, filtros). Si alguna vez se guarda ahí una forma de contenido
+  propia, la primera edición desde la interfaz deja la sección en blanco.
+  `python manage.py sembrar_directorio_cartera --archivo X.xlsx [--aplicar] [--columna-valor ...]
+  [--top-n N]` lo reconstruye (simula por defecto). Las 13 posiciones de fábrica quedan ocultas.
+  El "Anexo — evolución del saldo" del mockup no está: necesita el saldo al cierre de cada mes y un
+  corte de cobranza es una foto única (el propio mockup dice que sale de otro informe).
 - `management/commands/reprocesar_dashboards.py` — `python manage.py reprocesar_dashboards
   [--aplicar] [--dashboard ID] [--detalle]`. **Simula por defecto**: sin `--aplicar` no escribe
   nada. Recalcula `DashboardComponent.content` con el código de cálculo vigente, contra la misma

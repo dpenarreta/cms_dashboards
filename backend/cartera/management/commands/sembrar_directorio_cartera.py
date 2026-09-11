@@ -41,6 +41,12 @@ class Command(BaseCommand):
             help=f'Fila (1-based) con los encabezados. Por defecto {FILA_ENCABEZADO_POR_DEFECTO}.',
         )
         parser.add_argument('--fecha-corte', default=None, help='ISO (YYYY-MM-DD). Por defecto, el último día del mes anterior.')
+        # Las columnas y el Top-N son PARÁMETROS, no constantes: quedan guardados en el `mapeo` de
+        # cada sección y después se editan desde "Configurar componente → Datos" sin tocar código.
+        parser.add_argument('--columna-valor', default=directorio_cartera.COLUMNA_VALOR)
+        parser.add_argument('--columna-fecha', default=directorio_cartera.COLUMNA_FECHA)
+        parser.add_argument('--columna-cliente', default=directorio_cartera.COLUMNA_CLIENTE)
+        parser.add_argument('--top-n', type=int, default=directorio_cartera.TOP_N)
         parser.add_argument('--aplicar', action='store_true', help='Escribe los cambios.')
 
     def handle(self, *args, **opciones):
@@ -48,7 +54,11 @@ class Command(BaseCommand):
         fecha_corte = self._fecha_corte(opciones)
         dashboard_id = opciones['dashboard']
 
-        faltantes = directorio_cartera.columnas_faltantes(df)
+        columnas = {
+            'columna_valor': opciones['columna_valor'], 'columna_fecha': opciones['columna_fecha'],
+            'columna_cliente': opciones['columna_cliente'],
+        }
+        faltantes = directorio_cartera.columnas_faltantes(df, **columnas)
         if faltantes:
             raise CommandError(
                 f'Al archivo le faltan columnas que este dashboard necesita: {", ".join(faltantes)}. '
@@ -57,15 +67,18 @@ class Command(BaseCommand):
 
         self.stdout.write(f'Archivo: {len(df)} fila(s), {len(df.columns)} columna(s). Fecha de corte: {fecha_corte}.')
 
+        parametros = {**columnas, 'top_n': opciones['top_n']}
+
         if not opciones['aplicar']:
-            self._simular(df, dashboard_id, fecha_corte)
+            self._simular(df, fecha_corte, parametros)
             return
 
-        creados = directorio_cartera.construir(dashboard_id, df, fecha_corte)
+        resultados = directorio_cartera.construir(dashboard_id, df, fecha_corte, **parametros)
         self._registrar_carga(dashboard_id, df, fecha_corte)
 
-        for component_id in creados:
-            self.stdout.write(self.style.SUCCESS(f'  {component_id}: calculado'))
+        for component_id, calculado in resultados:
+            estilo = self.style.SUCCESS if calculado else self.style.WARNING
+            self.stdout.write(estilo(f'  {component_id}: {"calculado" if calculado else "SIN DATOS"}'))
         self.stdout.write(self.style.SUCCESS(f'Listo. {dashboard_id} reconstruido con datos reales.'))
 
     def _leer(self, opciones):
@@ -89,27 +102,23 @@ class Command(BaseCommand):
         except ValueError:
             raise CommandError(f'La fecha de corte "{opciones["fecha_corte"]}" no es una fecha ISO válida.')
 
-    def _simular(self, df, dashboard_id, fecha_corte):
+    def _simular(self, df, fecha_corte, parametros):
         self.stdout.write(self.style.MIGRATE_HEADING('SIMULACIÓN (no se escribe nada)'))
-        for spec, contenido in directorio_cartera.construir_contenidos(df, fecha_corte):
+        for spec, contenido in directorio_cartera.calcular_contenidos(df, fecha_corte, **parametros):
             self.stdout.write(f'  {spec["component_id"]}: {self._resumen(contenido)}')
         self.stdout.write('')
         self.stdout.write('Volvé a ejecutarlo con --aplicar para escribir los cambios.')
 
     @staticmethod
     def _resumen(contenido):
-        bloque = contenido.get('bloque')
-        if bloque == 'kpi':
-            return f'{contenido["etiqueta"]} = {contenido["valor"]:,.2f} ({contenido["subtitulo"]})'
-        if bloque == 'antiguedad':
-            return ' · '.join(contenido['etiquetas'])
-        if bloque == 'cumplimiento':
-            fuera = [f['edad'] for f in contenido['filas'] if not f['cumple']]
-            return f'{len(contenido["filas"])} tramos, fuera de meta: {", ".join(fuera) or "ninguno"}'
-        if bloque == 'concentracion':
-            return ' | '.join(f'{r["etiqueta"]} {r["valor"]:,.0f} ({r["subtitulo"]})' for r in contenido['resumen'])
-        if bloque == 'deudores':
-            return ' | '.join(f'{d["nombre"]} {d["saldo"]:,.0f} ({d["porcentaje_cartera"]:.2f}%)' for d in contenido['deudores'])
+        if contenido is None:
+            return 'SIN DATOS (revisá las columnas elegidas)'
+        if 'valor' in contenido:
+            return f'{contenido["valor"]:,.2f}'
+        if 'categorias' in contenido:
+            return ' · '.join(f'{c}={v:,.0f}' for c, v in zip(contenido['categorias'], contenido['valores']))
+        if 'filas' in contenido:
+            return f'{len(contenido["filas"])} fila(s)'
         return 'contenido calculado'
 
     def _registrar_carga(self, dashboard_id, df, fecha_corte):

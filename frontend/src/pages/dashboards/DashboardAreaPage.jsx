@@ -338,7 +338,9 @@ export default function DashboardAreaPage() {
         // secciones que los componentes genéricos no saben dibujar (etiquetas sobre las barras,
         // meta con ✓/✗, tarjetas resumen dentro de una sección, mini-tablas por deudor). Es el
         // único dashboard con renderers propios, y se reconoce por `config.render`.
-        if (componente.config?.render === 'directorio') return <DirectorioSeccion content={componente.content} />
+        if (componente.config?.render === 'directorio') {
+          return <DirectorioSeccion componente={componente} componentes={layout.borrador} />
+        }
         if (componente.type === 'title') return <GenericTitleBlock content={componente.content} />
         if (componente.type === 'text') return <GenericSeparator content={componente.content} />
         if (componente.type !== 'kpi' && componente.type !== 'chart') return null

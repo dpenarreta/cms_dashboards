@@ -23,3 +23,9 @@ export function porcentaje(valor, decimales = 0) {
   if (valor === null || valor === undefined || Number.isNaN(valor)) return '—'
   return `${valor.toFixed(decimales)}%`
 }
+
+/** `$2116K` — miles con K, sin decimales ni separador, como los ejes y etiquetas del informe. */
+export function compacto(valor) {
+  if (valor === null || valor === undefined || Number.isNaN(valor)) return '—'
+  return `$${Math.round(valor / 1000)}K`
+}

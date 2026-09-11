@@ -1,29 +1,30 @@
-"""Réplica de la pestaña "6. Cartera" del informe financiero mensual (`Mockup_Directorio_Cartera`).
+"""Dashboard Directorio — réplica de la pestaña "6. Cartera" de un informe financiero mensual.
 
-Este dashboard es la excepción declarada del proyecto: no usa las 13 posiciones de la plantilla
-genérica ni sus renderers. Cada sección del mockup tiene una forma propia que los componentes
-genéricos no saben dibujar —etiquetas sobre las barras, una columna de meta con ✓/✗, tarjetas
-resumen dentro de una sección, mini-tablas por deudor—, así que el contenido se arma acá con una
-forma propia (`content['bloque']`) y lo dibuja `components/dashboard-directorio/` en el frontend.
-El despacho es `config['render'] == 'directorio'`; ningún otro dashboard lo lleva.
+Este dashboard es la excepción del proyecto en PRESENTACIÓN, no en datos. Sus secciones se dibujan
+con renderers propios (`frontend/src/components/dashboard-directorio/`, activados por
+`config.render == 'directorio'`) porque los genéricos no saben mostrar etiquetas sobre las barras,
+una meta al lado del valor con ✓/✗ ni tarjetas resumen dentro de una sección.
 
-Secciones (en el orden del mockup):
-1. Cuatro KPI de cabecera, cada uno con su subtítulo de contexto.
-2. Antigüedad de cartera por tramos, con el monto y el % sobre cada barra.
-3. Cumplimiento de metas de antigüedad (acumulado), con la meta al lado del valor.
-4. Concentración: Top N vs. resto, con dos tarjetas resumen y el detalle cliente por cliente.
-5. Antigüedad de los dos mayores deudores, uno al lado del otro.
+Pero el CONTENIDO se calcula igual que en cualquier otro dashboard: cada componente guarda su
+`mapeo` (`calculo` + columnas + parámetros) y el contenido sale de
+`plantilla.calcular_contenido_por_calculo`. Esto es lo que hace que las secciones sean
+parametrizables: "Configurar componente → Datos" ya sabe editar `kpi`, `tramos_antiguedad`,
+`cumplimiento_metas` y `concentracion` (`SlotFields.jsx`), la vista previa recalcula por el
+endpoint de siempre y el resultado sigue siendo la forma genérica que los renderers consumen.
 
-El "Anexo — evolución del saldo" del mockup NO está: necesita el saldo del cliente al cierre de
-cada mes, y un corte de cobranza es una foto única. El propio mockup lo dice en su nota (esos
-números vienen del informe de posición de caja, otro archivo). Inventarlos sería fabricar cifras
-financieras.
+Una versión anterior de este módulo guardaba una forma de contenido propia (`content['bloque']`) y
+`mapeo` vacío. Se veía igual, pero dejaba todo quemado: cambiar la columna de saldo, las metas o el
+Top-N exigía editar código, y guardar desde la interfaz habría devuelto contenido genérico que el
+renderer propio no sabía dibujar. Qué sección es cada una vive ahora en `config['bloque']`, que el
+editor conserva, en vez de en el contenido, que se recalcula.
+
+El "Anexo — evolución del saldo" del mockup no está: necesita el saldo del cliente al cierre de
+cada mes y un corte de cobranza es una foto única (el propio mockup dice que esos números salen de
+otro informe).
 """
 
-import pandas as pd
-
+from . import dashboard_layout, plantilla
 from ..models import DashboardComponent, DashboardLayout
-from . import dashboard_layout, generic_charts
 
 IDS_FABRICA = [
     'kpi-1', 'kpi-2', 'kpi-3', 'kpi-4',
@@ -31,311 +32,127 @@ IDS_FABRICA = [
     'tabla-1', 'tabla-2', 'tabla-3',
 ]
 
+# Valores por defecto: son los nombres del corte de cobranza que alimenta este informe, pero NADA
+# depende de ellos — el comando los recibe por parámetro y quedan guardados en el `mapeo` de cada
+# componente, editable después desde "Configurar componente".
 COLUMNA_VALOR = 'Saldo'
 COLUMNA_FECHA = 'Fecha de Vencimiento'
 COLUMNA_CLIENTE = 'Cliente'
+TOP_N = 16
 
 DORADO, VERDE, AZUL = '#D4AF37', '#2E7D32', '#1E88E5'
 ROJO, GRANATE, CORAL, ROSA = '#C62828', '#8B1E1E', '#EF9A9A', '#F48FB1'
 
 TRAMOS = ['Anticipada', '30 días', '60 días', '90 días', '120 días', '+120 días']
-COLORES_TRAMOS = [VERDE, AZUL, DORADO, CORAL, ROSA, ROJO]
+# De "sano" a "preocupante", alineado posicionalmente con `TRAMOS`.
+COLORES_TRAMOS = dict(zip(TRAMOS, [VERDE, AZUL, DORADO, CORAL, ROSA, ROJO]))
 
-# Metas del mockup: las cinco primeras filas son acumuladas y se exigen crecientes; la última es la
-# cola >120 días, que se acota por arriba.
+# Metas del informe: las cinco primeras filas son acumuladas y se exigen crecientes; la última es
+# la cola >120 días, que se acota por arriba. Son el punto de partida, no una constante: quedan en
+# `mapeo['metas']` y se editan desde la interfaz como las de cualquier otro cumplimiento.
 METAS = [
-    {'etiqueta': '≥ 50%', 'minimo': 50}, {'etiqueta': '≥ 70%', 'minimo': 70},
-    {'etiqueta': '≥ 80%', 'minimo': 80}, {'etiqueta': '≥ 90%', 'minimo': 90},
-    {'etiqueta': '≥ 95%', 'minimo': 95}, {'etiqueta': '≤ 5%', 'maximo': 5},
+    {'meta_min': 50}, {'meta_min': 70}, {'meta_min': 80},
+    {'meta_min': 90}, {'meta_min': 95}, {'meta_max': 5},
 ]
-ETIQUETAS_ACUMULADAS = [
-    'Corriente', 'Vencido ≤ 30 días (acum.)', 'Vencido ≤ 60 días (acum.)',
-    'Vencido ≤ 90 días (acum.)', 'Vencido ≤ 120 días (acum.)', 'Más de 120 días',
-]
-
-TOP_N = 16
-DIAS_MAS_DE_120 = 120
-
-_MESES = [
-    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-]
-
-
-def columnas_requeridas():
-    return [COLUMNA_VALOR, COLUMNA_FECHA, COLUMNA_CLIENTE]
-
-
-def columnas_faltantes(df):
-    return [columna for columna in columnas_requeridas() if columna not in df.columns]
-
-
-def _periodo(fecha):
-    return f'{_MESES[fecha.month - 1]} {fecha.year}'
-
-
-def _porcentaje(parte, total):
-    return round(parte / total * 100, 2) if total else 0.0
-
-
-def _compacto(valor):
-    """`$2116K`, como en el mockup: miles con K, sin decimales y sin separador de miles."""
-    return f'${valor / 1000:.0f}K'
-
-
-def _miles(valor, decimales=0):
-    """`3,139,563` — el separador de miles del informe, el mismo que usa el frontend.
-
-    Se aplica SOLO al número. Antes esto se resolvía con un `.replace(',', '.')` sobre la frase
-    entera, que se llevaba puestas las comas de la redacción: "del saldo, con un ticket" terminaba
-    escrito como "del saldo. con un ticket".
-    """
-    return f'{valor:,.{decimales}f}'
-
-
-def _saldos(df):
-    return pd.to_numeric(df[COLUMNA_VALOR], errors='coerce')
-
-
-def _dias_vencidos(df, fecha_corte):
-    return generic_charts.dias_transcurridos_desde(df[COLUMNA_FECHA], fecha_corte)
-
-
-# --- Secciones ---------------------------------------------------------------
-
-def _kpis(df, fecha_corte):
-    saldos = _saldos(df)
-    dias = _dias_vencidos(df, fecha_corte)
-    total = float(saldos.sum())
-    corriente = float(saldos[(dias <= 0).fillna(False)].sum())
-    vencida = float(saldos[(dias > 0).fillna(False)].sum())
-    mas_120 = float(saldos[(dias > DIAS_MAS_DE_120).fillna(False)].sum())
-    pct_mas_120 = _porcentaje(mas_120, total)
-    maximo = METAS[-1]['maximo']
-
-    return [
-        {
-            'component_id': 'cartera-total', 'etiqueta': 'CARTERA TOTAL (CORTE COBRANZA)',
-            'valor': total, 'subtitulo': f'Corte {_periodo(fecha_corte)}', 'tono': 'neutro', 'color': DORADO,
-        },
-        {
-            'component_id': 'al-corriente', 'etiqueta': 'AL CORRIENTE (ANTICIPADA)',
-            'valor': corriente, 'subtitulo': f'{_porcentaje(corriente, total):.0f}% del portafolio',
-            'tono': 'neutro', 'color': VERDE,
-        },
-        {
-            'component_id': 'vencida-total', 'etiqueta': 'VENCIDA TOTAL',
-            'valor': vencida, 'subtitulo': f'{_porcentaje(vencida, total):.0f}% del portafolio',
-            'tono': 'alerta', 'color': ROJO,
-        },
-        {
-            'component_id': 'vencida-mas-120-dias', 'etiqueta': 'VENCIDA +120 DÍAS', 'valor': mas_120,
-            'subtitulo': (
-                f'▲ {pct_mas_120:.0f}% · excede meta máx. {maximo}%' if pct_mas_120 > maximo
-                else f'{pct_mas_120:.0f}% · dentro de la meta máx. {maximo}%'
-            ),
-            'tono': 'alerta' if pct_mas_120 > maximo else 'ok', 'color': GRANATE,
-        },
-    ]
-
-
-def _antiguedad(df, fecha_corte):
-    datos = generic_charts.generar_datos_tramos_antiguedad(df, COLUMNA_FECHA, COLUMNA_VALOR, fecha_corte)
-    if not datos:
-        return None
-    valores = [float(v) for v in datos['valores']]
-    total = sum(valores)
-    # El monto y el % van SOBRE la barra, como en el mockup: la altura sola no deja leer un tramo
-    # de 10K al lado de uno de 2.100K.
-    etiquetas = [f'{_compacto(v)} ({_porcentaje(v, total):.0f}%)' for v in valores]
-
-    mayor = max(range(len(valores)), key=lambda i: valores[i])
-    cola = valores[-1]
-    return {
-        'bloque': 'antiguedad', 'titulo': f'ANTIGÜEDAD DE CARTERA — {_periodo(fecha_corte).upper()}',
-        'categorias': list(datos['categorias']), 'valores': valores,
-        'etiquetas': etiquetas, 'colores': list(COLORES_TRAMOS),
-        'hallazgos': (
-            f'El {_porcentaje(valores[0], total):.0f}% de la cartera está al corriente (anticipada) y el '
-            f'{_porcentaje(valores[1], total):.0f}% adicional está en el tramo 30 días. El tramo más pesado es '
-            f'**{datos["categorias"][mayor]}** con {_compacto(valores[mayor])}. La cola "+120 días" concentra '
-            f'**{_compacto(cola)} ({_porcentaje(cola, total):.0f}%)** del total.'
-        ),
-    }
-
-
-def _cumplimiento(df, fecha_corte):
-    datos = generic_charts.generar_datos_cumplimiento_tramos(
-        df, COLUMNA_FECHA, COLUMNA_VALOR,
-        [{'meta_min': m['minimo']} if 'minimo' in m else {'meta_max': m['maximo']} for m in METAS],
-        fecha_corte,
-    )
-    if not datos:
-        return None
-
-    filas = []
-    for i, fila in enumerate(datos['filas']):
-        _etiqueta, valor, porcentaje, _resultado = fila
-        meta = METAS[i]
-        cumple = porcentaje >= meta['minimo'] if 'minimo' in meta else porcentaje <= meta['maximo']
-        filas.append({
-            'edad': ETIQUETAS_ACUMULADAS[i], 'meta': meta['etiqueta'],
-            'valor': float(valor), 'porcentaje': float(porcentaje), 'cumple': bool(cumple),
-            'es_cola': i == len(METAS) - 1,
-        })
-
-    incumplidas = [f['edad'] for f in filas if not f['cumple']]
-    return {
-        'bloque': 'cumplimiento', 'titulo': 'CUMPLIMIENTO DE METAS DE ANTIGÜEDAD (ACUMULADO)',
-        'columnas': ['EDAD DE CARTERA', 'META (MÍN./MÁX.)', 'VALOR ACUMULADO', 'RESULTADO'],
-        'filas': filas,
-        'nota': (
-            'Las cinco primeras filas son acumuladas: cada una incluye a las anteriores. La última NO '
-            'es una fila de cierre al 100%, es la cola ">120 días" sola. El acumulado ≤120 más esa cola '
-            'dan 100%. La base del porcentaje es el total de filas que entraron en algún tramo: una fila '
-            'sin fecha de vencimiento legible queda fuera de todos.'
-            + (f' Tramos fuera de meta: {", ".join(incumplidas)}.' if incumplidas else ' Todos los tramos cumplen su meta.')
-        ),
-    }
-
-
-def _concentracion(df, fecha_corte):
-    saldos = _saldos(df)
-    total = float(saldos.sum())
-    por_cliente = saldos.groupby(df[COLUMNA_CLIENTE].astype(str).str.strip()).sum().sort_values(ascending=False)
-    top = por_cliente.head(TOP_N)
-    resto = por_cliente.iloc[TOP_N:]
-
-    filas = []
-    acumulado = 0.0
-    for cliente, saldo in top.items():
-        porcentaje = _porcentaje(float(saldo), total)
-        acumulado = round(acumulado + porcentaje, 2)
-        filas.append([cliente, float(saldo), porcentaje, acumulado])
-
-    saldo_resto = float(resto.sum())
-    pct_resto = _porcentaje(saldo_resto, total)
-    saldo_top = float(top.sum())
-    pct_top = _porcentaje(saldo_top, total)
-    ticket = saldo_resto / len(resto) if len(resto) else 0.0
-
-    return {
-        'bloque': 'concentracion',
-        'titulo': f'CONCENTRACIÓN DE CARTERA — TOP {TOP_N} CLIENTES VS. RESTO DE LA CARTERA',
-        'resumen': [
-            {'etiqueta': f'TOP {TOP_N} CLIENTES', 'valor': saldo_top,
-             'subtitulo': f'{pct_top:.2f}% del saldo total', 'color': DORADO},
-            {'etiqueta': f'RESTO ({_miles(len(resto))} CLIENTES)', 'valor': saldo_resto,
-             'subtitulo': f'{pct_resto:.2f}% del saldo total', 'color': AZUL},
-        ],
-        'columnas': ['CLIENTE', 'SALDO', '% SOBRE TOTAL', '% ACUMULADO (CALCULADO)'],
-        'filas': filas,
-        'fila_resto': [f'Resto ({_miles(len(resto))} clientes)', saldo_resto, pct_resto, 100.0],
-        'fila_total': ['TOTAL CARTERA', total, 100.0, None],
-        'hallazgos': (
-            f'La cartera está atomizada fuera de los {TOP_N} principales: **{_miles(len(resto))} clientes** '
-            f'se reparten el {pct_resto:.2f}% restante del saldo, con un ticket promedio de '
-            f'~${_miles(ticket)} por cliente — lo que limita el impacto de una gestión de cobranza '
-            f'concentrada y sugiere priorizar los {TOP_N} clientes principales como palanca de '
-            f'recuperación de caja más eficiente.'
-        ),
-        'nota': (
-            'El "% acumulado" se recalcula acá como suma progresiva del "% sobre total"; el archivo '
-            'fuente trae una columna homónima que en realidad repite el "% sobre total" fila por fila.'
-        ),
-    }
-
-
-def _deudores(df, fecha_corte, cuantos=2):
-    saldos = _saldos(df)
-    total = float(saldos.sum())
-    clientes = df[COLUMNA_CLIENTE].astype(str).str.strip()
-    mayores = saldos.groupby(clientes).sum().sort_values(ascending=False).head(cuantos)
-
-    deudores = []
-    for nombre, saldo_cliente in mayores.items():
-        del_cliente = df[clientes == nombre]
-        datos = generic_charts.generar_datos_tramos_antiguedad(
-            del_cliente, COLUMNA_FECHA, COLUMNA_VALOR, fecha_corte,
-        )
-        valores = [float(v) for v in datos['valores']] if datos else []
-        suma = sum(valores)
-        # Solo los tramos con saldo: el mockup no lista tramos vacíos.
-        filas = [
-            {'tramo': categoria, 'saldo': valor, 'porcentaje': _porcentaje(valor, suma)}
-            for categoria, valor in zip(datos['categorias'], valores) if valor
-        ] if datos else []
-        peor = max(filas, key=lambda f: f['saldo']) if filas else None
-        deudores.append({
-            'nombre': nombre, 'saldo': float(saldo_cliente),
-            'porcentaje_cartera': _porcentaje(float(saldo_cliente), total),
-            'columnas': ['TRAMO', 'SALDO', '%'], 'filas': filas,
-            'tramo_destacado': peor['tramo'] if peor else None,
-            'comentario': (
-                f'El {peor["porcentaje"]:.0f}% del saldo de este cliente está en "{peor["tramo"]}".'
-                if peor else 'Sin tramos con saldo.'
-            ),
-        })
-
-    return {
-        'bloque': 'deudores',
-        'titulo': f'ANTIGÜEDAD DE CARTERA — DOS MAYORES DEUDORES ({_periodo(fecha_corte).upper()})',
-        'deudores': deudores,
-        'hallazgos': (
-            'Los dos mayores deudores concentran **'
-            f'{sum(d["porcentaje_cartera"] for d in deudores):.2f}%** de la cartera total. Comparar en qué '
-            'tramo está cada uno distingue una mora crónica (peso en "+120 días", requiere renegociación '
-            'o vía legal) de una mora reciente (peso en 30–60 días, requiere cobranza inmediata antes de '
-            'que escale).'
-        ),
-        'fuente': (
-            f'Reporte de cartera por antigüedad y cliente al corte de {_periodo(fecha_corte)}, filtrado a '
-            f'los {cuantos} mayores deudores (suma de ambos: ${_miles(sum(d["saldo"] for d in deudores))}).'
-        ),
-    }
-
-
-# --- Composición del layout --------------------------------------------------
 
 ANCHO_KPI, ALTO_KPI = 3, 170
-ANCHO_PANEL, ALTO_ANTIGUEDAD, ALTO_CUMPLIMIENTO = 6, 560, 560
-ALTO_CONCENTRACION, ALTO_DEUDORES = 900, 520
+ANCHO_PANEL, ALTO_PANEL = 6, 560
+ALTO_CONCENTRACION = 900
 
 
-def construir_contenidos(df, fecha_corte):
-    """Contenido de todas las secciones, sin tocar la base. Devuelve `[(spec, content)]`."""
-    piezas = []
+def columnas_requeridas(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA, columna_cliente=COLUMNA_CLIENTE):
+    return [columna_valor, columna_fecha, columna_cliente]
 
-    for kpi in _kpis(df, fecha_corte):
-        piezas.append((
-            {'component_id': kpi['component_id'], 'type': 'kpi', 'chart_type': '',
-             'width': ANCHO_KPI, 'height': ALTO_KPI, 'styles': {'colorPrincipal': kpi['color']}},
-            {'bloque': 'kpi', 'titulo': kpi['etiqueta'], 'etiqueta': kpi['etiqueta'],
-             'valor': kpi['valor'], 'subtitulo': kpi['subtitulo'], 'tono': kpi['tono'],
-             'color': kpi['color']},
-        ))
 
-    secciones = [
-        ('antiguedad-de-cartera', _antiguedad(df, fecha_corte), ANCHO_PANEL, ALTO_ANTIGUEDAD, 'barras_verticales'),
-        ('cumplimiento-metas-antiguedad', _cumplimiento(df, fecha_corte), ANCHO_PANEL, ALTO_CUMPLIMIENTO, 'tabla'),
-        ('concentracion-de-cartera', _concentracion(df, fecha_corte), 12, ALTO_CONCENTRACION, 'tabla'),
-        ('mayores-deudores', _deudores(df, fecha_corte), 12, ALTO_DEUDORES, 'tabla'),
+def columnas_faltantes(df, **columnas):
+    return [c for c in columnas_requeridas(**columnas) if c not in df.columns]
+
+
+def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
+                   columna_cliente=COLUMNA_CLIENTE, top_n=TOP_N):
+    """Las secciones del informe, con su `mapeo` ya armado a partir de las columnas elegidas.
+
+    `config['bloque']` le dice al renderer qué sección es. Va en `config` y no en el contenido
+    porque el editor conserva `config` entre recálculos y reemplaza el contenido entero: si el
+    bloque viviera ahí, la primera edición desde la interfaz dejaría la sección sin identidad.
+    """
+    filtro_base = {'columna_filtro': columna_fecha, 'tipo_filtro': 'dias_vencidos'}
+    kpis = [
+        ('cartera-total', 'CARTERA TOTAL (CORTE COBRANZA)', DORADO, 'neutro', None, True),
+        ('al-corriente', 'AL CORRIENTE (ANTICIPADA)', VERDE, 'neutro',
+         {**filtro_base, 'operador_filtro': 'menor_igual', 'dias_filtro': 0}, False),
+        ('vencida-total', 'VENCIDA TOTAL', ROJO, 'alerta',
+         {**filtro_base, 'operador_filtro': 'mayor', 'dias_filtro': 0}, False),
+        ('vencida-mas-120-dias', 'VENCIDA +120 DÍAS', GRANATE, 'alerta',
+         {**filtro_base, 'operador_filtro': 'mayor', 'dias_filtro': 120}, False),
     ]
-    for component_id, contenido, ancho, alto, chart_type in secciones:
-        if contenido is None:
-            continue
-        contenido = {**contenido, 'titulo': contenido['titulo']}
-        piezas.append((
-            {'component_id': component_id, 'type': 'chart', 'chart_type': chart_type,
-             'width': ancho, 'height': alto, 'styles': {}},
-            contenido,
-        ))
 
+    secciones = []
+    for component_id, titulo, color, tono, filtro, es_base in kpis:
+        mapeo = {'disponible': True, 'calculo': 'kpi', 'columna_valor': columna_valor, 'formato': 'moneda'}
+        if filtro:
+            mapeo.update(filtro)
+        secciones.append({
+            'component_id': component_id, 'titulo': titulo, 'calculo': 'kpi',
+            'type': 'kpi', 'chart_type': '', 'width': ANCHO_KPI, 'height': ALTO_KPI,
+            'styles': {'colorPrincipal': color},
+            # `es_base_porcentaje` marca contra qué KPI se calcula el "% del portafolio" que el
+            # informe muestra bajo los otros tres. Se resuelve en el frontend, con los valores ya
+            # calculados, para que siga siendo correcto después de cambiar cualquier mapeo.
+            'config': {'bloque': 'kpi', 'tono': tono, 'es_base_porcentaje': es_base},
+            'mapeo': mapeo,
+        })
+
+    secciones.append({
+        'component_id': 'antiguedad-de-cartera', 'titulo': 'ANTIGÜEDAD DE CARTERA',
+        'calculo': 'tramos_antiguedad', 'type': 'chart', 'chart_type': 'barras_verticales',
+        'width': ANCHO_PANEL, 'height': ALTO_PANEL,
+        'styles': {'coloresPorCategoria': dict(COLORES_TRAMOS)},
+        'config': {'bloque': 'antiguedad'},
+        'mapeo': {
+            'disponible': True, 'calculo': 'tramos_antiguedad',
+            'columna_fecha': columna_fecha, 'columna_valor': columna_valor,
+        },
+    })
+    secciones.append({
+        'component_id': 'cumplimiento-metas-antiguedad',
+        'titulo': 'CUMPLIMIENTO DE METAS DE ANTIGÜEDAD (ACUMULADO)',
+        'calculo': 'cumplimiento_metas', 'type': 'chart', 'chart_type': 'tabla',
+        'width': ANCHO_PANEL, 'height': ALTO_PANEL, 'styles': {},
+        'config': {'bloque': 'cumplimiento'},
+        'mapeo': {
+            'disponible': True, 'calculo': 'cumplimiento_metas',
+            'columna_fecha': columna_fecha, 'columna_valor': columna_valor,
+            'metas': [dict(meta) for meta in METAS],
+        },
+    })
+    secciones.append({
+        'component_id': 'concentracion-de-cartera',
+        'titulo': f'CONCENTRACIÓN DE CARTERA — TOP {top_n} CLIENTES VS. RESTO DE LA CARTERA',
+        'calculo': 'concentracion', 'type': 'chart', 'chart_type': 'tabla',
+        'width': 12, 'height': ALTO_CONCENTRACION, 'styles': {},
+        'config': {'bloque': 'concentracion'},
+        'mapeo': {
+            'disponible': True, 'calculo': 'concentracion',
+            'columna_id': columna_cliente, 'columna_valor': columna_valor, 'top_n': top_n,
+        },
+    })
+    return secciones
+
+
+def calcular_contenidos(df, fecha_corte, **columnas):
+    """`[(spec, contenido)]` sin tocar la base. El contenido es la forma GENÉRICA de siempre."""
+    piezas = []
+    for spec in especificacion(**columnas):
+        contenido = plantilla.calcular_contenido_por_calculo(
+            df, spec['calculo'], spec['titulo'], spec['mapeo'], fecha_referencia=fecha_corte,
+        )
+        piezas.append((spec, contenido))
     return piezas
 
 
 def _componentes_de_fabrica_ocultos(layout, orden_desde):
-    """Las 13 posiciones de la plantilla, ocultas y bloqueadas, conservando todo lo demás.
+    """Las 13 posiciones de la plantilla, ocultas, conservando todo lo demás.
 
     Se conservan en vez de borrarse para no perder su mapeo: volver al dashboard genérico es solo
     volver a mostrarlas.
@@ -347,29 +164,30 @@ def _componentes_de_fabrica_ocultos(layout, orden_desde):
             'chart_type': componente.chart_type, 'row': 1, 'order': orden_desde + i,
             'width': componente.width, 'height': componente.height, 'is_visible': False,
             'content': componente.content or {}, 'styles': componente.styles or {},
-            'config': {**(componente.config or {}), 'bloqueado': True},
-            'mapeo': componente.mapeo or {},
+            'config': componente.config or {}, 'mapeo': componente.mapeo or {},
         })
     return componentes
 
 
-def construir(dashboard_id, df, fecha_corte):
-    """Recalcula todas las secciones contra `df` y reescribe el layout completo."""
+def construir(dashboard_id, df, fecha_corte, **columnas):
+    """Calcula todas las secciones contra `df` y reescribe el layout. Devuelve `[(id, ok)]`."""
     layout = dashboard_layout.obtener_o_crear_layout(dashboard_id)
-    piezas = construir_contenidos(df, fecha_corte)
+    piezas = calcular_contenidos(df, fecha_corte, **columnas)
 
     componentes = []
+    resultados = []
     for orden, (spec, contenido) in enumerate(piezas, start=1):
+        resultados.append((spec['component_id'], contenido is not None))
         componentes.append({
             'component_id': spec['component_id'], 'type': spec['type'],
             'chart_type': spec['chart_type'], 'row': 1, 'order': orden,
             'width': spec['width'], 'height': spec['height'], 'is_visible': True,
-            'content': contenido, 'styles': spec['styles'],
-            # `render: directorio` es lo que hace que el frontend use los componentes a medida de
-            # este dashboard en vez de los genéricos; `bloqueado` impide que un usuario no
-            # superusuario mueva, redimensione, oculte o borre una sección del informe.
-            'config': {'zona': 'personal', 'bloqueado': True, 'render': 'directorio'},
-            'mapeo': {},
+            'content': contenido or {'titulo': spec['titulo']}, 'styles': spec['styles'],
+            # Sin `bloqueado`: este dashboard es del usuario, que tiene que poder mover, redimensionar
+            # y sobre todo reconfigurar cada sección. `zona: personal` lo trata como componente propio
+            # y `render: directorio` elige sus renderers.
+            'config': {'zona': 'personal', 'render': 'directorio', **spec['config']},
+            'mapeo': spec['mapeo'],
         })
 
     componentes.extend(_componentes_de_fabrica_ocultos(layout, len(componentes) + 1))
@@ -377,7 +195,7 @@ def construir(dashboard_id, df, fecha_corte):
     dashboard_layout._escribir_componentes(layout, componentes)
     layout.version += 1
     layout.save(update_fields=['version', 'actualizado_en'])
-    return [spec['component_id'] for spec, _ in piezas]
+    return resultados
 
 
 def esta_sembrado(dashboard_id):
