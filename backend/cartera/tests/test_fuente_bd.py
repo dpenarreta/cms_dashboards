@@ -65,11 +65,25 @@ class ValidarNombreParametroTests(TestCase):
             db_source.validar_nombre_parametro('Fecha Corte')
 
 
-@override_settings(
-    EXTERNAL_DB_HOST='10.0.2.51', EXTERNAL_DB_PORT='1433', EXTERNAL_DB_NAME='base_courier',
-    EXTERNAL_DB_USER='ai_Reportes', EXTERNAL_DB_PASSWORD='clave', EXTERNAL_DB_ENCRYPT='no',
+# Conexión externa ficticia, aplicada a toda clase que ejercite `leer_fuente`. Dos motivos para
+# tenerla acá y no escrita a mano en cada clase:
+#
+# 1. Sin `EXTERNAL_DB_HOST` configurado, `db_source._conectar` corta antes de llegar al `pyodbc`
+#    mockeado y lanza `FUENTE_BD_NO_CONFIGURADA_APP`. Las pruebas de conexión que quedaron fuera
+#    de este override pasaban solo porque el `.env` de quien las escribió tenía un host real: en
+#    CI, donde no hay `.env`, fallaban.
+# 2. Los valores son deliberadamente ficticios. Antes eran el host, la base y el usuario reales de
+#    la red interna, lo que en un repositorio público expone detalles de infraestructura sin
+#    ninguna necesidad — una prueba con `pyodbc` mockeado nunca conecta a ningún lado.
+CONEXION_EXTERNA_DE_PRUEBA = dict(
+    EXTERNAL_DB_HOST='db-externa.ejemplo.local', EXTERNAL_DB_PORT='1433',
+    EXTERNAL_DB_NAME='base_de_prueba', EXTERNAL_DB_USER='usuario_de_prueba',
+    EXTERNAL_DB_PASSWORD='clave-de-prueba', EXTERNAL_DB_ENCRYPT='no',
     EXTERNAL_DB_TRUST_SERVER_CERTIFICATE='yes',
 )
+
+
+@override_settings(**CONEXION_EXTERNA_DE_PRUEBA)
 class LeerFuenteServiceTests(TestCase):
     @mock.patch('cartera.services.db_source.pd.read_sql')
     @mock.patch('cartera.services.db_source.pyodbc.connect')
@@ -181,6 +195,7 @@ class LeerFuenteServiceTests(TestCase):
         self.assertEqual(kwargs['params'], ['31/07/2026'])
 
 
+@override_settings(**CONEXION_EXTERNA_DE_PRUEBA)
 class FormatearValorFechaCorteServiceTests(TestCase):
     def test_iso_devuelve_el_mismo_valor(self):
         self.assertEqual(db_source.formatear_valor_fecha_corte('2026-07-31', 'YYYY-MM-DD'), '2026-07-31')

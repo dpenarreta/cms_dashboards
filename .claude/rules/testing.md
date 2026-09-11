@@ -22,6 +22,12 @@
   recibe 301 en toda petición) — si agregás otra protección que dependa de `DEBUG`, revisá si hace
   falta hacer lo mismo.
 
+- **Sin `backend/.env`.** Las variables que ese archivo define localmente (`EXTERNAL_DB_HOST`,
+  `GEMINI_API_KEY`, etc.) no existen en CI. Una prueba que dependa de una de ellas sin declararla
+  con `override_settings` pasa en la máquina de quien la escribió y falla en CI — ya ocurrió con
+  cuatro pruebas de la conexión externa. Regla práctica: si la prueba toca una integración
+  configurable, fijá su configuración en el propio test.
+
 Cuidado también con el orden entre eventos de auditoría del mismo instante: SQLite inserta más
 rápido y los `created_at` colisionan, así que no afirmes sobre `entradas[0]` — verificá sobre la
 lista completa.
