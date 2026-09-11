@@ -6,7 +6,7 @@
 # Los PR que abra pasan por la misma CI que todo lo demás (`.github/workflows/ci.yml`), así que
 # una actualización que rompa algo se ve antes de mezclarla.
 #
-# IMPORTANTE: `backend/requirements.txt` fija rangos estrechos (`Django>=5.0,<5.1`,
+# IMPORTANTE: `backend/requirements.txt` fija rangos estrechos (`Django>=5.2,<5.3`,
 # `Pillow>=10.4,<10.5`, ...). Dependabot RESPETA esos rangos, así que por sí solo nunca va a
 # proponer el salto a una serie nueva — para eso hay que ampliar el rango a mano. Las
 # actualizaciones de seguridad sí las propone aunque queden fuera del rango.
