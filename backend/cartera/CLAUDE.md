@@ -17,9 +17,15 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
   `FilaArchivoHistorico`, `ColumnaHistorica`, `DashboardLayout`/`DashboardComponent`/
   `DashboardAuditLog`.
 - `services/` — `excel_reader`, `column_mapper`, `validators`, `ingest`, `calculator`,
-  `aggregations`, `export_service`, `filters`, `dashboard_layout`, `historico`, `plantilla`.
+  `aggregations`, `export_service`, `filters`, `dashboard_layout`, `historico`, `plantilla`,
+  `carga_archivos` (releer el archivo de una carga), `reproceso` (recalcular contenido almacenado).
 - `permisos.py` — resolución de permisos legacy + control de acceso por-dashboard.
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
+- `management/commands/reprocesar_dashboards.py` — `python manage.py reprocesar_dashboards
+  [--aplicar] [--dashboard ID] [--detalle]`. **Simula por defecto**: sin `--aplicar` no escribe
+  nada. Recalcula `DashboardComponent.content` con el código de cálculo vigente, contra la misma
+  carga y la misma fecha de corte, para que una corrección del núcleo de cálculo llegue a los
+  dashboards que ya existen (el campo es almacenado, nadie los recalcula solo).
 
 ## Contrato de error (global, no solo de este módulo)
 
@@ -50,6 +56,10 @@ confirmar el motivo con el usuario.
 
 ## Evita
 
+- IMPORTANT: `plantilla.aplicar_mapeo` **borra y recrea** los 13 componentes
+  (`dashboard_layout._escribir_componentes`), así que ancho, alto, colores y `chart_type` vuelven a
+  los valores de fábrica de la plantilla. No la uses para "recalcular" un dashboard existente —
+  para eso está `services/reproceso.py`, que solo toca `content`.
 - No reproceses el Excel original para servir una consulta — los endpoints de agregación leen de
   `RegistroCartera` (ya insertado en SQL Server), pandas se usa solo para las agregaciones, no
   para volver a leer el archivo.

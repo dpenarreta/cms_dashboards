@@ -14,8 +14,8 @@ from .constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from .exceptions import CarteraError
 from .models import CargaArchivo, Dashboard, RegistroCartera
 from .services import (
-    aggregations, column_mapper, dashboard_layout, db_source, export_service, excel_reader,
-    filters, fuente_bd_scheduler, generic_charts, historico, ingest, plantilla,
+    aggregations, carga_archivos, column_mapper, dashboard_layout, db_source, export_service,
+    excel_reader, filters, fuente_bd_scheduler, generic_charts, historico, ingest, plantilla,
 )
 from .services.calculator import anotar_estado_y_mora, resumen_kpis
 from .utils.archivos import asegurar_directorio
@@ -267,22 +267,11 @@ class ActualizarFuenteBDAhoraView(APIView):
         return Response(resultado, status=200)
 
 
-_HOJA_ARCHIVO_PERMANENTE = 'Datos'
-
-
-def _leer_archivo_temporal_de_carga(carga):
-    """Lee el archivo de una carga — preferentemente su copia permanente
-    (`archivo_permanente_nombre`, escrita al aplicar la plantilla, nunca se limpia
-    automáticamente) para que el mapeo de columnas se pueda seguir ajustando mucho después de
-    subir el archivo; si todavía no se aplicó ningún mapeo, cae al archivo temporal (se limpia a
-    las 24h, `clean_temp_uploads`)."""
-    if carga.archivo_permanente_nombre:
-        ruta = settings.CARTERA_ARCHIVOS_DIR / carga.archivo_permanente_nombre
-        return ruta, excel_reader.leer_hoja(str(ruta), _HOJA_ARCHIVO_PERMANENTE)
-    if not carga.archivo_temp_nombre:
-        raise CarteraError('El archivo temporal ya no está disponible; vuelve a cargarlo.', codigo='ARCHIVO_NO_DISPONIBLE')
-    ruta_temp = settings.CARTERA_TEMP_UPLOADS_DIR / carga.archivo_temp_nombre
-    return ruta_temp, excel_reader.leer_hoja(str(ruta_temp), carga.nombre_hoja)
+# Reexportados desde `carga_archivos.py` (no duplicados acá): `services/reproceso.py` necesita leer
+# el archivo de una carga con exactamente el mismo criterio (permanente primero, temporal como
+# respaldo) — un único lugar de verdad.
+_HOJA_ARCHIVO_PERMANENTE = carga_archivos.HOJA_ARCHIVO_PERMANENTE
+_leer_archivo_temporal_de_carga = carga_archivos.leer_archivo_de_carga
 
 
 def _guardar_archivo_permanente(carga, df):

@@ -9,6 +9,8 @@ propio de la capa backend.
 - Crear migración: `python manage.py makemigrations <app>`
 - Shell: `python manage.py shell`
 - Limpieza de archivos temporales huérfanos: `python manage.py clean_temp_uploads --horas 24`
+- Recalcular el contenido de dashboards ya existentes (simula salvo `--aplicar`):
+  `python manage.py reprocesar_dashboards [--aplicar] [--dashboard ID] [--detalle]`
 
 ## Apps instaladas (`config/settings.py::INSTALLED_APPS`)
 
