@@ -22,12 +22,17 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
 - `permisos.py` — resolución de permisos legacy + control de acceso por-dashboard.
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
 - `services/directorio_cartera.py` + `management/commands/sembrar_directorio_cartera.py` — el
-  "Dashboard Directorio" es la **excepción declarada** del proyecto: no usa las 13 posiciones de la
-  plantilla sino 7 componentes propios (4 KPI, gráfico de antigüedad, tabla de cumplimiento de
-  metas, tabla de concentración), con sus propios anchos, altos y colores. Las 13 de fábrica quedan
-  ocultas y bloqueadas. `python manage.py sembrar_directorio_cartera --archivo X.xlsx [--aplicar]`
-  lo reconstruye con datos reales (simula por defecto). La estructura replica la que sembró la
-  migración `0021`; lo que cambia es que el contenido se calcula de verdad en vez de ser ficticio.
+  "Dashboard Directorio" es la **excepción declarada** del proyecto: replica la pestaña "6. Cartera"
+  de un informe financiero mensual (`Mockup_Directorio_Cartera_Junio2026.pdf`) con 8 componentes
+  propios —4 KPI, gráfico de antigüedad con etiquetas sobre las barras, tabla de cumplimiento de
+  metas con columna META y ✓/✗, concentración Top-N con dos tarjetas resumen, y antigüedad de los
+  dos mayores deudores—. No usa las 13 posiciones de la plantilla (quedan ocultas y bloqueadas) ni
+  los renderers genéricos: cada componente lleva `config.render = 'directorio'` y lo dibuja
+  `frontend/src/components/dashboard-directorio/`. `python manage.py sembrar_directorio_cartera
+  --archivo X.xlsx [--aplicar]` lo reconstruye con datos reales (simula por defecto).
+  El "Anexo — evolución del saldo" del mockup NO está: necesita el saldo del cliente al cierre de
+  cada mes y un corte de cobranza es una foto única (el propio mockup dice que esos números vienen
+  de otro informe).
 - `management/commands/reprocesar_dashboards.py` — `python manage.py reprocesar_dashboards
   [--aplicar] [--dashboard ID] [--detalle]`. **Simula por defecto**: sin `--aplicar` no escribe
   nada. Recalcula `DashboardComponent.content` con el código de cálculo vigente, contra la misma

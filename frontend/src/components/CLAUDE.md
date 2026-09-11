@@ -14,6 +14,12 @@ Hereda `../../CLAUDE.md`. Componentes agrupados por dominio, no por tipo (no hay
 - `dashboard-editor/` — editor visual de layout: grid editable, paleta de componentes, panel de
   propiedades, toolbar de modo edición, modales. Ver `@.claude/rules/dashboards.md` antes de
   tocar cualquier cosa acá — dos `DndContext` independientes a propósito, no los fusiones.
+- `dashboard-directorio/` — renderers a medida del Dashboard Directorio, el único dashboard que no
+  usa los genéricos. Replica una pestaña de un informe financiero impreso: etiquetas sobre las
+  barras, tabla con la meta al lado del valor y ✓/✗, tarjetas resumen dentro de una sección,
+  mini-tablas por deudor. Se activan con `config.render === 'directorio'` (despacho en
+  `DashboardAreaPage.jsx`) y despachan por `content.bloque`. Usa el formato de moneda del informe
+  (`$3,388,555`), no el `es-EC` de `utils/format.js` — acotado a esta carpeta a propósito.
 - `dashboard-generic/` — renderers data-driven reutilizables (barras, líneas, pastel, dispersión,
   área apilada, tabla, KPI, separador, título, tabla histórica) + pasos del wizard de carga
   genérico. Un renderer nuevo debe usar `var(--series-N)` para colores de serie, no hex fijos

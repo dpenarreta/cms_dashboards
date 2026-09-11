@@ -1,8 +1,9 @@
-"""Estructura fija del Dashboard Directorio.
+"""Dashboard Directorio — réplica de la pestaña "6. Cartera" de un informe financiero.
 
-Este dashboard es la excepción declarada del proyecto (no usa las 13 posiciones de la plantilla),
-así que lo que hay que proteger es justamente eso: que su estructura no se degrade silenciosamente
-a la genérica, y que las posiciones de fábrica queden ocultas en vez de convivir con datos reales.
+Lo que hay que proteger acá es doble: que la estructura del informe no se degrade a la genérica
+(es la excepción declarada del proyecto) y que los números de cada sección sean CONSISTENTES ENTRE
+SÍ. Un informe financiero en el que los KPI no cierran contra la tabla es peor que no tenerlo:
+parece correcto y no lo es.
 """
 
 from datetime import date
@@ -18,40 +19,44 @@ CORTE = date(2026, 8, 31)
 
 
 def _df():
-    """Cuatro facturas con vencimientos elegidos alrededor de la fecha de corte: una por vencer,
-    una vencida hace poco y dos vencidas hace más de 120 días."""
+    """Facturas con vencimientos elegidos alrededor del corte para caer en tramos distintos."""
     return pd.DataFrame({
-        'Cliente': ['ACME', 'ACME', 'BETA', 'GAMMA'],
-        'Saldo': [1000.0, 500.0, 300.0, 200.0],
+        'Cliente': ['ACME', 'ACME', 'BETA', 'GAMMA', 'DELTA'],
+        'Saldo': [1000.0, 500.0, 300.0, 150.0, 50.0],
         'Fecha de Vencimiento': [
-            date(2026, 9, 30),   # todavía no vence al 31/08
-            date(2026, 8, 20),   # vencida hace 11 días
-            date(2026, 1, 15),   # vencida hace más de 120 días
-            date(2026, 2, 10),   # vencida hace más de 120 días
+            date(2026, 9, 30),   # aún no vence al 31/08 -> Anticipada
+            date(2026, 8, 20),   # vencida hace 11 días  -> 30 días
+            date(2026, 1, 15),   # vencida hace >120     -> +120 días
+            date(2026, 2, 10),   # vencida hace >120     -> +120 días
+            date(2026, 7, 20),   # vencida hace 42 días  -> 60 días
         ],
     })
+
+
+def _contenidos():
+    return {spec['component_id']: contenido
+            for spec, contenido in directorio_cartera.construir_contenidos(_df(), CORTE)}
 
 
 class EstructuraTests(TestCase):
     def setUp(self):
         plantilla.sembrar_plantilla(DASHBOARD)
-        directorio_cartera.construir(DASHBOARD, _df(), fecha_referencia=CORTE)
+        directorio_cartera.construir(DASHBOARD, _df(), CORTE)
         self.layout = dashboard_layout.obtener_o_crear_layout(DASHBOARD)
 
-    def _componente(self, component_id):
-        return DashboardComponent.objects.get(layout=self.layout, component_id=component_id)
-
-    def test_crea_los_siete_componentes_del_diseno(self):
-        esperados = [spec['component_id'] for spec in directorio_cartera.especificacion()]
-        self.assertEqual(len(esperados), 7)
+    def test_crea_las_secciones_del_informe_en_orden(self):
         visibles = list(
             self.layout.components.filter(is_visible=True).order_by('order').values_list('component_id', flat=True)
         )
-        self.assertEqual(visibles, esperados)
+        self.assertEqual(visibles, [
+            'cartera-total', 'al-corriente', 'vencida-total', 'vencida-mas-120-dias',
+            'antiguedad-de-cartera', 'cumplimiento-metas-antiguedad',
+            'concentracion-de-cartera', 'mayores-deudores',
+        ])
 
     def test_oculta_y_bloquea_las_posiciones_de_fabrica(self):
         # Conviven en la base pero no en pantalla: sin esto un usuario podría "Mostrar" un KPI
-        # ficticio genérico junto a las cifras reales de cartera.
+        # ficticio genérico junto a las cifras del informe.
         fabrica = self.layout.components.filter(component_id__in=directorio_cartera.IDS_FABRICA)
         self.assertEqual(fabrica.count(), 13)
         for componente in fabrica:
@@ -59,62 +64,108 @@ class EstructuraTests(TestCase):
                 self.assertFalse(componente.is_visible)
                 self.assertTrue(componente.config.get('bloqueado'))
 
-    def test_los_componentes_propios_quedan_bloqueados(self):
-        for spec in directorio_cartera.especificacion():
-            with self.subTest(componente=spec['component_id']):
-                config = self._componente(spec['component_id']).config
-                self.assertTrue(config.get('bloqueado'))
-                self.assertEqual(config.get('zona'), 'personal')
-
-
-class ContenidoTests(TestCase):
-    def setUp(self):
-        plantilla.sembrar_plantilla(DASHBOARD)
-        directorio_cartera.construir(DASHBOARD, _df(), fecha_referencia=CORTE)
-        self.layout = dashboard_layout.obtener_o_crear_layout(DASHBOARD)
-
-    def _contenido(self, component_id):
-        return DashboardComponent.objects.get(layout=self.layout, component_id=component_id).content
-
-    def test_los_kpis_reparten_el_total_segun_su_filtro(self):
-        total = self._contenido('cartera-total')['valor']
-        corriente = self._contenido('al-corriente')['valor']
-        vencida = self._contenido('vencida-total')['valor']
-        mas_120 = self._contenido('vencida-mas-120-dias')['valor']
-
-        self.assertEqual(total, 2000.0)
-        self.assertEqual(corriente, 1000.0)   # solo la que aún no vence
-        self.assertEqual(vencida, 1000.0)     # las otras tres
-        self.assertEqual(mas_120, 500.0)      # las dos más viejas
-        # Con todas las fechas legibles, corriente + vencida tiene que dar el total. Si algún día
-        # esto falla con datos reales, son filas sin fecha parseable: no entran en ningún tramo.
-        self.assertEqual(corriente + vencida, total)
-
-    def test_el_grafico_de_antiguedad_trae_los_seis_tramos_con_su_color(self):
-        componente = DashboardComponent.objects.get(layout=self.layout, component_id='antiguedad-de-cartera')
-        self.assertEqual(componente.content['categorias'], directorio_cartera.TRAMOS)
-        colores = componente.styles['coloresPorCategoria']
-        self.assertEqual([colores[t] for t in directorio_cartera.TRAMOS], directorio_cartera.COLORES_TRAMOS)
-
-    def test_la_tabla_de_cumplimiento_evalua_las_metas(self):
-        contenido = self._contenido('cumplimiento-metas-antiguedad')
-        self.assertEqual(contenido['columnas'], ['Tramo', 'Saldo', '% acumulado', 'Resultado'])
-        self.assertEqual(len(contenido['filas']), 6)
-        # Con metas configuradas ninguna fila puede quedar en "Sin meta": si apareciera, es que el
-        # mapeo perdió `metas` y las insignias del diseño dejarían de tener sentido.
-        resultados = [fila[3] for fila in contenido['filas']]
-        self.assertNotIn('Sin meta', resultados)
-
-    def test_la_tabla_de_concentracion_cierra_en_el_total(self):
-        contenido = self._contenido('concentracion-de-cartera')
-        self.assertEqual(contenido['columnas'], ['Cliente', 'Saldo', '% del total', '% acumulado'])
-        self.assertEqual(contenido['total'], ['Total', 2000.0, 100.0, 100.0])
+    def test_todas_las_secciones_piden_el_renderer_propio(self):
+        # `config.render` es lo que hace que el frontend use los componentes a medida. Si se
+        # perdiera, la pantalla volvería a dibujarse con los genéricos y el informe se desarmaría.
+        for componente in self.layout.components.filter(is_visible=True):
+            with self.subTest(componente=componente.component_id):
+                self.assertEqual(componente.config.get('render'), 'directorio')
+                self.assertTrue(componente.config.get('bloqueado'))
 
     def test_reconstruir_no_duplica_componentes(self):
-        directorio_cartera.construir(DASHBOARD, _df(), fecha_referencia=CORTE)
+        directorio_cartera.construir(DASHBOARD, _df(), CORTE)
         ids = list(self.layout.components.values_list('component_id', flat=True))
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 20)  # 7 propios + 13 de fábrica
+        self.assertEqual(len(ids), 21)  # 8 secciones + 13 de fábrica
+
+
+class CoherenciaEntreSeccionesTests(TestCase):
+    """Las cifras del informe tienen que cerrar entre sí, no solo ser correctas por separado."""
+
+    def setUp(self):
+        self.contenidos = _contenidos()
+
+    def test_los_kpis_reparten_el_total(self):
+        total = self.contenidos['cartera-total']['valor']
+        corriente = self.contenidos['al-corriente']['valor']
+        vencida = self.contenidos['vencida-total']['valor']
+
+        self.assertEqual(total, 2000.0)
+        self.assertEqual(corriente, 1000.0)
+        self.assertEqual(vencida, 1000.0)
+        self.assertEqual(corriente + vencida, total)
+
+    def test_los_tramos_del_grafico_suman_el_total(self):
+        total = self.contenidos['cartera-total']['valor']
+        self.assertEqual(sum(self.contenidos['antiguedad-de-cartera']['valores']), total)
+
+    def test_el_kpi_de_mas_120_coincide_con_la_cola_del_grafico(self):
+        cola = self.contenidos['antiguedad-de-cartera']['valores'][-1]
+        self.assertEqual(self.contenidos['vencida-mas-120-dias']['valor'], cola)
+
+    def test_la_concentracion_cierra_en_el_total(self):
+        concentracion = self.contenidos['concentracion-de-cartera']
+        total = self.contenidos['cartera-total']['valor']
+        self.assertEqual(concentracion['fila_total'][1], total)
+        suma_clientes = sum(fila[1] for fila in concentracion['filas']) + concentracion['fila_resto'][1]
+        self.assertAlmostEqual(suma_clientes, total, places=2)
+
+    def test_el_acumulado_de_cumplimiento_mas_la_cola_dan_cien(self):
+        # El invariante real de esta tabla: las 6 filas NO suman 100% entre sí (las 5 primeras se
+        # contienen unas a otras), pero el acumulado ≤120 más la cola >120 sí.
+        filas = self.contenidos['cumplimiento-metas-antiguedad']['filas']
+        self.assertAlmostEqual(filas[4]['porcentaje'] + filas[5]['porcentaje'], 100.0, places=1)
+
+
+class FormatoDelInformeTests(TestCase):
+    def setUp(self):
+        self.contenidos = _contenidos()
+
+    def test_cada_barra_trae_su_etiqueta_con_monto_y_porcentaje(self):
+        grafico = self.contenidos['antiguedad-de-cartera']
+        self.assertEqual(len(grafico['etiquetas']), len(grafico['categorias']))
+        self.assertEqual(len(grafico['colores']), len(grafico['categorias']))
+        # Formato del informe: `$1000K (50%)`, sin separador de miles en la parte compacta.
+        for etiqueta in grafico['etiquetas']:
+            with self.subTest(etiqueta=etiqueta):
+                self.assertRegex(etiqueta, r'^\$\d+K \(\d+%\)$')
+
+    def test_la_tabla_de_cumplimiento_trae_la_columna_de_meta(self):
+        cumplimiento = self.contenidos['cumplimiento-metas-antiguedad']
+        self.assertEqual(cumplimiento['columnas'],
+                         ['EDAD DE CARTERA', 'META (MÍN./MÁX.)', 'VALOR ACUMULADO', 'RESULTADO'])
+        for fila in cumplimiento['filas']:
+            with self.subTest(tramo=fila['edad']):
+                self.assertRegex(fila['meta'], r'^[≥≤] \d+%$')
+                self.assertIn(fila['cumple'], (True, False))
+
+    def test_los_textos_narrativos_conservan_sus_comas(self):
+        # Una versión anterior formateaba los números con un `.replace(',', '.')` sobre la frase
+        # entera y convertía las comas de la redacción en puntos ("del saldo. con un ticket").
+        for clave in ('concentracion-de-cartera', 'mayores-deudores'):
+            with self.subTest(seccion=clave):
+                textos = [v for k, v in self.contenidos[clave].items()
+                          if k in ('hallazgos', 'nota', 'fuente') and v]
+                self.assertTrue(textos)
+                for texto in textos:
+                    self.assertNotRegex(texto, r'[a-záéíóúñ]\. [a-záéíóúñ]')
+
+    def test_la_concentracion_trae_las_dos_tarjetas_resumen(self):
+        resumen = self.contenidos['concentracion-de-cartera']['resumen']
+        self.assertEqual(len(resumen), 2)
+        self.assertTrue(resumen[0]['etiqueta'].startswith('TOP'))
+        self.assertTrue(resumen[1]['etiqueta'].startswith('RESTO'))
+
+    def test_los_mayores_deudores_traen_su_desglose_por_tramo(self):
+        deudores = self.contenidos['mayores-deudores']['deudores']
+        self.assertEqual(len(deudores), 2)
+        # ACME es el mayor deudor del archivo de prueba (1000 + 500).
+        self.assertEqual(deudores[0]['nombre'], 'ACME')
+        self.assertEqual(deudores[0]['saldo'], 1500.0)
+        self.assertTrue(deudores[0]['filas'])
+        # Solo tramos con saldo: el informe no lista filas en cero.
+        for fila in deudores[0]['filas']:
+            self.assertGreater(fila['saldo'], 0)
 
 
 class ColumnasTests(TestCase):

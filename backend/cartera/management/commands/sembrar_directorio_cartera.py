@@ -61,12 +61,11 @@ class Command(BaseCommand):
             self._simular(df, dashboard_id, fecha_corte)
             return
 
-        resultados = directorio_cartera.construir(dashboard_id, df, fecha_referencia=fecha_corte)
+        creados = directorio_cartera.construir(dashboard_id, df, fecha_corte)
         self._registrar_carga(dashboard_id, df, fecha_corte)
 
-        for component_id, hubo_contenido in resultados:
-            estilo = self.style.SUCCESS if hubo_contenido else self.style.WARNING
-            self.stdout.write(estilo(f'  {component_id}: {"calculado" if hubo_contenido else "SIN DATOS"}'))
+        for component_id in creados:
+            self.stdout.write(self.style.SUCCESS(f'  {component_id}: calculado'))
         self.stdout.write(self.style.SUCCESS(f'Listo. {dashboard_id} reconstruido con datos reales.'))
 
     def _leer(self, opciones):
@@ -91,28 +90,26 @@ class Command(BaseCommand):
             raise CommandError(f'La fecha de corte "{opciones["fecha_corte"]}" no es una fecha ISO válida.')
 
     def _simular(self, df, dashboard_id, fecha_corte):
-        from cartera.services import plantilla
         self.stdout.write(self.style.MIGRATE_HEADING('SIMULACIÓN (no se escribe nada)'))
-        for spec in directorio_cartera.especificacion():
-            contenido = plantilla.calcular_contenido_por_calculo(
-                df, spec['mapeo']['calculo'], spec['titulo'], spec['mapeo'],
-                dashboard_id=dashboard_id, fecha_referencia=fecha_corte,
-            )
-            if contenido is None:
-                self.stdout.write(self.style.WARNING(f'  {spec["component_id"]}: SIN DATOS'))
-                continue
+        for spec, contenido in directorio_cartera.construir_contenidos(df, fecha_corte):
             self.stdout.write(f'  {spec["component_id"]}: {self._resumen(contenido)}')
         self.stdout.write('')
         self.stdout.write('Volvé a ejecutarlo con --aplicar para escribir los cambios.')
 
     @staticmethod
     def _resumen(contenido):
-        if 'valor' in contenido:
-            return f'valor = {contenido["valor"]:,.2f}'
-        if 'filas' in contenido:
-            return f'{len(contenido["filas"])} fila(s)'
-        if 'categorias' in contenido:
-            return ' · '.join(f'{c}={v:,.0f}' for c, v in zip(contenido['categorias'], contenido['valores']))
+        bloque = contenido.get('bloque')
+        if bloque == 'kpi':
+            return f'{contenido["etiqueta"]} = {contenido["valor"]:,.2f} ({contenido["subtitulo"]})'
+        if bloque == 'antiguedad':
+            return ' · '.join(contenido['etiquetas'])
+        if bloque == 'cumplimiento':
+            fuera = [f['edad'] for f in contenido['filas'] if not f['cumple']]
+            return f'{len(contenido["filas"])} tramos, fuera de meta: {", ".join(fuera) or "ninguno"}'
+        if bloque == 'concentracion':
+            return ' | '.join(f'{r["etiqueta"]} {r["valor"]:,.0f} ({r["subtitulo"]})' for r in contenido['resumen'])
+        if bloque == 'deudores':
+            return ' | '.join(f'{d["nombre"]} {d["saldo"]:,.0f} ({d["porcentaje_cartera"]:.2f}%)' for d in contenido['deudores'])
         return 'contenido calculado'
 
     def _registrar_carga(self, dashboard_id, df, fecha_corte):

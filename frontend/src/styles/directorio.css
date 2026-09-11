@@ -1,0 +1,199 @@
+/*
+ * Dashboard Directorio — réplica de la pestaña "6. Cartera" de un informe financiero impreso.
+ *
+ * Todo cuelga de `.directorio-*`, así que no toca a ningún otro dashboard. Los colores salen de
+ * las variables de tema que ya existen (`--text-primary`, `--status-good`, ...), de modo que la
+ * sección sigue funcionando en tema claro y oscuro sin una segunda paleta.
+ */
+
+.directorio-seccion {
+  padding: 18px 20px;
+}
+
+.directorio-seccion__titulo {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* --- Tarjetas KPI ---------------------------------------------------------- */
+
+.directorio-kpi {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 18px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--text-secondary);
+  border-radius: 6px;
+}
+
+.directorio-kpi__etiqueta {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.directorio-kpi__valor {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.directorio-kpi__sub {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.directorio-kpi__sub--alerta { color: var(--status-critical); }
+.directorio-kpi__sub--ok { color: var(--status-good); }
+
+/* Las dos tarjetas resumen que van DENTRO de la sección de concentración. */
+.directorio-resumen {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.directorio-kpi--interno {
+  flex: 1 1 260px;
+}
+
+/* --- Tablas ---------------------------------------------------------------- */
+
+.directorio-tabla {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.directorio-tabla th {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.directorio-tabla td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.directorio-tabla--compacta td,
+.directorio-tabla--compacta th {
+  padding: 6px 8px;
+}
+
+.directorio-tabla__meta {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.directorio-tabla__fila--cierre td,
+.directorio-tabla__fila--resto td,
+.directorio-tabla__fila--destacada td {
+  font-weight: 700;
+}
+
+.directorio-tabla__fila--destacada td {
+  color: var(--status-critical);
+}
+
+.directorio-tabla__fila--total td {
+  font-weight: 700;
+  color: var(--text-secondary);
+  border-bottom: none;
+}
+
+.directorio-ok { color: var(--status-good); font-weight: 700; }
+.directorio-falla { color: var(--status-critical); font-weight: 700; }
+
+/* --- Dos mayores deudores -------------------------------------------------- */
+
+.directorio-deudores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.directorio-deudor {
+  flex: 1 1 340px;
+  min-width: 0;
+}
+
+.directorio-deudor__titulo {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.directorio-deudor__comentario {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+/* --- Hallazgos y notas ----------------------------------------------------- */
+
+.directorio-hallazgos {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--color-primary, #1E88E5);
+  background: color-mix(in srgb, var(--color-primary, #1E88E5) 7%, transparent);
+  border-radius: 0 4px 4px 0;
+}
+
+.directorio-hallazgos__titulo {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-primary, #1E88E5);
+  margin-bottom: 4px;
+}
+
+.directorio-hallazgos__texto {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.directorio-nota {
+  margin: 12px 0 0;
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* La etiqueta que va sobre cada barra del gráfico de antigüedad. */
+.directorio-barra__etiqueta {
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--text-primary);
+}
+
+@media (max-width: 700px) {
+  .directorio-kpi__valor { font-size: 1.4rem; }
+  .directorio-seccion { padding: 14px; }
+}

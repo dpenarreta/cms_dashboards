@@ -10,6 +10,7 @@ import FileUploadZone from '../../components/upload/FileUploadZone'
 import RenameColumnsStep from '../../components/dashboard-generic/RenameColumnsStep'
 import ValoresEnBlancoStep from '../../components/dashboard-generic/ValoresEnBlancoStep'
 import TemplateMappingStep from '../../components/dashboard-generic/TemplateMappingStep'
+import DirectorioSeccion from '../../components/dashboard-directorio/DirectorioSeccion'
 import GenericChartRenderer from '../../components/dashboard-generic/GenericChartRenderer'
 import GenericTitleBlock from '../../components/dashboard-generic/GenericTitleBlock'
 import GenericSeparator from '../../components/dashboard-generic/GenericSeparator'
@@ -333,6 +334,11 @@ export default function DashboardAreaPage() {
     c.component_id,
     {
       render: (componente) => {
+        // El Dashboard Directorio replica una pestaña de un informe financiero impreso, con
+        // secciones que los componentes genéricos no saben dibujar (etiquetas sobre las barras,
+        // meta con ✓/✗, tarjetas resumen dentro de una sección, mini-tablas por deudor). Es el
+        // único dashboard con renderers propios, y se reconoce por `config.render`.
+        if (componente.config?.render === 'directorio') return <DirectorioSeccion content={componente.content} />
         if (componente.type === 'title') return <GenericTitleBlock content={componente.content} />
         if (componente.type === 'text') return <GenericSeparator content={componente.content} />
         if (componente.type !== 'kpi' && componente.type !== 'chart') return null
