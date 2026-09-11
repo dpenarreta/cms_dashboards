@@ -42,6 +42,10 @@ lista completa.
   `DB_ENGINE=sqlite` esté configurado.
 - Los correos (`EMAIL_BACKEND`) se fuerzan siempre a `locmem` durante `manage.py test`,
   sin importar el valor en `.env` — no hace falta mockear el envío de correo en pruebas.
+- `CARTERA_TEMP_UPLOADS_DIR`, `CARTERA_ARCHIVOS_DIR` y `MEDIA_ROOT` también se redirigen solos a un
+  directorio temporal durante `manage.py test` (`settings.py`, bloque `_EJECUTANDO_TESTS`) — una
+  prueba que suba un archivo no ensucia el `media/` real. No hace falta un `override_settings`
+  propio para eso; antes de esto, las pruebas dejaban miles de archivos huérfanos en el disco.
 
 ## Frontend (Vitest + React Testing Library)
 

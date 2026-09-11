@@ -4,6 +4,7 @@ Django settings for config project (Dashboard de Cartera).
 
 import os
 import sys
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 
@@ -321,6 +322,19 @@ CARTERA_TEMP_UPLOADS_DIR = MEDIA_ROOT / 'uploads_temp'
 # que queda aplicado a un dashboard se copia acá para que su mapeo de columnas se pueda seguir
 # ajustando después desde "Configurar componente" sin tener que volver a cargarlo.
 CARTERA_ARCHIVOS_DIR = MEDIA_ROOT / 'archivos_dashboard'
+
+if _EJECUTANDO_TESTS:
+    # Las pruebas que suben un archivo escribían en el `media/` real del desarrollador y no
+    # limpiaban nada: se habían acumulado más de 11.000 archivos huérfanos, que es lo que
+    # `clean_temp_uploads` terminó barriendo la primera vez que se ejecutó. Solo
+    # `test_borrado_de_archivos.py` aislaba estos directorios, con su propio `override_settings`;
+    # el resto no. Se resuelve en un único lugar, con el mismo mecanismo que ya se usa acá para
+    # los throttles y `SECURE_SSL_REDIRECT`, en vez de pedirle a cada prueba que se acuerde.
+    # Un `override_settings` explícito de una prueba sigue teniendo precedencia sobre esto.
+    _MEDIA_DE_PRUEBAS = Path(tempfile.gettempdir()) / 'cms_dashboards_pruebas'
+    CARTERA_TEMP_UPLOADS_DIR = _MEDIA_DE_PRUEBAS / 'uploads_temp'
+    CARTERA_ARCHIVOS_DIR = _MEDIA_DE_PRUEBAS / 'archivos_dashboard'
+    MEDIA_ROOT = _MEDIA_DE_PRUEBAS / 'media'
 
 # Fila máxima insertada por lote hacia SQL Server (sección 16 - rendimiento).
 CARTERA_BULK_BATCH_SIZE = 2000

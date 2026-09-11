@@ -33,3 +33,6 @@ CLAUDE.local.md
 *.xlsx
 *.xls
 !backend/cartera/tests/fixtures/*.xlsx
+
+# Registros de las tareas programadas (`backend/scripts/tarea_programada.ps1`)
+backend/logs/
