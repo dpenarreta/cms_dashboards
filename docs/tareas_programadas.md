@@ -16,7 +16,7 @@ una carga todavía referencia.
 
 ## Instalación (Windows)
 
-Desde PowerShell **como administrador**:
+Desde PowerShell:
 
 ```powershell
 cd C:\ruta\al\repo\backend\scripts
@@ -25,6 +25,9 @@ cd C:\ruta\al\repo\backend\scripts
 
 Registra dos tareas diarias: la actualización a las 03:00 y la limpieza a las 03:30. Para otra
 hora, `.\programar_tareas.ps1 -Hora 02:15`. Para quitarlas, `.\programar_tareas.ps1 -Quitar`.
+
+No hace falta elevar: probado, un usuario estándar puede registrar tareas que corran bajo su propia
+cuenta. Sí hace falta ser administrador para que corran **sin sesión iniciada** (ver más abajo).
 
 Verificar sin esperar a mañana:
 
@@ -47,6 +50,31 @@ comando y por mes:
 El registro no es un adorno: una tarea programada que falla lo hace en silencio, y sin log nadie se
 entera hasta que alguien nota que los datos están viejos. El envoltorio además devuelve el código de
 salida del comando, así que un fallo también se ve en el historial del propio Programador de tareas.
+
+El envoltorio fuerza UTF-8 en los dos extremos (`PYTHONIOENCODING` y `[Console]::OutputEncoding`)
+porque el Programador arranca la consola con la página de códigos OEM del sistema, distinta de la de
+una consola interactiva: sin eso la salida llegaba como `Ning·n ... automßtica`, y un traceback con
+acentos mal decodificados cuesta leerlo justo cuando más falta hace.
+
+## Las tareas solo corren con la sesión iniciada
+
+Registradas sin elevación quedan con `LogonType=Interactive`: corren bajo la cuenta del usuario y
+**solo mientras esa cuenta tenga sesión iniciada** (la pantalla bloqueada cuenta como iniciada;
+haber cerrado sesión, no). Con `-StartWhenAvailable` una corrida perdida por eso se dispara en el
+siguiente inicio de sesión, así que en una máquina de trabajo el efecto es un retraso, no una
+pérdida — con la salvedad del último apartado.
+
+En un servidor eso no alcanza: ahí la tarea tiene que correr sin nadie logueado. Requiere PowerShell
+**como administrador** — sin elevación, `Set-ScheduledTask` responde "Acceso denegado" (comprobado):
+
+```powershell
+$p = New-ScheduledTaskPrincipal -UserId 'DOMINIO\cuenta_de_servicio' -LogonType S4U -RunLevel Limited
+Set-ScheduledTask -TaskName 'CMS Dashboards - actualizar fuentes BD' -Principal $p
+Set-ScheduledTask -TaskName 'CMS Dashboards - limpiar temporales' -Principal $p
+```
+
+`S4U` evita guardar la contraseña en el Programador. La cuenta necesita el derecho "Iniciar sesión
+como trabajo por lotes", y acceso al repositorio y a SQL Server.
 
 ## En otro sistema operativo
 

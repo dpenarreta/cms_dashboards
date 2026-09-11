@@ -62,6 +62,14 @@ $Inicio = Get-Date
 Add-Content -Path $Log -Encoding utf8 -Value ''
 Add-Content -Path $Log -Encoding utf8 -Value "===== $($Inicio.ToString('yyyy-MM-dd HH:mm:ss')) — manage.py $Comando $($Argumentos -join ' ')"
 
+# El Programador de tareas arranca la consola con la página de códigos OEM del sistema, no con la
+# del usuario: sin esto, la salida de Django llega mal decodificada al log ("Ning·n", "automßtica")
+# y un traceback con acentos se vuelve difícil de leer, que es justo cuando más falta hace. Se fija
+# UTF-8 en los dos extremos: lo que Python escribe y cómo PowerShell lo lee.
+$env:PYTHONIOENCODING = 'utf-8'
+$EncodingPrevio = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 Push-Location $RaizBackend
 try {
     # stderr se une a stdout para que el traceback de un fallo quede en el mismo log que la salida
@@ -72,6 +80,7 @@ try {
     if ($Salida) { Add-Content -Path $Log -Encoding utf8 -Value $Salida }
 } finally {
     Pop-Location
+    [Console]::OutputEncoding = $EncodingPrevio
 }
 
 $Duracion = [int]((Get-Date) - $Inicio).TotalSeconds
