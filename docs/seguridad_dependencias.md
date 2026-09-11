@@ -96,6 +96,15 @@ alguien con ese permiso guarde HTML malicioso y se ejecute en el navegador del p
 administrador que abra la pantalla — es decir, requiere un permiso que ya otorga control sobre la
 identidad visual y las plantillas de correo.
 
-Opciones, en orden de costo: dejarlo documentado y seguir el aviso por si aparece una versión
-corregida; o sanear `html_body` en el backend con una lista blanca al guardar, lo que agrega
-defensa en profundidad pero puede romper plantillas legítimas con estilos en línea.
+**Mitigado el 11/09/2026** (el aviso sigue abierto, porque no hay versión que corrija quill):
+`apps/authentication/sanitizacion.py` sanea `html_body` al guardar. Se sanea al guardar y no al
+mostrar porque lo que queda almacenado es exactamente lo que el editor de cualquier otro
+administrador va a parsear después — el HTML persistido es la superficie de ataque, no la sesión
+que lo escribió.
+
+El riesgo de "romper plantillas legítimas" era real y se comprobó: un saneo de fragmento a secas se
+come el `<body style="background: #eeeeee; padding: 24px">` del que depende el aspecto del correo, y
+`bleach` además borra TODOS los estilos en línea salvo que se le configure un saneador de CSS
+aparte. Por eso el contenido lo sanea `nh3` (que sí conserva los estilos en línea) y el esqueleto
+del documento se reconstruye desde una plantilla fija — lo que de paso vuelve imposible un
+`<meta http-equiv="refresh">` o un `<base href>`, porque el `<head>` deja de ser editable.

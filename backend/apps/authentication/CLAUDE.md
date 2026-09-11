@@ -15,6 +15,10 @@ Login/logout/logout-all/refresh/me, cambio de contraseña propia, recuperación 
   `PasswordResetToken` (hash del token, nunca el token en claro).
 - `services.py` — `BruteForceProtectionService`, `SessionService`, `AuthenticationService`,
   `PasswordResetService`. Toda la lógica de negocio vive acá, no en `views.py`.
+- `sanitizacion.py` — `sanear_html_de_correo(html)`: saneo del `html_body` de las plantillas de
+  correo, enganchado en `EmailTemplateUpdateSerializer`. Conserva la estructura de documento y los
+  estilos en línea (un correo sin ellos no tiene diseño) y reconstruye el `<head>`, así que el
+  esqueleto no es editable por el usuario.
 
 ## Contrato del usuario autenticado
 

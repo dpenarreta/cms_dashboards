@@ -25,3 +25,8 @@ argon2-cffi>=23.1,<26
 # alta, varios alcanzables desde `Image.open()`. Por eso su rango se mueve apenas sale un parche.
 Pillow>=12.3,<12.4
 requests>=2.32,<2.33
+# Saneo del HTML de las plantillas de correo (`apps/authentication/sanitizacion.py`). Se eligió
+# sobre `bleach` por dos motivos comprobados contra la plantilla real: `bleach` borra todos los
+# `style` en línea salvo que se le configure un saneador de CSS aparte (y un correo sin estilos en
+# línea no tiene diseño), y su propio proyecto lo declara en modo mantenimiento recomendando nh3.
+nh3>=0.3,<0.4

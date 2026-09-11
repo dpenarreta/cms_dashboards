@@ -5,6 +5,8 @@ from rest_framework import serializers
 from apps.core.imagenes import CampoImagenSegura
 from apps.core.password import campo_password, validar_fortaleza
 
+from .sanitizacion import sanear_html_de_correo
+
 User = get_user_model()
 
 
@@ -120,6 +122,14 @@ class EmailTemplateUpdateSerializer(serializers.Serializer):
     # Sin tope estricto de la plantilla de correo original (era ~1 KB) — pero sí un límite
     # generoso para no aceptar payloads absurdos desde el editor de texto enriquecido.
     html_body = serializers.CharField(max_length=100_000)
+
+    def validate_html_body(self, value):
+        # Se sanea al GUARDAR, no al mostrar: lo que queda almacenado es lo que el editor de
+        # cualquier otro administrador va a parsear después (con un `quill` que arrastra un XSS sin
+        # corrección upstream), así que el momento de limpiarlo es antes de que se persista.
+        # Devuelve el HTML saneado, no un error: el editor no ofrece forma de escribir un `<script>`,
+        # así que si aparece uno no es un usuario equivocándose al que haya que corregir.
+        return sanear_html_de_correo(value)
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
