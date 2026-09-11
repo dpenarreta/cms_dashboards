@@ -36,6 +36,35 @@ De paso se corrigió una deriva: `argon2-cffi` estaba fijado en `>=23.1,<23.2` p
 tenía la 25.1.0 instalada. O sea que la CI y cualquier entorno nuevo instalaban una versión más
 vieja que la que se venía usando para desarrollar. El rango pasó a `>=23.1,<26`.
 
+### Pillow 10.4 → 12.3 (11/09/2026)
+
+Pillow es la única biblioteca del backend que parsea un binario controlado por el usuario: los
+avatares, vía el `ImageField` de Django (`AvatarUploadSerializer`, `apps/authentication/serializers.py`).
+La 10.4 arrastraba **12 avisos de seguridad, 9 de severidad alta**, todos corregidos en 12.3.
+
+Por qué era alcanzable de verdad, y no una lista teórica: se comprobó que **Pillow despacha por la
+firma binaria del contenido, no por la extensión del nombre**. Un archivo llamado `avatar.png` cuyo
+contenido es un GIF se acepta, y lo procesa `GifImagePlugin`. La validación de extensión de Django
+(`validate_image_file_extension`) corre *después* de `Image.open()`, así que no funciona como filtro
+previo: basta nombrar el archivo `.png` para llegar a cualquier plugin de formato de Pillow.
+
+Eso pone al alcance de cualquier usuario autenticado los parsers donde estaban los fallos graves:
+escritura fuera de límites en PSD (CVE-2026-25990, CVE-2026-42311), bombas de descompresión en FITS
+y GD (CVE-2026-40192, CVE-2026-55380), lectura fuera de límites en la ruta mmap (CVE-2026-54058) y
+denegación de servicio en JPEG2000 (CVE-2026-59204). Los avisos restantes son de fuentes y de
+`ImageCms`, que este proyecto no usa.
+
+El salto cruza dos versiones mayores, pero el riesgo de ruptura era bajo y se verificó: el único uso
+directo de Pillow en todo el repo es `Image.new(...).save(buffer, format='PNG')` en una prueba. En
+producción solo se lo alcanza a través del `ImageField` de Django (`Image.open()` + `verify()`), API
+que no cambió. Ninguna de las APIs removidas en 11.0 ni en 12.0 está en uso (`PyAccess`,
+`USE_CFFI_ACCESS`, `IFD_LEGACY_API`, `PSFile`, `raise_oserror()`, `ImageCms`, `IptcImageFile`, los
+modos BGR, el parámetro `hints` de `getdraw()`). Python 3.12 supera el mínimo de 3.10 que pide la 12.
+
+Verificación: las 965 pruebas pasan contra SQL Server y contra SQLite con `DEBUG=False`, incluidas
+las de `apps.authentication` que ejercen la subida de avatar de punta a punta — subida exitosa,
+rechazo de un archivo que no es imagen, y borrado del avatar anterior del disco.
+
 ### Vulnerabilidades de npm corregidas
 
 - `vitest` 4.1.10 → 4.1.11: recorrido de rutas en `@vitest/mocker`. Solo desarrollo.
@@ -44,16 +73,6 @@ vieja que la que se venía usando para desarrollar. El rango pasó a `>=23.1,<26
 Ninguna de las dos llegaba al paquete que se sirve a los usuarios.
 
 ## Pendiente de decisión
-
-### Pillow 10.4 (de 2024), y parsea lo que suben los usuarios
-
-`Pillow>=10.4,<10.5`, con la 12.3 disponible. Importa más que otras dependencias viejas porque es
-lo que valida los avatares: `AvatarUploadSerializer` (`apps/authentication/serializers.py`) usa
-`ImageField`, que abre con Pillow el archivo que sube cualquier usuario autenticado. Es la única
-biblioteca del backend que procesa un binario controlado por el usuario, y el historial de CVE de
-Pillow está casi todo en el parseo de imágenes.
-
-Actualizar dentro de la serie 10.x no alcanza; hay que ampliar el rango.
 
 ### quill 2.0.3: XSS sin corrección disponible
 

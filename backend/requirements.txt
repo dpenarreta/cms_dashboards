@@ -20,5 +20,8 @@ xlrd>=2.0,<2.1
 python-dateutil>=2.9,<2.10
 python-dotenv>=1.0,<1.1
 argon2-cffi>=23.1,<26
-Pillow>=10.4,<10.5
+# Pillow es la unica biblioteca del backend que parsea un binario controlado por el usuario (los
+# avatares, via el ImageField de Django). La 10.4 acumulaba 12 avisos de seguridad, 9 de severidad
+# alta, varios alcanzables desde `Image.open()`. Por eso su rango se mueve apenas sale un parche.
+Pillow>=12.3,<12.4
 requests>=2.32,<2.33
