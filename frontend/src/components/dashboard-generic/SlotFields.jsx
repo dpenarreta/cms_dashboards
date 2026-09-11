@@ -142,12 +142,16 @@ const OPERADORES_DIAS_VENCIDOS = [
  */
 export function FiltroSlot({
   contexto, cargaId, aliases, valoresBlancos, columnas, esKPI,
-  columnaFiltro, tipoFiltro, valorFiltro, operadorFiltro, diasFiltro,
-  onCambiarColumna, onCambiarValor, onCambiarTipoFiltro, onCambiarOperador, onCambiarDias,
+  columnaFiltro, tipoFiltro, valorFiltro, valoresFiltro, operadorValor, operadorFiltro, diasFiltro,
+  onCambiarColumna, onCambiarValores, onCambiarOperadorValor, onCambiarTipoFiltro,
+  onCambiarOperador, onCambiarDias,
 }) {
   const [valores, setValores] = useState([])
   const [cargandoValores, setCargandoValores] = useState(false)
   const esDiasVencidos = esKPI && tipoFiltro === 'dias_vencidos'
+  // `valor_filtro` es la forma anterior (un único valor). Se sigue leyendo para que un mapeo
+  // guardado antes de que el filtro admitiera varios se muestre bien: no hay migración de datos.
+  const seleccionados = valoresFiltro?.length ? valoresFiltro : (valorFiltro ? [valorFiltro] : [])
 
   useEffect(() => {
     if (esDiasVencidos || !columnaFiltro || !cargaId) {
@@ -218,19 +222,44 @@ export function FiltroSlot({
             onCambiar={onCambiarColumna}
           />
           {columnaFiltro && (
-            <Form.Group className="mb-2">
-              <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>Valor</Form.Label>
-              <Form.Select
-                size="sm"
-                value={valorFiltro || ''}
-                onChange={(e) => onCambiarValor(e.target.value || null)}
-                aria-label={`Valor de filtro de ${contexto}`}
-                disabled={cargandoValores}
-              >
-                <option value="">{cargandoValores ? 'Cargando valores…' : 'Todos'}</option>
-                {valores.map((v) => <option key={v} value={v}>{v}</option>)}
-              </Form.Select>
-            </Form.Group>
+            <>
+              <Form.Group className="mb-2">
+                <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>Comparación</Form.Label>
+                <Form.Select
+                  size="sm"
+                  value={operadorValor || 'en'}
+                  onChange={(e) => onCambiarOperadorValor(e.target.value)}
+                  aria-label={`Comparación de valores de ${contexto}`}
+                >
+                  <option value="en">Es uno de</option>
+                  <option value="no_en">No es ninguno de</option>
+                </Form.Select>
+              </Form.Group>
+              <Form.Group className="mb-2">
+                <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>Valores</Form.Label>
+                {/* Selección múltiple: "todo menos lo anticipado" se expresa eligiendo ANTICIPADA
+                    con "No es ninguno de", sin tener que enumerar los demás tramos — que además
+                    cambiarían si el archivo trae una categoría nueva. */}
+                <Form.Select
+                  size="sm"
+                  multiple
+                  htmlSize={Math.min(Math.max(valores.length, 3), 7)}
+                  value={seleccionados}
+                  onChange={(e) => onCambiarValores(
+                    [...e.target.selectedOptions].map((opcion) => opcion.value),
+                  )}
+                  aria-label={`Valores de filtro de ${contexto}`}
+                  disabled={cargandoValores}
+                >
+                  {valores.map((v) => <option key={v} value={v}>{v}</option>)}
+                </Form.Select>
+                <Form.Text style={{ fontSize: '0.75rem' }}>
+                  {cargandoValores
+                    ? 'Cargando valores…'
+                    : 'Sin selección, no se filtra nada. Ctrl/Cmd para elegir varios.'}
+                </Form.Text>
+              </Form.Group>
+            </>
           )}
         </>
       )}

@@ -139,12 +139,18 @@ export default function TemplateMappingStep({
                             columnaFiltro={propuesta.columna_filtro}
                             tipoFiltro={propuesta.tipo_filtro}
                             valorFiltro={propuesta.valor_filtro}
+                            valoresFiltro={propuesta.valores_filtro}
+                            operadorValor={propuesta.operador_valor}
                             operadorFiltro={propuesta.operador_filtro}
                             diasFiltro={propuesta.dias_filtro}
-                            onCambiarColumna={(valor) => onActualizarSlot(slot.id, { columna_filtro: valor, valor_filtro: null, dias_filtro: null })}
-                            onCambiarValor={(valor) => onActualizarSlot(slot.id, { valor_filtro: valor })}
+                            onCambiarColumna={(valor) => onActualizarSlot(slot.id, {
+                              columna_filtro: valor, valor_filtro: null, valores_filtro: null, dias_filtro: null,
+                            })}
+                            onCambiarValores={(lista) => onActualizarSlot(slot.id, { valores_filtro: lista, valor_filtro: null })}
+                            onCambiarOperadorValor={(valor) => onActualizarSlot(slot.id, { operador_valor: valor })}
                             onCambiarTipoFiltro={(valor) => onActualizarSlot(slot.id, {
-                              tipo_filtro: valor, columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+                              tipo_filtro: valor, columna_filtro: null, valor_filtro: null, valores_filtro: null,
+                              operador_valor: null, operador_filtro: null, dias_filtro: null,
                             })}
                             onCambiarOperador={(valor) => onActualizarSlot(slot.id, { operador_filtro: valor })}
                             onCambiarDias={(valor) => onActualizarSlot(slot.id, { dias_filtro: valor })}

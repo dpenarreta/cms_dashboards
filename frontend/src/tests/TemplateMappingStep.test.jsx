@@ -95,7 +95,9 @@ describe('TemplateMappingStep', () => {
     const { props } = renderComponente()
     const selector = screen.getByLabelText('Columna de filtro de KPI 1')
     await userEvent.selectOptions(selector, 'Causal')
-    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { columna_filtro: 'Causal', valor_filtro: null, dias_filtro: null })
+    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', {
+      columna_filtro: 'Causal', valor_filtro: null, valores_filtro: null, dias_filtro: null,
+    })
   })
 
   it('con una columna de filtro elegida, carga y muestra sus valores distintos', async () => {
@@ -103,18 +105,41 @@ describe('TemplateMappingStep', () => {
       mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], columna_filtro: 'Causal' } },
     })
     await waitFor(() => expect(carteraService.obtenerValoresColumnaPlantilla).toHaveBeenCalledWith('carga-1', 'Causal', {}, undefined))
-    const selectorValor = await screen.findByLabelText('Valor de filtro de KPI 1')
+    const selectorValor = await screen.findByLabelText('Valores de filtro de KPI 1')
     const opciones = Array.from(selectorValor.querySelectorAll('option')).map((o) => o.value)
     expect(opciones).toEqual(expect.arrayContaining(['GESTIONANDO', 'PAGADO']))
   })
 
-  it('elegir un valor de filtro invoca onActualizarSlot con ese valor', async () => {
+  it('elegir valores de filtro invoca onActualizarSlot con la lista', async () => {
     const { props } = renderComponente({
       mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], columna_filtro: 'Causal' } },
     })
-    const selectorValor = await screen.findByLabelText('Valor de filtro de KPI 1')
+    const selectorValor = await screen.findByLabelText('Valores de filtro de KPI 1')
     await userEvent.selectOptions(selectorValor, 'GESTIONANDO')
-    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { valor_filtro: 'GESTIONANDO' })
+    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', {
+      valores_filtro: ['GESTIONANDO'], valor_filtro: null,
+    })
+  })
+
+  it('permite excluir valores en vez de incluirlos ("todos menos X")', async () => {
+    // El caso que motivó el filtro por lista: sumar todo el saldo MENOS el anticipado, sin tener
+    // que enumerar los demás tramos (que además cambian si el archivo trae una categoría nueva).
+    const { props } = renderComponente({
+      mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], columna_filtro: 'Causal' } },
+    })
+    await userEvent.selectOptions(screen.getByLabelText('Comparación de valores de KPI 1'), 'no_en')
+    expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', { operador_valor: 'no_en' })
+  })
+
+  it('muestra como seleccionado un valor guardado con la forma anterior (un solo valor)', async () => {
+    // Retrocompatibilidad: los mapeos guardados antes de que el filtro admitiera varios valores
+    // traen `valor_filtro` y no `valores_filtro`. No hay migración que los reescriba.
+    renderComponente({
+      mapeo: { ...MAPEO, 'kpi-1': { ...MAPEO['kpi-1'], columna_filtro: 'Causal', valor_filtro: 'PAGADO' } },
+    })
+    const selectorValor = await screen.findByLabelText('Valores de filtro de KPI 1')
+    const seleccionadas = Array.from(selectorValor.selectedOptions).map((o) => o.value)
+    expect(seleccionadas).toEqual(['PAGADO'])
   })
 
   describe('filtro "Días desde una fecha" (solo KPI)', () => {
@@ -139,7 +164,8 @@ describe('TemplateMappingStep', () => {
       })
       await userEvent.selectOptions(screen.getByLabelText('Tipo de filtro de KPI 1'), 'dias_vencidos')
       expect(props.onActualizarSlot).toHaveBeenCalledWith('kpi-1', {
-        tipo_filtro: 'dias_vencidos', columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+        tipo_filtro: 'dias_vencidos', columna_filtro: null, valor_filtro: null, valores_filtro: null,
+        operador_valor: null, operador_filtro: null, dias_filtro: null,
       })
     })
 

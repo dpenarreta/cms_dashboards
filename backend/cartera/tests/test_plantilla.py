@@ -184,7 +184,7 @@ class CalcularDatosMapeoServiceTests(TestCase):
         }}
         datos = plantilla.calcular_datos_mapeo(df, mapeo)
         self.assertEqual(datos['kpi-1']['valor'], 150.0)
-        self.assertIn('donde "causal" = "GESTIONANDO"', datos['kpi-1']['descripcion'])
+        self.assertIn('donde "causal" es "GESTIONANDO"', datos['kpi-1']['descripcion'])
 
     def test_filtro_aplica_igual_a_una_grafica_no_solo_a_un_kpi(self):
         df = pd.DataFrame({
@@ -873,7 +873,7 @@ class FlujoApiMapeoPlantillaTests(TestCase):
             }},
         }, format='json')
         self.assertEqual(resp.status_code, 200)
-        self.assertIn('donde "Causal" = "GESTIONANDO"', resp.json()['datos']['kpi-1']['descripcion'])
+        self.assertIn('donde "Causal" es "GESTIONANDO"', resp.json()['datos']['kpi-1']['descripcion'])
 
     def test_valores_columna_devuelve_los_valores_distintos(self):
         carga_id = self._subir_archivo()
@@ -1326,3 +1326,78 @@ class AntiguedadContraLaFechaDeCorteTests(TestCase):
             {'columna_fecha': 'vencimiento', 'columna_valor': 'saldo'},
         )
         self.assertEqual(dict(zip(contenido['categorias'], contenido['valores']))['30 días'], 100.0)
+
+
+class FiltroPorValoresTests(TestCase):
+    """Filtro por los valores de una columna, con inclusión o exclusión.
+
+    El caso que lo motivó: "sumar el saldo de todo MENOS lo anticipado". Antes solo se podía pedir
+    igualdad contra un único valor, así que había que enumerar los demás tramos a mano — y la lista
+    quedaba mal en cuanto el archivo traía una categoría nueva.
+    """
+
+    def setUp(self):
+        self.df = pd.DataFrame({
+            'Saldo': [100.0, 200.0, 300.0, 400.0],
+            'VENCE': ['ANTICIPADA', '30 DIAS', '60 DIAS', 'ANTICIPADA'],
+        })
+
+    def _kpi(self, **filtro):
+        propuesta = {'disponible': True, 'calculo': 'kpi', 'columna_valor': 'Saldo', **filtro}
+        return plantilla.calcular_contenido_por_calculo(self.df, 'kpi', 'Total', propuesta)
+
+    def test_sin_valores_elegidos_no_filtra(self):
+        # "Ninguno de nada" excluiría el archivo entero, que nunca es lo que alguien configuró.
+        self.assertEqual(self._kpi(columna_filtro='VENCE', valores_filtro=[])['valor'], 1000.0)
+        self.assertEqual(
+            self._kpi(columna_filtro='VENCE', valores_filtro=[], operador_valor='no_en')['valor'], 1000.0,
+        )
+
+    def test_incluye_los_valores_elegidos(self):
+        contenido = self._kpi(columna_filtro='VENCE', valores_filtro=['ANTICIPADA'], operador_valor='en')
+        self.assertEqual(contenido['valor'], 500.0)
+        self.assertIn('"VENCE" es "ANTICIPADA"', contenido['descripcion'])
+
+    def test_excluye_los_valores_elegidos(self):
+        contenido = self._kpi(columna_filtro='VENCE', valores_filtro=['ANTICIPADA'], operador_valor='no_en')
+        self.assertEqual(contenido['valor'], 500.0)
+        self.assertIn('"VENCE" no es "ANTICIPADA"', contenido['descripcion'])
+
+    def test_incluir_y_excluir_el_mismo_valor_reparten_el_total(self):
+        incluido = self._kpi(columna_filtro='VENCE', valores_filtro=['ANTICIPADA'], operador_valor='en')['valor']
+        excluido = self._kpi(columna_filtro='VENCE', valores_filtro=['ANTICIPADA'], operador_valor='no_en')['valor']
+        self.assertEqual(incluido + excluido, self._kpi()['valor'])
+
+    def test_excluye_varios_valores_a_la_vez(self):
+        contenido = self._kpi(
+            columna_filtro='VENCE', valores_filtro=['ANTICIPADA', '30 DIAS'], operador_valor='no_en',
+        )
+        self.assertEqual(contenido['valor'], 300.0)
+        self.assertIn('no es ninguno de "ANTICIPADA", "30 DIAS"', contenido['descripcion'])
+
+    def test_un_operador_desconocido_incluye_en_vez_de_romper(self):
+        # Mismo criterio permisivo que el filtro de días vencidos: una vista previa en vivo nunca
+        # debe romperse por un valor inesperado en el mapeo.
+        contenido = self._kpi(columna_filtro='VENCE', valores_filtro=['ANTICIPADA'], operador_valor='cualquiera')
+        self.assertEqual(contenido['valor'], 500.0)
+
+    def test_sigue_funcionando_el_mapeo_guardado_con_un_solo_valor(self):
+        # Forma anterior (`valor_filtro`), que quedó en los mapeos ya guardados: no hay migración.
+        contenido = self._kpi(columna_filtro='VENCE', valor_filtro='ANTICIPADA')
+        self.assertEqual(contenido['valor'], 500.0)
+        self.assertIn('"VENCE" es "ANTICIPADA"', contenido['descripcion'])
+
+    def test_la_lista_tiene_precedencia_sobre_la_forma_anterior(self):
+        contenido = self._kpi(
+            columna_filtro='VENCE', valor_filtro='ANTICIPADA', valores_filtro=['30 DIAS'],
+        )
+        self.assertEqual(contenido['valor'], 200.0)
+
+    def test_el_filtro_por_valores_tambien_aplica_a_una_grafica(self):
+        # No es exclusivo de los KPI: cualquier posición con `columna_filtro` lo usa.
+        propuesta = {
+            'disponible': True, 'calculo': 'chart', 'columna_valor': 'Saldo', 'columna_categoria': 'VENCE',
+            'columna_filtro': 'VENCE', 'valores_filtro': ['ANTICIPADA'], 'operador_valor': 'no_en',
+        }
+        contenido = plantilla.calcular_contenido_por_calculo(self.df, 'chart', 'Gráfico', propuesta)
+        self.assertNotIn('ANTICIPADA', contenido['categorias'])

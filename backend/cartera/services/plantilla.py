@@ -397,10 +397,42 @@ def _aplicar_filtro_slot(df, propuesta, calculo, fecha_referencia=None):
     if propuesta.get('tipo_filtro') == 'dias_vencidos' and calculo == 'kpi':
         return _aplicar_filtro_dias_vencidos(df, columna_filtro, propuesta, fecha_referencia)
 
-    valor_filtro = propuesta.get('valor_filtro')
-    if valor_filtro in (None, ''):
+    return _aplicar_filtro_por_valores(df, columna_filtro, propuesta)
+
+
+# Operadores del filtro por valores. `en` incluye las filas cuyo valor está en la lista; `no_en` las
+# excluye — es lo que permite "todo el saldo MENOS el anticipado" sin tener que enumerar los demás
+# tramos, que además cambiarían si el archivo trae una categoría nueva.
+_OPERADORES_VALOR = ('en', 'no_en')
+
+
+def valores_filtro_de(propuesta):
+    """Lista de valores del filtro, normalizada a texto.
+
+    Acepta las dos formas: `valores_filtro` (lista, la actual) y `valor_filtro` (un único valor, la
+    que se guardaba antes de que el filtro admitiera varios). La segunda se sigue leyendo para no
+    invalidar los mapeos ya guardados — no hay migración de datos que los reescriba.
+    """
+    valores = propuesta.get('valores_filtro')
+    if isinstance(valores, (list, tuple)):
+        return [str(v) for v in valores if v not in (None, '')]
+    valor = propuesta.get('valor_filtro')
+    return [] if valor in (None, '') else [str(valor)]
+
+
+def _aplicar_filtro_por_valores(df, columna_filtro, propuesta):
+    valores = valores_filtro_de(propuesta)
+    # Sin valores elegidos no hay filtro, cualquiera sea el operador: "ninguno de nada" excluiría
+    # todo el archivo, que nunca es lo que alguien quiso configurar.
+    if not valores:
         return df
-    return df[df[columna_filtro].astype(str) == str(valor_filtro)]
+
+    operador = propuesta.get('operador_valor')
+    if operador not in _OPERADORES_VALOR:
+        operador = 'en'
+
+    coincide = df[columna_filtro].astype(str).isin(valores)
+    return df[~coincide] if operador == 'no_en' else df[coincide]
 
 
 def _descripcion_con_filtro(descripcion, propuesta, calculo):
@@ -422,10 +454,18 @@ def _descripcion_con_filtro(descripcion, propuesta, calculo):
         simbolo = {'mayor': '>', 'mayor_igual': '≥', 'menor': '<', 'menor_igual': '≤'}[operador]
         return f'{descripcion[:-1]} donde los días transcurridos desde "{columna_filtro}" son {simbolo} {dias_filtro}.'
 
-    valor_filtro = propuesta.get('valor_filtro')
-    if valor_filtro in (None, ''):
+    valores = valores_filtro_de(propuesta)
+    if not valores:
         return descripcion
-    return f'{descripcion[:-1]} donde "{columna_filtro}" = "{valor_filtro}".'
+    operador = propuesta.get('operador_valor')
+    # Se redacta distinto según cuántos valores haya: "no es ANTICIPADA" se lee mejor que
+    # "no es ninguno de ANTICIPADA", y es el caso más común.
+    if len(valores) == 1:
+        relacion = 'no es' if operador == 'no_en' else 'es'
+        return f'{descripcion[:-1]} donde "{columna_filtro}" {relacion} "{valores[0]}".'
+    relacion = 'no es ninguno de' if operador == 'no_en' else 'es uno de'
+    listado = ', '.join(f'"{valor}"' for valor in valores)
+    return f'{descripcion[:-1]} donde "{columna_filtro}" {relacion} {listado}.'
 
 
 def _con_meta(resultado, valor, propuesta):

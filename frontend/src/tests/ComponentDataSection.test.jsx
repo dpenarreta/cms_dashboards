@@ -161,7 +161,8 @@ describe('ComponentDataSection', () => {
       await waitFor(() => expect(carteraService.previsualizarMapeoPlantilla).toHaveBeenCalledWith('carga-1', {
         'kpi-1': {
           disponible: true, columna_valor: 'Saldo', tipo_filtro: 'dias_vencidos',
-          columna_filtro: null, valor_filtro: null, operador_filtro: null, dias_filtro: null,
+          columna_filtro: null, valor_filtro: null, valores_filtro: null, operador_valor: null,
+          operador_filtro: null, dias_filtro: null,
         },
       }))
     })

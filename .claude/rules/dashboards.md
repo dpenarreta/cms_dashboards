@@ -40,6 +40,23 @@ otro rompe el contrato.
   (`dashboard_layout.py`, no en datos de migración), afecta a **todos** los usuarios y no se puede
   deshacer — pide confirmación explícita (modal, nunca `window.confirm`).
 
+## Filtro de una posición
+
+Dos formas, según `mapeo['tipo_filtro']` (ver `plantilla.py::_aplicar_filtro_slot`):
+
+- **Por valores** (default): `columna_filtro` + `valores_filtro` (lista) + `operador_valor`
+  (`'en'` incluye / `'no_en'` excluye). Sirve para cualquier posición, no solo KPI. `'no_en'` es lo
+  que permite pedir "todo el saldo MENOS el anticipado" sin enumerar los demás valores —que además
+  cambiarían si el archivo trae una categoría nueva—. Sin valores elegidos NO se filtra, cualquiera
+  sea el operador: "ninguno de nada" excluiría el archivo entero.
+- **Por días desde una fecha** (`'dias_vencidos'`, solo KPI): `columna_filtro` + `operador_filtro`
+  + `dias_filtro`.
+
+IMPORTANT: `valor_filtro` (un único valor) es la forma ANTERIOR y sigue siendo válida — hay mapeos
+guardados con ella y no hay migración que los reescriba. Al leer, usá `plantilla.valores_filtro_de`,
+que resuelve las dos; al escribir desde la interfaz, guardá `valores_filtro` y limpiá `valor_filtro`
+para no dejar dos fuentes de lo mismo.
+
 ## Paginación de tablas
 
 - Únicos tamaños permitidos: 5, 10, 25, 50, 100. Un `page_size` fuera de ese conjunto cae a 10 sin

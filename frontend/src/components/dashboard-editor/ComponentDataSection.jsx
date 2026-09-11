@@ -251,15 +251,26 @@ export default function ComponentDataSection({ componente, dashboardId, onActual
           columnaFiltro={propuesta.columna_filtro}
           tipoFiltro={propuesta.tipo_filtro}
           valorFiltro={propuesta.valor_filtro}
+          valoresFiltro={propuesta.valores_filtro}
+          operadorValor={propuesta.operador_valor}
           operadorFiltro={propuesta.operador_filtro}
           diasFiltro={propuesta.dias_filtro}
           onCambiarColumna={(valor) => recalcular(conCalculo({
-            ...propuesta, columna_filtro: valor, valor_filtro: null, dias_filtro: null, disponible: true,
+            ...propuesta, columna_filtro: valor, valor_filtro: null, valores_filtro: null,
+            dias_filtro: null, disponible: true,
           }))}
-          onCambiarValor={(valor) => recalcular(conCalculo({ ...propuesta, valor_filtro: valor, disponible: true }))}
+          // `valor_filtro: null` al guardar la lista: si quedaran los dos, el mapeo tendría dos
+          // fuentes para lo mismo y la anterior gana en los mapeos viejos (ver `valores_filtro_de`).
+          onCambiarValores={(lista) => recalcular(conCalculo({
+            ...propuesta, valores_filtro: lista, valor_filtro: null, disponible: true,
+          }))}
+          onCambiarOperadorValor={(valor) => recalcular(conCalculo({
+            ...propuesta, operador_valor: valor, disponible: true,
+          }))}
           onCambiarTipoFiltro={(valor) => recalcular(conCalculo({
             ...propuesta, tipo_filtro: valor, columna_filtro: null, valor_filtro: null,
-            operador_filtro: null, dias_filtro: null, disponible: true,
+            valores_filtro: null, operador_valor: null, operador_filtro: null, dias_filtro: null,
+            disponible: true,
           }))}
           onCambiarOperador={(valor) => recalcular(conCalculo({ ...propuesta, operador_filtro: valor, disponible: true }))}
           onCambiarDias={(valor) => recalcular(conCalculo({ ...propuesta, dias_filtro: valor, disponible: true }))}
