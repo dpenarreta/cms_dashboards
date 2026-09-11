@@ -1,0 +1,98 @@
+name: CI
+
+# Corre en cada push a las ramas de trabajo y en cada pull request hacia main. El objetivo es que
+# las ~1.800 pruebas del repo dejen de depender de que alguien se acuerde de ejecutarlas.
+on:
+  push:
+    branches: ['main', 'feature/**']
+  pull_request:
+    branches: ['main']
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior: no tiene sentido gastar minutos
+# verificando un commit que ya quedó atrás.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Django)
+    runs-on: ubuntu-latest
+    env:
+      # SQLite en vez de SQL Server: es la alternativa que el proyecto ya soporta explícitamente
+      # para correr sin SQL Server (`config/settings.py`, `DB_ENGINE`), y evita levantar un
+      # servicio entero solo para las pruebas. La suite pasa igual en los dos motores — se
+      # verificó a mano antes de escribir esto.
+      DB_ENGINE: sqlite
+      # DEBUG=False para que la CI ejerza la MISMA configuración que producción. Con esto activo,
+      # `settings.py` corta el arranque si faltan las claves de firma, así que se generan en un
+      # paso aparte (ver "Generar claves de firma"): fijarlas acá como literal obligaría a que
+      # además superen el chequeo de entropía de `check --deploy`, y una clave escrita a mano en
+      # un archivo versionado invita a copiarse a un entorno real.
+      DEBUG: 'False'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      # `pyodbc` (dependencia de mssql-django) publica ruedas para Linux, pero si tuviera que
+      # compilarse necesita las cabeceras de unixODBC. Instalarlas es barato y evita un fallo
+      # de instalación difícil de diagnosticar desde los logs.
+      - name: Instalar cabeceras de unixODBC
+        run: sudo apt-get update && sudo apt-get install -y unixodbc-dev
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # Claves aleatorias por corrida: no son secretos (la base es efímera y se destruye al
+      # terminar), pero tienen la entropía que exige `check --deploy`.
+      - name: Generar claves de firma
+        run: |
+          echo "SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(64))')" >> "$GITHUB_ENV"
+          echo "JWT_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(64))')" >> "$GITHUB_ENV"
+
+      # Detecta modelos modificados sin su migración: es el error que más fácil se cuela, porque
+      # en desarrollo la base local ya quedó actualizada a mano.
+      - name: Verificar que no falten migraciones
+        working-directory: backend
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Verificaciones de despliegue
+        working-directory: backend
+        run: python manage.py check --deploy --fail-level WARNING
+
+      - name: Pruebas
+        working-directory: backend
+        run: python manage.py test --verbosity 2
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Vite 8 y Vitest 4 piden Node 20 o superior; 22 es la LTS vigente.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` y no `npm install`: instala exactamente lo del lockfile y falla si está
+      # desincronizado con package.json, en vez de actualizarlo en silencio.
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Pruebas
+        run: npx vitest run

@@ -903,8 +903,11 @@ class RestablecerLayoutTests(TestCase):
         resp = client.get('/api/dashboards/finanzas/versions')
         entradas = resp.json()
         self.assertGreaterEqual(len(entradas), 2)
-        # El autor sale del usuario autenticado, no del cuerpo de la petición.
-        self.assertEqual(entradas[0]['changed_by'], User.objects.get().username)
+        # El autor sale del usuario autenticado, no del cuerpo de la petición. Se verifica sobre
+        # TODAS las entradas y no sobre `entradas[0]`: varios eventos de un mismo reset comparten
+        # el instante de `created_at`, y con esa igualdad el orden entre ellos no está definido
+        # (con SQLite, que inserta más rápido, la colisión es habitual).
+        self.assertIn(User.objects.get().username, [e['changed_by'] for e in entradas])
 
     def test_versions_ignora_el_changed_by_enviado_por_el_cliente(self):
         """El autor del cambio no es falsificable.
@@ -921,8 +924,12 @@ class RestablecerLayoutTests(TestCase):
         )
 
         entradas = client.get('/api/dashboards/finanzas/versions').json()
-        self.assertNotEqual(entradas[0]['changed_by'], 'Gerente General')
-        self.assertEqual(entradas[0]['changed_by'], User.objects.get().username)
+        autores = [e['changed_by'] for e in entradas]
+        # La afirmación central es que el nombre falsificado no aparece en NINGUNA entrada, y que
+        # el reset quedó atribuido al usuario real. Independiente del orden entre eventos del
+        # mismo instante (ver el test anterior).
+        self.assertNotIn('Gerente General', autores)
+        self.assertIn(User.objects.get().username, autores)
 
 
 class PermisosTests(TestCase):

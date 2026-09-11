@@ -97,4 +97,9 @@ Antes de dar una tarea por terminada:
 - El historial existente (3 commits) no fija una convención estricta de mensajes (mezcla español/
   inglés, mensajes descriptivos largos, no imperativos cortos) — no asumas un formato único; si el
   usuario no indica lo contrario, preferí un resumen claro del "qué" y el "por qué" del cambio.
-- No hay hooks de pre-commit configurados ni pipeline de CI en este repo.
+- No hay hooks de pre-commit configurados. La CI (`.github/workflows/ci.yml`) corre en cada push a
+  `main`/`feature/**` y en cada PR hacia `main`: pruebas de backend y frontend, lint, verificación
+  de migraciones faltantes (`makemigrations --check`) y `check --deploy`.
+- IMPORTANT: la CI ejecuta el backend con `DB_ENGINE=sqlite` y `DEBUG=False`. Una prueba que
+  dependa de SQL Server (colación case-insensitive, validación de `max_length` en la base) o que
+  asuma `DEBUG=True` pasa en tu máquina y falla en CI — ya ocurrió con ambas cosas.

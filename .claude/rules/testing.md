@@ -8,6 +8,24 @@
 - Frontend (un archivo): `npx vitest run src/tests/NombreDelArchivo.test.jsx`
 - Lint frontend: `npm run lint` (oxlint)
 
+## CI
+
+`.github/workflows/ci.yml` corre todo esto en cada push a `main`/`feature/**` y en cada PR hacia
+`main`. Dos diferencias con tu máquina que importan al escribir una prueba:
+
+- **`DB_ENGINE=sqlite`**, no SQL Server. SQLite no aplica la colación case-insensitive ni valida
+  `max_length` a nivel de base, así que una aserción que dependa de cualquiera de las dos pasa
+  local y falla en CI. Para reproducirlo antes de pushear:
+  `DB_ENGINE=sqlite python manage.py test`.
+- **`DEBUG=False`**, para ejercer la configuración de producción. `settings.py` desactiva en modo
+  test los throttles de DRF y `SECURE_SSL_REDIRECT` (con el redirect activo, el cliente de pruebas
+  recibe 301 en toda petición) — si agregás otra protección que dependa de `DEBUG`, revisá si hace
+  falta hacer lo mismo.
+
+Cuidado también con el orden entre eventos de auditoría del mismo instante: SQLite inserta más
+rápido y los `created_at` colisionan, así que no afirmes sobre `entradas[0]` — verificá sobre la
+lista completa.
+
 ## Backend
 
 - IMPORTANT: usa `django.test.TestCase`/`rest_framework.test.APITestCase`. No introduzcas

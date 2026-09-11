@@ -47,10 +47,18 @@ class LogEventTests(TestCase):
         self.assertEqual(evento.actor_username, 'ana')
 
     def test_nunca_lanza_ante_un_dominio_invalido_para_choices(self):
-        """`domain` fuera del catálogo de choices no rompe la operación que originó el evento
-        (solo falla la escritura de auditoría, que se traga la excepción)."""
-        evento = log_event(domain='NO_EXISTE_1234567890_MUY_LARGO_PARA_EL_CAMPO_QUE_DEBERIA_FALLAR_AL_VALIDAR_LONGITUD_MAXIMA_DEL_CAMPO', action='X')
-        self.assertIsNone(evento)
+        """`domain` fuera del catálogo de choices no rompe la operación que originó el evento.
+
+        Lo que se verifica es el contrato de `log_event`: NUNCA lanza. Que además devuelva `None`
+        depende del motor —SQL Server rechaza el valor por exceder `max_length` y la excepción se
+        traga, SQLite no valida largo y la escritura pasa—, así que afirmarlo acoplaba la prueba a
+        la base configurada y la hacía fallar con `DB_ENGINE=sqlite`.
+        """
+        demasiado_largo = 'NO_EXISTE_1234567890_MUY_LARGO_PARA_EL_CAMPO_QUE_DEBERIA_FALLAR_AL_VALIDAR_LONGITUD_MAXIMA_DEL_CAMPO'
+        try:
+            log_event(domain=demasiado_largo, action='X')
+        except Exception as e:  # noqa: BLE001 - justamente lo que no debe pasar
+            self.fail(f'log_event lanzó {type(e).__name__}: {e}')
 
 
 class AuditEventApiTests(TestCase):

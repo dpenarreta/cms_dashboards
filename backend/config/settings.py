@@ -269,7 +269,9 @@ REST_FRAMEWORK = {
 # los tests que verifican los límites los reactivan con `override_settings`
 # (`apps.authentication.tests.LoginThrottleTests`). Mismo criterio con el que Django ya fuerza
 # `EMAIL_BACKEND` a `locmem` durante las pruebas.
-if 'test' in sys.argv:
+_EJECUTANDO_TESTS = 'test' in sys.argv
+
+if _EJECUTANDO_TESTS:
     REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
         clave: None for clave in REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']
     }
@@ -277,7 +279,11 @@ if 'test' in sys.argv:
 # --- Cabeceras y cookies de seguridad ------------------------------------------
 # Todo esto se activa fuera de desarrollo (los 6 avisos de `manage.py check --deploy`). En
 # desarrollo queda apagado porque el servidor local es HTTP y una cookie `Secure` no viajaría.
-SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', not DEBUG)
+# Nunca durante `manage.py test`: el cliente de pruebas habla HTTP, así que con el redirect activo
+# TODA petición de test responde 301 en vez de llegar a la vista (402 pruebas caían así al correr
+# la suite con DEBUG=False, que es como corre en CI). `manage.py check --deploy` no pasa por acá
+# —su argv no trae 'test'—, así que la verificación de despliegue sigue exigiéndolo.
+SECURE_SSL_REDIRECT = False if _EJECUTANDO_TESTS else env_bool('SECURE_SSL_REDIRECT', not DEBUG)
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
