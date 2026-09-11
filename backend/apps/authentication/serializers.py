@@ -16,7 +16,11 @@ class LoginSerializer(serializers.Serializer):
 
 
 class RefreshSerializer(serializers.Serializer):
-    refresh = serializers.CharField()
+    # Opcional: desde SEC-19 el refresh token llega en una cookie `HttpOnly` y el cuerpo queda solo
+    # como respaldo transitorio para las sesiones abiertas al momento del despliegue (ver
+    # `cookies.leer_refresh`). Que falte no es un error de validación: la vista decide, porque es
+    # la única que ve la cookie.
+    refresh = serializers.CharField(required=False, allow_blank=True)
 
 
 class MeSerializer(serializers.Serializer):

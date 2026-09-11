@@ -290,6 +290,22 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+# --- Cookie del refresh token (SEC-19) ---------------------------------------
+# El refresh token viaja en una cookie `HttpOnly` en vez de devolverse en el cuerpo: así JavaScript
+# no puede leerlo, y un XSS deja de poder llevarse una credencial de 7 días para usarla después
+# fuera del navegador de la víctima.
+REFRESH_COOKIE_NAME = 'cms_dashboards_refresh'
+# `path` acotado a los endpoints de autenticación: la cookie no se manda en ninguna otra petición
+# de la API, así que no queda expuesta en cada llamada a un dashboard.
+REFRESH_COOKIE_PATH = '/api/auth'
+# `Lax` alcanza mientras el frontend se sirva desde el mismo sitio que la API (el proxy de Vite en
+# desarrollo, o un nginx único en producción): con `Lax` el navegador NO manda la cookie en un POST
+# de otro sitio, que es lo que protege al endpoint de refresco de un CSRF. Si algún día el frontend
+# vive en otro dominio, hay que poner 'None' — y `None` exige HTTPS, porque sin `Secure` el
+# navegador descarta la cookie.
+REFRESH_COOKIE_SAMESITE = os.getenv('REFRESH_COOKIE_SAMESITE', 'Lax')
+REFRESH_COOKIE_SECURE = env_bool('REFRESH_COOKIE_SECURE', not DEBUG)
 SECURE_HSTS_SECONDS = 0 if DEBUG else int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG

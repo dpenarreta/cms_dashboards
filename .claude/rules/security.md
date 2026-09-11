@@ -14,6 +14,11 @@ Aplica a `backend/apps/authentication`, `backend/apps/users`, `backend/apps/perm
 - Revocación de sesión es vía el modelo `Session` propio (claim `sid` en el JWT), no vía blacklist
   nativa de `simplejwt` (`BLACKLIST_AFTER_ROTATION = False` a propósito). Para invalidar una
   sesión, marca `revoked_at` en `Session`, no intentes usar `token_blacklist`.
+- IMPORTANT: el refresh token NO se devuelve en el cuerpo de ninguna respuesta — va en una cookie
+  `HttpOnly` (`apps.authentication.cookies`, SEC-19). Si agregas un endpoint que emita tokens, usa
+  `poner_refresh(...)` y deja solo el `access` en el cuerpo: devolverlo también en el JSON permite
+  que JavaScript lo lea y lo guarde, y la cookie deja de servir para algo. El frontend tampoco debe
+  volver a guardarlo en `localStorage`.
 - Protección de fuerza bruta cuenta intentos por **identificador** (username/email), no por
   usuario ya resuelto — evita que enumerar usuarios sea gratis. Si agregas un endpoint de
   autenticación nuevo, replica ese criterio.

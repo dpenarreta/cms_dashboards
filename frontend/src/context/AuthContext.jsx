@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import * as authService from '../services/authService'
-import { clearTokens, getAccessToken, getRefreshToken, setTokens } from '../services/httpClient'
+import { clearTokens, getAccessToken, setTokens } from '../services/httpClient'
 
 const AuthContext = createContext(null)
 
@@ -38,7 +38,7 @@ export function AuthProvider({ children }) {
     setError(null)
     try {
       const tokens = await authService.login({ identifier, password })
-      setTokens(tokens.access, tokens.refresh)
+      setTokens(tokens.access)
       const perfil = await authService.me()
       setUser(perfil)
       return { ok: true }
@@ -54,9 +54,10 @@ export function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(async () => {
-    const refresh = getRefreshToken()
     try {
-      if (refresh) await authService.logout(refresh)
+      // Siempre se llama, aunque no haya nada local que mandar: el token vive en la cookie y solo
+      // el backend puede revocarlo y borrarla.
+      await authService.logout()
     } catch {
       // Aunque falle en el backend, la sesión local se limpia igual.
     } finally {

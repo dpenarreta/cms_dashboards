@@ -15,22 +15,45 @@ vi.mock('axios', () => ({
 }))
 
 import axios from 'axios'
-import { clearTokens, createApiClient, getAccessToken, getRefreshToken, setTokens } from '../services/httpClient'
+import { clearTokens, createApiClient, getAccessToken, setTokens } from '../services/httpClient'
 
 describe('httpClient — almacenamiento de tokens', () => {
   beforeEach(() => localStorage.clear())
 
-  it('guarda y recupera access/refresh token', () => {
-    setTokens('access-1', 'refresh-1')
+  it('guarda y recupera el access token', () => {
+    setTokens('access-1')
     expect(getAccessToken()).toBe('access-1')
-    expect(getRefreshToken()).toBe('refresh-1')
   })
 
-  it('clearTokens elimina ambos tokens', () => {
-    setTokens('access-1', 'refresh-1')
+  it('clearTokens elimina el access token', () => {
+    setTokens('access-1')
     clearTokens()
     expect(getAccessToken()).toBeNull()
-    expect(getRefreshToken()).toBeNull()
+  })
+
+  it('SEC-19: nunca guarda un refresh token en localStorage', () => {
+    setTokens('access-1')
+    const claves = Object.keys(localStorage)
+    expect(claves.some((clave) => clave.includes('refresh'))).toBe(false)
+  })
+
+  it('SEC-19: barre los tokens heredados, incluidos los de la aplicación previa a la integración', () => {
+    // Encontrados en un navegador real: `skeleton_*`/`skelleton_base_*` seguían ahí aunque ningún
+    // código los lee. Son refresh tokens de larga vida al alcance de cualquier XSS.
+    localStorage.setItem('cms_dashboards_refresh_token', 'heredado')
+    localStorage.setItem('skeleton_refresh_token', 'viejo-1')
+    localStorage.setItem('skelleton_base_refresh_token', 'viejo-2')
+    localStorage.setItem('skeleton_access_token', 'viejo-3')
+    localStorage.setItem('admin-sidebar-colapsado', 'true')
+
+    clearTokens()
+
+    expect(localStorage.getItem('cms_dashboards_refresh_token')).toBeNull()
+    expect(localStorage.getItem('skeleton_refresh_token')).toBeNull()
+    expect(localStorage.getItem('skelleton_base_refresh_token')).toBeNull()
+    expect(localStorage.getItem('skeleton_access_token')).toBeNull()
+    // Y no se lleva puesto lo que no es un token.
+    expect(localStorage.getItem('admin-sidebar-colapsado')).toBe('true')
   })
 })
 
@@ -52,7 +75,7 @@ describe('httpClient — interceptores', () => {
   })
 
   it('adjunta el Authorization header cuando hay access token guardado', () => {
-    setTokens('mi-access-token', 'mi-refresh-token')
+    setTokens('mi-access-token')
     const config = interceptoresRegistrados.request[0]({ headers: {} })
     expect(config.headers.Authorization).toBe('Bearer mi-access-token')
   })
@@ -75,7 +98,7 @@ describe('httpClient — interceptores', () => {
   })
 
   it('un 401 ya reintentado redirige a login sin volver a refrescar', async () => {
-    setTokens('access-viejo', 'refresh-viejo')
+    setTokens('access-viejo')
     const error = { response: { status: 401 }, config: { url: '/x/y', _reintentadoTrasRefresh: true, headers: {} } }
     await expect(interceptoresRegistrados.response[0].rejected(error)).rejects.toBe(error)
     expect(axios.post).not.toHaveBeenCalled()
@@ -84,37 +107,25 @@ describe('httpClient — interceptores', () => {
   })
 
   it('un 401 refresca el access token y reintenta la solicitud original', async () => {
-    setTokens('access-expirado', 'refresh-valido')
+    setTokens('access-expirado')
     axios.post.mockResolvedValue({ data: { access: 'access-nuevo' } })
     clienteMock.mockResolvedValue({ data: 'respuesta-original' })
 
     const config = { url: '/x/y', headers: {} }
     const resultado = await interceptoresRegistrados.response[0].rejected({ response: { status: 401 }, config })
 
-    expect(axios.post).toHaveBeenCalledWith('/api/auth/token/refresh', { refresh: 'refresh-valido' })
+    expect(axios.post).toHaveBeenCalledWith('/api/auth/token/refresh', {}, { withCredentials: true })
     expect(getAccessToken()).toBe('access-nuevo')
     expect(clienteMock).toHaveBeenCalledWith(expect.objectContaining({ _reintentadoTrasRefresh: true }))
     expect(config.headers.Authorization).toBe('Bearer access-nuevo')
     expect(resultado).toEqual({ data: 'respuesta-original' })
   })
 
-  it('guarda el refresh token rotado que devuelve el backend', async () => {
-    // El backend rota el refresh en cada refresco (`ROTATE_REFRESH_TOKENS`). Conservar el viejo
-    // lo dejaría inservible y —peor— el backend lo leería como reutilización de un token robado
-    // y revocaría la sesión completa.
-    setTokens('access-expirado', 'refresh-viejo')
-    axios.post.mockResolvedValue({ data: { access: 'access-nuevo', refresh: 'refresh-rotado' } })
-    clienteMock.mockResolvedValue({ data: 'ok' })
-
-    await interceptoresRegistrados.response[0].rejected({
-      response: { status: 401 }, config: { url: '/x/y', headers: {} },
-    })
-
-    expect(getRefreshToken()).toBe('refresh-rotado')
-  })
-
-  it('si el backend no devuelve refresh nuevo, conserva el actual', async () => {
-    setTokens('access-expirado', 'refresh-valido')
+  it('SEC-19: refresca sin mandar el token y pidiendo que viajen las credenciales', async () => {
+    // El token va en la cookie `HttpOnly`: mandarlo en el cuerpo exigiría poder leerlo, que es
+    // justamente lo que el cambio elimina. `withCredentials` es lo que hace que la cookie se
+    // adjunte cuando el backend está en otro origen.
+    setTokens('access-expirado')
     axios.post.mockResolvedValue({ data: { access: 'access-nuevo' } })
     clienteMock.mockResolvedValue({ data: 'ok' })
 
@@ -122,11 +133,26 @@ describe('httpClient — interceptores', () => {
       response: { status: 401 }, config: { url: '/x/y', headers: {} },
     })
 
-    expect(getRefreshToken()).toBe('refresh-valido')
+    expect(axios.post).toHaveBeenCalledWith(
+      '/api/auth/token/refresh', {}, { withCredentials: true },
+    )
+  })
+
+  it('SEC-19: tras refrescar no guarda ningún refresh aunque el backend lo devolviera', async () => {
+    setTokens('access-expirado')
+    axios.post.mockResolvedValue({ data: { access: 'access-nuevo', refresh: 'no-deberia-guardarse' } })
+    clienteMock.mockResolvedValue({ data: 'ok' })
+
+    await interceptoresRegistrados.response[0].rejected({
+      response: { status: 401 }, config: { url: '/x/y', headers: {} },
+    })
+
+    expect(getAccessToken()).toBe('access-nuevo')
+    expect(Object.keys(localStorage).some((clave) => clave.includes('refresh'))).toBe(false)
   })
 
   it('si el refresh falla, limpia la sesión y redirige a login', async () => {
-    setTokens('access-expirado', 'refresh-invalido')
+    setTokens('access-expirado')
     axios.post.mockRejectedValue(new Error('refresh token inválido'))
 
     const config = { url: '/x/y', headers: {} }
@@ -153,7 +179,7 @@ describe('httpClient — destino tras expirar la sesión', () => {
     })
     createApiClient('/api/cartera')
     // Sin refresh token guardado, el refresco falla de entrada y se dispara el redirect.
-    setTokens('access-expirado', null)
+    setTokens('access-expirado')
   }
 
   it('conserva la ruta y la query en el parámetro from', async () => {

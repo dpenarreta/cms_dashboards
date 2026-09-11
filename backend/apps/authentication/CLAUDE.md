@@ -15,6 +15,10 @@ Login/logout/logout-all/refresh/me, cambio de contraseña propia, recuperación 
   `PasswordResetToken` (hash del token, nunca el token en claro).
 - `services.py` — `BruteForceProtectionService`, `SessionService`, `AuthenticationService`,
   `PasswordResetService`. Toda la lógica de negocio vive acá, no en `views.py`.
+- `cookies.py` — la cookie `HttpOnly` que transporta el refresh token (SEC-19):
+  `poner_refresh`/`quitar_refresh`/`leer_refresh`. `path=/api/auth` y `SameSite=Lax` no son
+  decoración: son lo que evita que la cookie viaje en cada llamada de la API y lo que protege al
+  endpoint de refresco de un CSRF.
 - `sanitizacion.py` — `sanear_html_de_correo(html)`: saneo del `html_body` de las plantillas de
   correo, enganchado en `EmailTemplateUpdateSerializer`. Conserva la estructura de documento y los
   estilos en línea (un correo sin ellos no tiene diseño) y reconstruye el `<head>`, así que el

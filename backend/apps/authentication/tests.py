@@ -3,6 +3,7 @@ import os
 import tempfile
 from unittest import mock
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
@@ -35,11 +36,14 @@ class LoginViewTests(TestCase):
         self.client = APIClient()
         self.usuario = User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
 
-    def test_login_valido_devuelve_tokens(self):
+    def test_login_valido_devuelve_access_y_deja_el_refresh_en_la_cookie(self):
         resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('access', resp.json())
-        self.assertIn('refresh', resp.json())
+        # SEC-19: el refresh NO viaja en el cuerpo. Si lo hiciera, JavaScript podría leerlo de la
+        # respuesta y volver a guardarlo en `localStorage`, y la cookie `HttpOnly` no serviría.
+        self.assertNotIn('refresh', resp.json())
+        self.assertIn(settings.REFRESH_COOKIE_NAME, resp.cookies)
         self.assertTrue(Session.objects.filter(user=self.usuario).exists())
 
     def test_login_con_email_tambien_funciona(self):
@@ -125,11 +129,14 @@ class RefreshLogoutMeTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
-        login = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json').json()
-        self.access, self.refresh = login['access'], login['refresh']
+        resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
+        self.access = resp.json()['access']
+        # El cliente de pruebas conserva las cookies entre peticiones, igual que un navegador: de
+        # acá en más el refresco y el cierre de sesión no necesitan mandar nada en el cuerpo.
+        self.refresh = resp.cookies[settings.REFRESH_COOKIE_NAME].value
 
     def test_refresh_devuelve_nuevo_access(self):
-        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.refresh}, format='json')
+        resp = self.client.post('/api/auth/token/refresh', format='json')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('access', resp.json())
 
@@ -144,7 +151,7 @@ class RefreshLogoutMeTests(TestCase):
         self.assertEqual(resp.json()['username'], 'ana')
 
     def test_logout_revoca_la_sesion_y_el_access_deja_de_servir(self):
-        resp = self.client.post('/api/auth/logout', {'refresh': self.refresh}, format='json')
+        resp = self.client.post('/api/auth/logout', format='json')
         self.assertEqual(resp.status_code, 204)
 
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access}')
@@ -152,7 +159,9 @@ class RefreshLogoutMeTests(TestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_refresh_reutilizado_tras_revocar_sesion_falla(self):
-        self.client.post('/api/auth/logout', {'refresh': self.refresh}, format='json')
+        self.client.post('/api/auth/logout', format='json')
+        # Explícito en el cuerpo: tras el logout la cookie ya no está, y lo que se quiere verificar
+        # es que el token en sí dejó de servir, no que falte de dónde leerlo.
         resp = self.client.post('/api/auth/token/refresh', {'refresh': self.refresh}, format='json')
         self.assertEqual(resp.status_code, 400)
 
@@ -735,23 +744,29 @@ class RotacionDeRefreshTokenTests(TestCase):
     def setUp(self):
         self.client = APIClient()
         User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
-        self.tokens = self.client.post(
+        respuesta = self.client.post(
             '/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json',
-        ).json()
+        )
+        self.refresh_inicial = respuesta.cookies[settings.REFRESH_COOKIE_NAME].value
 
-    def test_el_refresco_devuelve_un_refresh_nuevo(self):
-        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json')
+    def test_el_refresco_deja_un_refresh_nuevo_en_la_cookie(self):
+        resp = self.client.post('/api/auth/token/refresh', format='json')
         self.assertEqual(resp.status_code, 200)
-        self.assertIn('refresh', resp.json())
-        self.assertNotEqual(resp.json()['refresh'], self.tokens['refresh'])
+        self.assertIn(settings.REFRESH_COOKIE_NAME, resp.cookies)
+        self.assertNotEqual(resp.cookies[settings.REFRESH_COOKIE_NAME].value, self.refresh_inicial)
 
     def test_reutilizar_un_refresh_viejo_revoca_la_sesion_completa(self):
-        nuevo = self.client.post(
-            '/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json',
-        ).json()['refresh']
+        nuevo = self.client.post('/api/auth/token/refresh', format='json').cookies[
+            settings.REFRESH_COOKIE_NAME
+        ].value
+
+        # Se vacía la cookie para modelar el escenario real: alguien que tiene el token robado pero
+        # no la cookie de la víctima (otra máquina, otro navegador). Sin esto la cookie —que ya trae
+        # el token nuevo y válido— tendría precedencia sobre el cuerpo y no se ejercería nada.
+        self.client.cookies.clear()
 
         # El viejo ya no es el vigente: se interpreta como token robado y cae la sesión entera.
-        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.tokens['refresh']}, format='json')
+        resp = self.client.post('/api/auth/token/refresh', {'refresh': self.refresh_inicial}, format='json')
         self.assertEqual(resp.json()['error'], 'REFRESH_TOKEN_REUTILIZADO')
 
         # Incluso el refresh legítimo emitido antes del incidente deja de servir.
@@ -791,3 +806,73 @@ class LoginThrottleTests(TestCase):
     def test_por_debajo_del_limite_el_login_funciona_normalmente(self):
         resp = self.client.post('/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json')
         self.assertEqual(resp.status_code, 200)
+
+
+class CookieDeRefreshTests(TestCase):
+    """SEC-19. Lo que protege no es que el token esté en una cookie, sino CÓMO está esa cookie:
+    sin `HttpOnly` JavaScript la lee igual que `localStorage`, y sin `SameSite` el endpoint de
+    refresco queda expuesto a un POST desde otro sitio."""
+
+    def setUp(self):
+        self.client = APIClient()
+        User.objects.create_user(username='ana', email='ana@example.com', password='Clave-Segura-123')
+        self.respuesta = self.client.post(
+            '/api/auth/login', {'identifier': 'ana', 'password': 'Clave-Segura-123'}, format='json',
+        )
+
+    def _cookie(self, respuesta=None):
+        return (respuesta or self.respuesta).cookies[settings.REFRESH_COOKIE_NAME]
+
+    def test_la_cookie_es_httponly(self):
+        self.assertTrue(self._cookie()['httponly'])
+
+    def test_la_cookie_declara_samesite(self):
+        self.assertEqual(self._cookie()['samesite'], settings.REFRESH_COOKIE_SAMESITE)
+
+    def test_la_cookie_se_limita_a_los_endpoints_de_autenticacion(self):
+        # Si el `path` fuera `/`, la cookie viajaría en cada llamada a la API (dashboards, cargas,
+        # exportaciones) sin que ninguna la necesite.
+        self.assertEqual(self._cookie()['path'], settings.REFRESH_COOKIE_PATH)
+
+    def test_la_cookie_caduca_junto_con_el_refresh_token(self):
+        esperado = int(settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds())
+        self.assertEqual(self._cookie()['max-age'], esperado)
+
+    def test_el_refresco_no_devuelve_el_refresh_en_el_cuerpo(self):
+        resp = self.client.post('/api/auth/token/refresh', format='json')
+        self.assertNotIn('refresh', resp.json())
+
+    def test_refrescar_sin_cookie_ni_cuerpo_da_un_error_de_negocio(self):
+        self.client.cookies.clear()
+        resp = self.client.post('/api/auth/token/refresh', format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'REFRESH_TOKEN_AUSENTE')
+
+    def test_cerrar_sesion_borra_la_cookie(self):
+        resp = self.client.post('/api/auth/logout', format='json')
+        # Django borra una cookie fijándola vacía y ya vencida.
+        self.assertEqual(resp.cookies[settings.REFRESH_COOKIE_NAME].value, '')
+        self.assertEqual(resp.cookies[settings.REFRESH_COOKIE_NAME]['max-age'], 0)
+
+    def test_cerrar_sesion_sin_nada_que_revocar_igual_borra_la_cookie(self):
+        self.client.cookies.clear()
+        resp = self.client.post('/api/auth/logout', format='json')
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(resp.cookies[settings.REFRESH_COOKIE_NAME].value, '')
+
+    def test_cerrar_todas_las_sesiones_tambien_borra_la_cookie(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.respuesta.json()["access"]}')
+        resp = self.client.post('/api/auth/logout-all', format='json')
+        self.assertEqual(resp.status_code, 204)
+        self.assertEqual(resp.cookies[settings.REFRESH_COOKIE_NAME].value, '')
+
+    def test_una_sesion_vieja_con_el_token_en_el_cuerpo_sigue_funcionando_y_migra_a_la_cookie(self):
+        # Respaldo transitorio: al desplegar este cambio, las sesiones abiertas tienen su refresh en
+        # `localStorage` y ninguna cookie. Sin esto quedarían todas afuera en su siguiente refresco.
+        token = self._cookie().value
+        self.client.cookies.clear()
+
+        resp = self.client.post('/api/auth/token/refresh', {'refresh': token}, format='json')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(settings.REFRESH_COOKIE_NAME, resp.cookies)

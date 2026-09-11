@@ -17,7 +17,20 @@ from .serializers import (
     LoginSerializer, MeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer,
     PasswordResetValidateSerializer, RefreshSerializer, UpdateMyProfileSerializer,
 )
+from .cookies import leer_refresh, poner_refresh, quitar_refresh
 from .services import AuthenticationService, PasswordResetService, SessionService
+
+
+def _respuesta_con_sesion(tokens):
+    """Devuelve el access token en el cuerpo y deja el refresh SOLO en la cookie.
+
+    Que el refresh no viaje en el cuerpo es la mitad que importa: si además se devolviera ahí,
+    JavaScript podría leerlo de la respuesta y volver a guardarlo en `localStorage`, y la cookie
+    `HttpOnly` no habría servido de nada.
+    """
+    refresh = tokens.get('refresh')
+    cuerpo = {clave: valor for clave, valor in tokens.items() if clave != 'refresh'}
+    return poner_refresh(Response(cuerpo, status=200), refresh)
 
 
 class LoginView(APIView):
@@ -42,7 +55,7 @@ class LoginView(APIView):
             password=serializer.validated_data['password'],
             ip_address=ip, user_agent=user_agent,
         )
-        return Response(tokens, status=200)
+        return _respuesta_con_sesion(tokens)
 
 
 class RefreshView(APIView):
@@ -51,8 +64,11 @@ class RefreshView(APIView):
     def post(self, request):
         serializer = RefreshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        tokens = AuthenticationService.refresh_tokens(refresh_token_str=serializer.validated_data['refresh'])
-        return Response(tokens, status=200)
+        refresh = leer_refresh(request, serializer.validated_data.get('refresh'))
+        if not refresh:
+            raise CarteraError('No hay sesión activa.', codigo='REFRESH_TOKEN_AUSENTE')
+        tokens = AuthenticationService.refresh_tokens(refresh_token_str=refresh)
+        return _respuesta_con_sesion(tokens)
 
 
 class LogoutView(APIView):
@@ -61,8 +77,12 @@ class LogoutView(APIView):
     def post(self, request):
         serializer = RefreshSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        AuthenticationService.logout(refresh_token_str=serializer.validated_data['refresh'])
-        return Response(status=204)
+        refresh = leer_refresh(request, serializer.validated_data.get('refresh'))
+        if refresh:
+            AuthenticationService.logout(refresh_token_str=refresh)
+        # La cookie se borra siempre, haya o no un token válido que revocar: si alguien pide cerrar
+        # sesión, lo que no puede pasar es que quede una credencial en el navegador.
+        return quitar_refresh(Response(status=204))
 
 
 class LogoutAllView(APIView):
@@ -70,7 +90,7 @@ class LogoutAllView(APIView):
 
     def post(self, request):
         AuthenticationService.logout_all(user=request.user)
-        return Response(status=204)
+        return quitar_refresh(Response(status=204))
 
 
 class MeView(APIView):

@@ -7,29 +7,44 @@ import axios from 'axios'
 const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || '').replace(/\/$/, '')
 
 const ACCESS_TOKEN_KEY = 'cms_dashboards_access_token'
-const REFRESH_TOKEN_KEY = 'cms_dashboards_refresh_token'
+
+// SEC-19: el refresh token ya no se guarda acá — vive en una cookie `HttpOnly` que el navegador
+// manda solo a `/api/auth` y que JavaScript no puede leer.
+//
+// Barrido de tokens heredados: además del `cms_dashboards_refresh_token` de antes de este cambio,
+// en los navegadores que usaron la aplicación previa a la integración quedaron `skeleton_*` y
+// `skelleton_base_*` —comprobado en uno real—. Ningún código los lee ya, pero son refresh tokens de
+// larga vida durmiendo en `localStorage`, al alcance de cualquier XSS: exactamente lo que SEC-19
+// busca eliminar. Se barre por patrón y no por una lista de nombres para no depender de acordarse
+// de todos los que alguna vez existieron.
+function olvidarTokensHeredados() {
+  try {
+    Object.keys(localStorage)
+      .filter((clave) => clave.endsWith('_refresh_token') || (clave.endsWith('_access_token') && clave !== ACCESS_TOKEN_KEY))
+      .forEach((clave) => localStorage.removeItem(clave))
+  } catch {
+    // Un navegador con el almacenamiento bloqueado no debe impedir que la app arranque.
+  }
+}
+
+olvidarTokensHeredados()
 
 // Endpoints de autenticación: nunca deben disparar el refresh automático en un 401 (evitaría
 // loops si las credenciales o el propio refresh token son inválidos).
 const AUTH_ENDPOINTS = ['/auth/login', '/auth/token/refresh', '/auth/logout']
 
-export function setTokens(access, refresh) {
+export function setTokens(access) {
   if (access) localStorage.setItem(ACCESS_TOKEN_KEY, access)
   else localStorage.removeItem(ACCESS_TOKEN_KEY)
-  if (refresh) localStorage.setItem(REFRESH_TOKEN_KEY, refresh)
-  else localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
 
 export function getAccessToken() {
   return localStorage.getItem(ACCESS_TOKEN_KEY)
 }
 
-export function getRefreshToken() {
-  return localStorage.getItem(REFRESH_TOKEN_KEY)
-}
-
 export function clearTokens() {
-  setTokens(null, null)
+  setTokens(null)
+  olvidarTokensHeredados()
 }
 
 function esEndpointDeAuth(url) {
@@ -39,19 +54,22 @@ function esEndpointDeAuth(url) {
 let refreshPendiente = null
 
 async function refrescarAccessToken() {
-  const refresh = getRefreshToken()
-  if (!refresh) throw new Error('No hay sesión activa.')
+  // Sin cuerpo: el refresh token va en la cookie y el navegador la adjunta solo. `withCredentials`
+  // es lo que hace que la mande también cuando el backend está en otro origen
+  // (`VITE_API_BASE_URL`); en el mismo origen ya viajaría igual.
+  //
   // Se respeta `API_BASE_URL` como cualquier otro cliente: antes era un
   // `axios.post('/api/auth/token/refresh')` con el prefijo escrito a mano, así que el refresco
   // era lo único que dejaba de funcionar si el backend no está en el mismo origen. Se llama a
   // `axios.post` directo y no a un cliente creado con `createApiClient` a propósito: ese trae el
   // interceptor de 401 y un fallo acá dispararía otro refresco en cascada.
-  const { data } = await axios.post(`${API_BASE_URL}/api/auth/token/refresh`, { refresh })
-  // El backend rota el refresh token en cada refresco (`ROTATE_REFRESH_TOKENS`), así que hay que
-  // guardar el nuevo: conservar el viejo lo dejaría inservible en el próximo refresco y —peor— el
-  // backend lo interpretaría como reutilización de un token robado y revocaría la sesión entera.
-  // `data.refresh` puede no venir si el backend todavía no rota; en ese caso se conserva el actual.
-  setTokens(data.access, data.refresh || refresh)
+  //
+  // El backend rota el refresh token en cada refresco (`ROTATE_REFRESH_TOKENS`) y devuelve el
+  // nuevo en la misma cookie, así que acá ya no hay nada que guardar salvo el access token.
+  const { data } = await axios.post(
+    `${API_BASE_URL}/api/auth/token/refresh`, {}, { withCredentials: true },
+  )
+  setTokens(data.access)
   return data.access
 }
 
@@ -76,7 +94,9 @@ function redirigirALogin() {
  * solicitud original. Si el refresh también falla, limpia la sesión y redirige a /login.
  */
 export function createApiClient(prefijo) {
-  const cliente = axios.create({ baseURL: `${API_BASE_URL}${prefijo}` })
+  // `withCredentials` para que la cookie del refresh viaje también con el backend en otro origen.
+  // Solo llega a `/api/auth` (el `path` de la cookie), no a las demás llamadas de la API.
+  const cliente = axios.create({ baseURL: `${API_BASE_URL}${prefijo}`, withCredentials: true })
 
   cliente.interceptors.request.use((config) => {
     const token = getAccessToken()

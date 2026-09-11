@@ -4,12 +4,14 @@ export function login({ identifier, password }) {
   return authApi.post('/auth/login', { identifier, password }).then((r) => r.data)
 }
 
-export function refreshToken(refresh) {
-  return authApi.post('/auth/token/refresh', { refresh }).then((r) => r.data)
+// Sin argumento: desde SEC-19 el refresh token viaja en una cookie `HttpOnly` que el navegador
+// adjunta solo, y que este código no puede (ni debe poder) leer.
+export function refreshToken() {
+  return authApi.post('/auth/token/refresh').then((r) => r.data)
 }
 
-export function logout(refresh) {
-  return authApi.post('/auth/logout', { refresh }).then((r) => r.data)
+export function logout() {
+  return authApi.post('/auth/logout').then((r) => r.data)
 }
 
 export function logoutAll() {
