@@ -1,0 +1,49 @@
+# Dependabot revisa las dependencias contra la base de avisos de seguridad de GitHub y abre un PR
+# cuando aparece una versión que corrige una vulnerabilidad conocida. Es gratis en repositorios
+# públicos y resuelve de forma permanente el hueco que quedaba: hasta ahora nadie estaba mirando
+# si las 14 dependencias de Python y las 23 de npm acumulaban vulnerabilidades.
+#
+# Los PR que abra pasan por la misma CI que todo lo demás (`.github/workflows/ci.yml`), así que
+# una actualización que rompa algo se ve antes de mezclarla.
+#
+# IMPORTANTE: `backend/requirements.txt` fija rangos estrechos (`Django>=5.0,<5.1`,
+# `Pillow>=10.4,<10.5`, ...). Dependabot RESPETA esos rangos, así que por sí solo nunca va a
+# proponer el salto a una serie nueva — para eso hay que ampliar el rango a mano. Las
+# actualizaciones de seguridad sí las propone aunque queden fuera del rango.
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'deps(backend)'
+    groups:
+      # Un solo PR con las actualizaciones menores/de parche en vez de uno por paquete: son las
+      # de menor riesgo y revisarlas juntas cuesta menos.
+      menores-y-parches:
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'deps(frontend)'
+    groups:
+      menores-y-parches:
+        update-types: ['minor', 'patch']
+
+  # Las propias acciones del workflow también se quedan viejas y son código que corre con acceso
+  # al repositorio.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'deps(ci)'
