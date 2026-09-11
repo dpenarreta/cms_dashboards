@@ -2,10 +2,14 @@ import { useId, useMemo, useState } from 'react'
 import { Badge, Table } from 'react-bootstrap'
 import { formatNumber } from '../../utils/format'
 import { usePaginacionCliente } from '../../hooks/usePaginacionCliente'
+import { PAGE_SIZES_PERMITIDOS } from '../../config/pageSizes'
 import Pagination from '../common/Pagination'
 import HallazgosClaveCard from './HallazgosClaveCard'
 
-const OPCIONES_FILAS = [5, 10, 20, 25, 50]
+// El tamaño por defecto SÍ es propio de esta tabla (5, no el 10 general): son las tablas de la
+// plantilla del dashboard, que conviven con gráficos en la misma pantalla y no deben ocuparla
+// entera. Las opciones ofrecidas, en cambio, salen del conjunto único (`config/pageSizes.js`) —
+// esta tabla ofrecía un 20 que no está permitido y no ofrecía el 100.
 const TAMANO_PAGINA_DEFECTO = 5
 
 function celda(valor) {
@@ -78,7 +82,7 @@ function BarraPaginacion({ idBase, paginacion }) {
       totalPaginas={paginacion.totalPaginas}
       totalRegistros={paginacion.totalRegistros}
       pageSize={paginacion.pageSize}
-      allowedPageSizes={OPCIONES_FILAS}
+      allowedPageSizes={PAGE_SIZES_PERMITIDOS}
       onCambiarPagina={paginacion.irAPagina}
       onCambiarPageSize={paginacion.cambiarPageSize}
     />
@@ -204,7 +208,8 @@ function TablaSimple({ categorias, valores }) {
  * Renderiza un componente type=chart de tabla. Dos formas de datos posibles: la simple de dos
  * columnas (`TablaSimple`) o la de N columnas (`TablaMultiColumna`) — ver
  * `services/generic_charts.py::generar_datos_tabla`. Ambas permiten ordenar por cualquier columna
- * y, cuando hay más de 5 filas, elegir cuántas ver por página (5/10/20/25/50) con su propio
+ * y, cuando hay más de 5 filas, elegir cuántas ver por página (el conjunto único de
+ * `config/pageSizes.js`) con su propio
  * paginador. `mostrarHallazgos` (por defecto `true`) deja ocultar el párrafo de "Hallazgos
  * clave" — lo usa el modal "Ver archivo" del histórico de cargas, donde se muestra el archivo tal
  * cual (una previsualización cruda), no una interpretación de sus datos. `esHistorica` agrega una

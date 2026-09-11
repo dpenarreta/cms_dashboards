@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import GenericDataTable from '../components/dashboard-generic/GenericDataTable'
+import { PAGE_SIZES_PERMITIDOS } from '../config/pageSizes'
 
 function textoColumna(contenedor, indiceColumna) {
   return [...contenedor.querySelectorAll(`tbody tr td:nth-child(${indiceColumna + 1})`)].map((td) => td.textContent)
@@ -129,10 +130,20 @@ describe('GenericDataTable', () => {
     expect(textoColumna(container, 0)).toEqual(['Cuenca', 'Quito', 'Guayaquil'])
   })
 
-  describe('paginación (5/10/20/25/50 filas por página)', () => {
+  describe('paginación', () => {
     function filasMulti(cantidad) {
       return Array.from({ length: cantidad }, (_, i) => [`Producto ${i + 1}`, i + 1])
     }
+
+    it('ofrece exactamente los tamaños de página permitidos del proyecto', () => {
+      // `.claude/rules/dashboards.md` fija un único conjunto {5,10,25,50,100}, validado también en
+      // el backend. Esta tabla tenía su propia lista con un 20 (no permitido) y sin el 100.
+      render(
+        <GenericDataTable data={{ titulo: 'Tabla 1', columnas: ['Producto', 'Ventas'], filas: filasMulti(12), total: ['Total', 78] }} />,
+      )
+      const opciones = [...screen.getByLabelText('Registros por página').options].map((o) => Number(o.value))
+      expect(opciones).toEqual(PAGE_SIZES_PERMITIDOS)
+    })
 
     it('con menos de 5 filas, no muestra el selector de cantidad ni el paginador', () => {
       render(
