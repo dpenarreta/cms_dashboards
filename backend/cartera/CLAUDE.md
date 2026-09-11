@@ -21,6 +21,13 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
   `carga_archivos` (releer el archivo de una carga), `reproceso` (recalcular contenido almacenado).
 - `permisos.py` — resolución de permisos legacy + control de acceso por-dashboard.
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
+- `services/directorio_cartera.py` + `management/commands/sembrar_directorio_cartera.py` — el
+  "Dashboard Directorio" es la **excepción declarada** del proyecto: no usa las 13 posiciones de la
+  plantilla sino 7 componentes propios (4 KPI, gráfico de antigüedad, tabla de cumplimiento de
+  metas, tabla de concentración), con sus propios anchos, altos y colores. Las 13 de fábrica quedan
+  ocultas y bloqueadas. `python manage.py sembrar_directorio_cartera --archivo X.xlsx [--aplicar]`
+  lo reconstruye con datos reales (simula por defecto). La estructura replica la que sembró la
+  migración `0021`; lo que cambia es que el contenido se calcula de verdad en vez de ser ficticio.
 - `management/commands/reprocesar_dashboards.py` — `python manage.py reprocesar_dashboards
   [--aplicar] [--dashboard ID] [--detalle]`. **Simula por defecto**: sin `--aplicar` no escribe
   nada. Recalcula `DashboardComponent.content` con el código de cálculo vigente, contra la misma

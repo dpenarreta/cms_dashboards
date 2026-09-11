@@ -12,6 +12,9 @@ propio de la capa backend.
 - Recalcular el contenido de dashboards ya existentes (simula salvo `--aplicar`):
   `python manage.py reprocesar_dashboards [--aplicar] [--dashboard ID] [--detalle]`
 
+- Reconstruir el Dashboard Directorio con un archivo (simula salvo `--aplicar`):
+  `python manage.py sembrar_directorio_cartera --archivo "ruta.xlsx" [--aplicar]`
+
 Los dos comandos periódicos (`actualizar_fuentes_bd`, `clean_temp_uploads`) se programan con el
 Programador de tareas del sistema operativo, no con un scheduler propio de la app — ver
 `docs/tareas_programadas.md` y `backend/scripts/`.
