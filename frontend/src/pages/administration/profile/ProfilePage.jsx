@@ -133,8 +133,12 @@ export default function ProfilePage() {
 
         <Form.Group className="mt-3" controlId="profile-avatar-file">
           <Form.Label>Cambiar avatar</Form.Label>
+          <div className="chart-panel__subtitle mb-2">Formatos aceptados: PNG, JPEG y WebP. Máximo 2 MB.</div>
           <div className="d-flex gap-2 flex-wrap">
-            <Form.Control ref={inputArchivoRef} type="file" accept="image/*" onChange={elegirArchivo} style={{ maxWidth: 320 }} />
+            {/* Los mismos formatos que acepta el backend (`apps.core.imagenes`). Esto solo
+                filtra el selector de archivos por comodidad: la validación real es la de firma
+                binaria del servidor, que no confía en la extensión ni en el `accept`. */}
+            <Form.Control ref={inputArchivoRef} type="file" accept=".png,.jpg,.jpeg,.webp" onChange={elegirArchivo} style={{ maxWidth: 320 }} />
             <Button onClick={subirAvatar} disabled={!archivoSeleccionado || subiendoAvatar}>
               {subiendoAvatar ? <Spinner size="sm" animation="border" /> : 'Subir imagen'}
             </Button>

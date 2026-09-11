@@ -65,6 +65,11 @@ Verificación: las 965 pruebas pasan contra SQL Server y contra SQLite con `DEBU
 las de `apps.authentication` que ejercen la subida de avatar de punta a punta — subida exitosa,
 rechazo de un archivo que no es imagen, y borrado del avatar anterior del disco.
 
+Actualizar cierra los fallos *conocidos*. El hallazgo sobre el orden de validación se corrigió
+aparte, en `apps.core.imagenes`: la firma binaria ahora se comprueba antes de que Pillow abra el
+archivo, y solo se aceptan PNG, JPEG y WebP. Eso baja la superficie de los ~40 plugins que Pillow
+registra a tres, que es lo único que también protege de los fallos que todavía no se conocen.
+
 ### Vulnerabilidades de npm corregidas
 
 - `vitest` 4.1.10 → 4.1.11: recorrido de rutas en `@vitest/mocker`. Solo desarrollo.

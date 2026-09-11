@@ -292,6 +292,38 @@ class MyProfileTests(TestCase):
         resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
         self.assertEqual(resp.status_code, 400)
 
+    def test_subir_avatar_acepta_jpeg_y_webp(self):
+        for formato, nombre in (('JPEG', 'avatar.jpg'), ('WEBP', 'avatar.webp')):
+            with self.subTest(formato=formato):
+                buffer = io.BytesIO()
+                Image.new('RGB', (10, 10), (0, 0, 255)).save(buffer, format=formato)
+                archivo = SimpleUploadedFile(nombre, buffer.getvalue())
+                resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
+                self.assertEqual(resp.status_code, 200, resp.content)
+
+    def test_subir_avatar_rechaza_una_imagen_valida_de_formato_no_permitido(self):
+        # Un BMP es una imagen perfectamente válida para Pillow: se rechaza porque la lista de
+        # formatos es cerrada, no porque el archivo esté dañado.
+        buffer = io.BytesIO()
+        Image.new('RGB', (10, 10), (0, 0, 255)).save(buffer, format='BMP')
+        archivo = SimpleUploadedFile('avatar.bmp', buffer.getvalue())
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_subir_avatar_rechaza_contenido_que_no_coincide_con_la_extension(self):
+        # El caso que antes pasaba: Pillow despacha por la firma del contenido, así que renombrar
+        # un formato cualquiera a `.png` alcanzaba su plugin igual.
+        buffer = io.BytesIO()
+        Image.new('RGB', (10, 10), (0, 0, 255)).save(buffer, format='BMP')
+        archivo = SimpleUploadedFile('avatar.png', buffer.getvalue())
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_subir_avatar_rechaza_un_png_con_extension_jpg(self):
+        archivo = _imagen_de_prueba(nombre='avatar.jpg')
+        resp = self.client.post('/api/auth/me/avatar', {'avatar': archivo}, format='multipart')
+        self.assertEqual(resp.status_code, 400)
+
     def test_subir_un_avatar_nuevo_borra_el_anterior_del_disco(self):
         self.client.post('/api/auth/me/avatar', {'avatar': _imagen_de_prueba()}, format='multipart')
         self.usuario.refresh_from_db()

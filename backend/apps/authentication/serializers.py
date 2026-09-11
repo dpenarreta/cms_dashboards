@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.validators import UnicodeUsernameValidator
 from rest_framework import serializers
 
+from apps.core.imagenes import CampoImagenSegura
 from apps.core.password import campo_password, validar_fortaleza
 
 User = get_user_model()
@@ -71,7 +72,10 @@ AVATAR_MAX_SIZE_BYTES = 2 * 1024 * 1024
 
 
 class AvatarUploadSerializer(serializers.Serializer):
-    avatar = serializers.ImageField()
+    # `CampoImagenSegura` y no `serializers.ImageField`: restringe los formatos a PNG/JPEG/WebP
+    # comprobando la firma binaria ANTES de que Pillow abra el archivo. Ver `apps.core.imagenes`
+    # para por qué el orden importa y por qué la extensión sola no protegía nada.
+    avatar = CampoImagenSegura()
 
     def validate_avatar(self, value):
         if value.size > AVATAR_MAX_SIZE_BYTES:

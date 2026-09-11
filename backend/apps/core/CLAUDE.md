@@ -16,6 +16,12 @@ por `apps.audit`. No es un módulo de negocio — no le agregues lógica especí
 - `audit.py` — `mask_sensitive_fields(valores)` (enmascara claves con `password`/`token`/
   `secret`/`refresh`/`access`/`key`/`authorization`/`credential`), `request_meta(request)` (IP +
   user-agent, tolerante a `X-Forwarded-For`).
+- `password.py` — `validar_fortaleza(password, usuario=None)` y `campo_password(**kwargs)`: punto
+  único donde se invoca `validate_password` con los validadores de `settings`. Lo usan las cuatro
+  rutas que fijan una contraseña.
+- `imagenes.py` — `CampoImagenSegura` (campo de DRF) y `validar_extension_y_firma(nombre, cabecera)`:
+  restringen las imágenes subidas a PNG/JPEG/WebP comprobando la firma binaria **antes** de que
+  Pillow abra el archivo. El orden es la protección; ver el docstring del módulo.
 
 ## Evita
 

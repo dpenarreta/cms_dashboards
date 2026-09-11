@@ -29,10 +29,17 @@ Aplica a `backend/apps/authentication`, `backend/apps/users`, `backend/apps/perm
   debe poder otorgar (ej. marcar a otro usuario como superusuario). No la uses como atajo genérico
   de "requiere privilegios altos" — solo donde ni un permiso asignable debe bastar.
 
-## Carga y exportación de archivos (`backend/cartera`)
+## Carga y exportación de archivos
 
 - Todo archivo subido se valida por extensión **y** firma binaria (bloquea `.xlsm`/macros
-  disfrazadas de `.xlsx`). No aceptes solo la extensión del nombre de archivo.
+  disfrazadas de `.xlsx`). No aceptes solo la extensión del nombre de archivo. Hay dos
+  implementaciones, una por tipo de archivo: `cartera.services.excel_reader.validar_extension_y_firma`
+  para el Excel y `apps.core.imagenes` para las imágenes.
+- IMPORTANT: en una imagen, la validación de firma tiene que correr **antes** de que Pillow abra el
+  archivo, no después. `serializers.ImageField` de DRF llama a `Image.open()` y recién entonces
+  valida la extensión, y Pillow elige el parser por la firma del contenido — así que un archivo
+  llamado `.png` con contenido PSD llega al parser de PSD igual. Usa `apps.core.imagenes.CampoImagenSegura`
+  en cualquier campo de imagen nuevo; no uses `serializers.ImageField` pelado.
 - El nombre temporal en disco es siempre un UUID generado en backend, nunca el nombre original
   del archivo del usuario.
 - Cualquier valor exportado a CSV/Excel que empiece con `= + - @` se sanitiza antes de escribirlo
