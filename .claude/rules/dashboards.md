@@ -36,6 +36,11 @@ otro rompe el contrato.
   sobrescribir en silencio.
 - Cambios de Zona Personal (agregar componente vía paleta) se persisten **de inmediato** (POST +
   recarga), fuera del flujo borrador/"Guardar cambios" — no los mezcles con `layout.borrador`.
+- Recalcular los datos NO reinicia el diseño: `plantilla.aplicar_mapeo` reconstruye las 13
+  posiciones sobre `plantilla.slots_vigentes(dashboard_id)`, así que tamaño, orden, visibilidad,
+  colores, título y configuración sobreviven a un archivo nuevo, a una reconfiguración y a la
+  actualización automática. La única forma de volver al diseño de fábrica es pedirlo
+  explícitamente.
 - "Restablecer diseño" vuelve al diseño por defecto definido en código
   (`dashboard_layout.py`, no en datos de migración), afecta a **todos** los usuarios y no se puede
   deshacer — pide confirmación explícita (modal, nunca `window.confirm`).

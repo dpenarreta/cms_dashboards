@@ -744,6 +744,90 @@ class AplicarMapeoServiceTests(TestCase):
         self.assertEqual(grafico_3.chart_type, 'dona')
 
 
+class PersonalizacionAlReaplicarMapeoTests(TestCase):
+    """Reaplicar un mapeo no puede devolver el dashboard al diseño de fábrica.
+
+    `aplicar_mapeo` borra y recrea las 13 posiciones, y las reconstruía desde `PLANTILLA_SLOTS`:
+    ancho, alto, orden, colores, título, visibilidad y configuración volvían a los valores de
+    fábrica. No es un caso de borde — lo dispara cada actualización automática semanal/mensual
+    (`fuente_bd_scheduler`), cada archivo nuevo y cada reconfiguración desde la pantalla, así que
+    el diseño que el usuario armó desaparecía solo.
+    """
+
+    def setUp(self):
+        self.dashboard_id = 'finanzas'
+        plantilla.sembrar_plantilla(self.dashboard_id)
+        self.df = pd.DataFrame({'region': ['Norte', 'Sur'], 'ventas': [100, 200]})
+        self.mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'ventas'}}
+
+    def _personalizar(self, component_id, **campos):
+        DashboardComponent.objects.filter(
+            layout__dashboard_id=self.dashboard_id, component_id=component_id,
+        ).update(**campos)
+
+    def _componente(self, component_id):
+        return DashboardComponent.objects.get(
+            layout__dashboard_id=self.dashboard_id, component_id=component_id,
+        )
+
+    def test_conserva_el_tamano(self):
+        self._personalizar('kpi-1', width=12, height=400)
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        kpi_1 = self._componente('kpi-1')
+        self.assertEqual((kpi_1.width, kpi_1.height), (12, 400))
+
+    def test_conserva_el_orden_entre_posiciones(self):
+        # Se invierten las dos primeras: el orden es de la persona, no del patrón Z de fábrica.
+        self._personalizar('kpi-1', order=2)
+        self._personalizar('kpi-2', order=1)
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertLess(self._componente('kpi-2').order, self._componente('kpi-1').order)
+
+    def test_conserva_una_posicion_oculta(self):
+        self._personalizar('grafico-6', is_visible=False)
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertFalse(self._componente('grafico-6').is_visible)
+
+    def test_conserva_el_titulo_renombrado(self):
+        componente = self._componente('kpi-1')
+        self._personalizar('kpi-1', content={**componente.content, 'titulo': 'Cartera total'})
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertEqual(self._componente('kpi-1').content['titulo'], 'Cartera total')
+
+    def test_conserva_todos_los_colores_no_solo_el_principal(self):
+        self._personalizar('kpi-1', styles={'colorPrincipal': '#123456', 'colorTexto': '#abcdef'})
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertEqual(self._componente('kpi-1').styles,
+                         {'colorPrincipal': '#123456', 'colorTexto': '#abcdef'})
+
+    def test_conserva_la_posicion_de_la_leyenda(self):
+        componente = self._componente('grafico-3')
+        self._personalizar('grafico-3', config={**componente.config, 'leyenda_posicion': 'derecha'})
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertEqual(self._componente('grafico-3').config['leyenda_posicion'], 'derecha')
+
+    def test_conserva_el_resto_de_la_configuracion(self):
+        componente = self._componente('tabla-1')
+        self._personalizar('tabla-1', config={**componente.config, 'page_size': 25})
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertEqual(self._componente('tabla-1').config['page_size'], 25)
+
+    def test_la_descripcion_calculada_sigue_al_mapeo_nuevo(self):
+        """La contracara: la descripción SÍ se recalcula. Es texto derivado del mapeo ("Suma de
+        'ventas'."), así que congelarla dejaría la posición describiendo columnas que ya no usa."""
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        primera = self._componente('kpi-1').content['descripcion']
+        otro_mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'region', 'tipo_agregacion': 'conteo'}}
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, otro_mapeo)
+        self.assertNotEqual(self._componente('kpi-1').content['descripcion'], primera)
+
+    def test_el_contenido_si_se_recalcula(self):
+        # Conservar el diseño no puede significar conservar datos viejos.
+        self._personalizar('kpi-1', width=12)
+        plantilla.aplicar_mapeo(self.dashboard_id, self.df, self.mapeo)
+        self.assertEqual(self._componente('kpi-1').content['valor'], 300.0)
+
+
 class FlujoApiMapeoPlantillaTests(TestCase):
     def setUp(self):
         self.client = APIClient()

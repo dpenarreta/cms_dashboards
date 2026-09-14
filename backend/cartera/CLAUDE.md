@@ -72,9 +72,12 @@ confirmar el motivo con el usuario.
 ## Evita
 
 - IMPORTANT: `plantilla.aplicar_mapeo` **borra y recrea** los 13 componentes
-  (`dashboard_layout._escribir_componentes`), así que ancho, alto, colores y `chart_type` vuelven a
-  los valores de fábrica de la plantilla. No la uses para "recalcular" un dashboard existente —
-  para eso está `services/reproceso.py`, que solo toca `content`.
+  (`dashboard_layout._escribir_componentes`). Conserva la personalización porque los reconstruye
+  sobre `plantilla.slots_vigentes(dashboard_id)` — si agregas una forma nueva de personalizar un
+  componente (una clave de `styles`, de `config`, un campo del modelo), agrégala también ahí o se
+  perderá sola en la próxima actualización automática. Lo único que NO conserva es la descripción:
+  la calcula el mapeo. Para un reproceso masivo usa `services/reproceso.py`, que solo toca
+  `content` (no sube la versión del layout ni audita "plantilla aplicada").
 - No reproceses el Excel original para servir una consulta — los endpoints de agregación leen de
   `RegistroCartera` (ya insertado en SQL Server), pandas se usa solo para las agregaciones, no
   para volver a leer el archivo.

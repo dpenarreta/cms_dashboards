@@ -10,10 +10,12 @@ Este módulo es el puente para esos casos: recalcula el contenido a partir de la
 datos y la MISMA fecha de corte que se usó la última vez, de modo que cualquier diferencia que
 aparezca viene del cambio de código y de nada más.
 
-IMPORTANT: no usa `plantilla.aplicar_mapeo`. Se comprobó que esa función pisa la personalización
-visual: `_escribir_componentes` borra y recrea los componentes, así que ancho, alto, colores y tipo
-de gráfico vuelven a los valores de fábrica de la plantilla. Acá se actualiza únicamente `content`
-con `update_fields`, y todo lo demás queda intacto.
+No usa `plantilla.aplicar_mapeo` aunque esa función ya no pise la personalización (desde que
+reconstruye sobre `slots_vigentes`, no sobre `PLANTILLA_SLOTS`): para un reproceso masivo sigue
+siendo demasiado. Borra y recrea los 13 componentes, sube la versión del layout —lo que hace que a
+cualquiera con el editor abierto le aparezca el conflicto 409— y registra un evento de auditoría de
+"plantilla aplicada" que no describe lo que pasó. Acá se actualiza únicamente `content` con
+`update_fields`, y todo lo demás queda intacto.
 """
 
 from ..models import CargaArchivo, DashboardLayout

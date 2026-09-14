@@ -826,23 +826,30 @@ def calcular_datos_mapeo(df, mapeo, dashboard_id=None, fecha_referencia=None):
     return resultado
 
 
-def slots_efectivos():
-    """Los 13 slots a usar para sembrar un dashboard NUEVO real: la disposición (orden, ancho,
-    alto, visibilidad), tipo de gráfico, color y título/descripción que un administrador haya
-    personalizado en "Configuración → Plantilla base" (los `DashboardComponent` de
-    `DASHBOARD_ID_PLANTILLA_BASE`), si existen — o si no, `PLANTILLA_SLOTS` tal cual (todavía sin
-    personalizar, o primer arranque antes de que la plantilla base se haya sembrado siquiera).
+def _slots_con_personalizacion(dashboard_id, slots_base, conservar_descripcion):
+    """`slots_base` con la personalización vigente de los `DashboardComponent` de `dashboard_id`
+    superpuesta: disposición (orden, ancho, alto, visibilidad), tipo de gráfico, colores,
+    configuración y título. Devuelve `slots_base` tal cual si ese dashboard todavía no tiene
+    componentes.
+
     `id`/`tipo`/`calculo` nunca se personalizan: son estructurales, deciden qué función de
-    `generic_charts` calcula esa posición y no tiene sentido exponerlos como editables."""
+    `generic_charts` calcula esa posición y no tiene sentido exponerlos como editables.
+
+    `conservar_descripcion` distingue los dos usos. En la plantilla base el contenido es ficticio y
+    su descripción la escribió un administrador, así que se conserva. En un dashboard real la
+    descripción la CALCULA el mapeo ('Suma de "Saldo".'): conservarla dejaría la posición
+    describiendo columnas que ya no usa, así que se deja recalcular — a costa de perder una
+    descripción escrita a mano, que es el mal menor entre los dos.
+    """
     personalizados = {
         c.component_id: c
-        for c in DashboardComponent.objects.filter(layout__dashboard_id=DASHBOARD_ID_PLANTILLA_BASE)
+        for c in DashboardComponent.objects.filter(layout__dashboard_id=dashboard_id)
     }
     if not personalizados:
-        return PLANTILLA_SLOTS
+        return slots_base
 
     resultado = []
-    for indice, slot in enumerate(PLANTILLA_SLOTS):
+    for indice, slot in enumerate(slots_base):
         componente = personalizados.get(slot['id'])
         if not componente:
             resultado.append({**slot, '_orden': indice + 1})
@@ -856,13 +863,17 @@ def slots_efectivos():
             'is_visible': componente.is_visible,
             '_orden': componente.order,
         }
+        if componente.styles:
+            # Los colores son varios (principal/vencido/no vencido/sin gestión/texto/fondo): se
+            # conserva el diccionario entero, no solo el principal.
+            nuevo['styles_personalizados'] = componente.styles
         color_personalizado = (componente.styles or {}).get('colorPrincipal')
         if color_personalizado:
             nuevo['color_defecto'] = color_personalizado
         contenido = componente.content or {}
         if contenido.get('titulo'):
             nuevo['titulo_personalizado'] = contenido['titulo']
-        if contenido.get('descripcion'):
+        if conservar_descripcion and contenido.get('descripcion'):
             nuevo['descripcion_personalizada'] = contenido['descripcion']
         resultado.append(nuevo)
 
@@ -870,12 +881,30 @@ def slots_efectivos():
     return resultado
 
 
+def slots_efectivos():
+    """Los 13 slots a usar para sembrar un dashboard NUEVO real: lo que un administrador haya
+    personalizado en "Configuración → Plantilla base" (los `DashboardComponent` de
+    `DASHBOARD_ID_PLANTILLA_BASE`), si existe — o si no, `PLANTILLA_SLOTS` tal cual (todavía sin
+    personalizar, o primer arranque antes de que la plantilla base se haya sembrado siquiera)."""
+    return _slots_con_personalizacion(DASHBOARD_ID_PLANTILLA_BASE, PLANTILLA_SLOTS, conservar_descripcion=True)
+
+
+def slots_vigentes(dashboard_id):
+    """Los 13 slots tal como el dashboard se ve AHORA: su propia personalización sobre la de la
+    plantilla base. Es la base correcta para recalcular un dashboard que ya existe — reconstruirlo
+    desde `PLANTILLA_SLOTS` le devolvería el diseño de fábrica."""
+    return _slots_con_personalizacion(dashboard_id, slots_efectivos(), conservar_descripcion=False)
+
+
 def _construir_componente(slot, orden, contenido, propuesta=None):
     chart_type = _chart_type_elegido(slot, propuesta)
     config = dict(slot.get('config_fijo') or {})
     if chart_type in dashboard_layout.TIPOS_CON_LEYENDA:
-        config['leyenda_posicion'] = dashboard_layout.LEYENDA_POSICION_POR_DEFECTO
-    styles = {'colorPrincipal': slot['color_defecto']} if slot.get('color_defecto') else {}
+        # `setdefault`: si la posición ya tiene una leyenda ubicada a mano, se respeta.
+        config.setdefault('leyenda_posicion', dashboard_layout.LEYENDA_POSICION_POR_DEFECTO)
+    styles = dict(slot.get('styles_personalizados') or {})
+    if slot.get('color_defecto'):
+        styles.setdefault('colorPrincipal', slot['color_defecto'])
     contenido = dict(contenido)
     if slot.get('titulo_personalizado'):
         contenido['titulo'] = slot['titulo_personalizado']
@@ -945,9 +974,15 @@ def aplicar_mapeo(dashboard_id, df, mapeo, actor=None, request=None, fecha_refer
     sobreescribe los mismos 13 componentes (nunca agrega otros) — se puede llamar varias veces
     (p. ej. tras cargar un archivo distinto) sin duplicar nada. El `chart_type` de cada posición
     (`_chart_type_elegido`) también sale del mapeo, así que cambiar cómo se dibuja una gráfica (p.
-    ej. de barras a líneas) se aplica junto con el resto de ajustes."""
+    ej. de barras a líneas) se aplica junto con el resto de ajustes.
+
+    IMPORTANT: se reconstruye sobre `slots_vigentes(dashboard_id)`, no sobre `PLANTILLA_SLOTS`. Lo
+    que se recalcula son los DATOS; el diseño (tamaño, orden, colores, título, visibilidad,
+    configuración) es de quien armó el dashboard y tiene que sobrevivir. Reconstruir de fábrica no
+    era un caso de borde: lo disparaba cada actualización automática semanal/mensual
+    (`fuente_bd_scheduler`), cada archivo nuevo y cada reconfiguración desde la pantalla."""
     contenidos = calcular_datos_mapeo(df, mapeo, dashboard_id, fecha_referencia)
-    layout = _escribir_plantilla(dashboard_id, contenidos, mapeo)
+    layout = _escribir_plantilla(dashboard_id, contenidos, mapeo, slots=slots_vigentes(dashboard_id))
 
     log_event(
         domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_TEMPLATE_APPLIED', actor=actor,
