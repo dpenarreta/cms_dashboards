@@ -7,12 +7,33 @@ esa delegación.
 
 | Comando | Qué hace | Si no corre |
 |---|---|---|
-| `actualizar_fuentes_bd` | Reconecta y reaplica el último mapeo confirmado a cada dashboard conectado a una vista o procedimiento cuya frecuencia venza hoy | La pantalla ofrece frecuencia semanal/mensual y muestra "Próxima actualización automática", pero los datos nunca se actualizan solos |
+| `actualizar_fuentes_bd` | Reconecta y reaplica el último mapeo confirmado a cada dashboard conectado a una vista o procedimiento que tenga una actualización **pendiente** | La pantalla ofrece frecuencia semanal/mensual y muestra "Próxima actualización automática", pero los datos nunca se actualizan solos |
 | `clean_temp_uploads --horas 24` | Borra los archivos temporales de carga de más de 24 h que ninguna `CargaArchivo` siga referenciando | Los temporales se acumulan sin límite |
 
 Los dos son seguros de ejecutar cualquier día: `actualizar_fuentes_bd` decide por su cuenta a qué
-dashboards les toca hoy (un martes no hace nada), y `clean_temp_uploads` nunca borra un archivo que
-una carga todavía referencia.
+dashboards les toca (un martes, con todo al día, no hace nada), y `clean_temp_uploads` nunca borra
+un archivo que una carga todavía referencia.
+
+## Un día perdido se recupera solo
+
+Si la tarea no corre el día previsto —servidor apagado, máquina dormida, tarea deshabilitada— la
+siguiente ejecución, el día que sea, pone al día lo que quedó pendiente. No hace falta lanzar nada a
+mano ni esperar al próximo domingo.
+
+Importa porque el disparador es externo a la aplicación y nada garantiza que corra. La pregunta que
+resuelve el comando no es "¿hoy es domingo?" sino "¿pasó una fecha prevista desde la última
+actualización?": con la primera, un solo domingo perdido dejaba el dashboard con datos de dos
+semanas atrás hasta el domingo siguiente, sin reintento y sin ningún error que lo delatara.
+
+La recuperación también alcanza a los datos, no solo a la ejecución: el parámetro de fecha de corte
+avanza tantos períodos como se perdieron, así que la corrida de recuperación consulta por el corte
+vigente y no por el que correspondía dos semanas atrás. Mientras haya algo pendiente, la pantalla
+muestra hoy como "Próxima actualización automática" —la próxima corrida del comando lo resuelve—,
+no la fecha del calendario.
+
+Lo que **no** se recupera es cada período perdido por separado: se ejecuta una sola actualización,
+con el corte actual. Los cortes intermedios no se consultan; si hacen falta (por ejemplo para el
+histórico), hay que cargarlos a mano.
 
 ## Instalación (Windows)
 

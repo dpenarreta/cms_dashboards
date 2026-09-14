@@ -16,12 +16,33 @@ from cartera.services import fuente_bd_scheduler
 from cartera.services.dashboards import actualizar_fuente_bd, crear_dashboard
 
 
-class DebeActualizarseHoyTests(TestCase):
-    def _dashboard(self, **overrides):
+class _ConFuenteBD(TestCase):
+    """Un dashboard con fuente de base de datos y las dos fechas que gobiernan el atraso puestas a
+    mano: `fuente_bd_fecha_configuracion` (que en producción es "hoy", inservible para una prueba
+    con fechas fijas) y `fuente_bd_ultima_actualizacion_automatica`."""
+
+    def _dashboard(self, configurado_el=None, ultima_corrida=None, **overrides):
         dashboard = crear_dashboard(nombre='Cobranza')
         actualizar_fuente_bd(dashboard.dashboard_id, tipo='procedimiento', nombre='dbo.sp_x', **overrides)
+        campos = {}
+        if configurado_el is not None:
+            campos['fuente_bd_fecha_configuracion'] = configurado_el
+        if ultima_corrida is not None:
+            campos['fuente_bd_ultima_actualizacion_automatica'] = ultima_corrida
+        if campos:
+            Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(**campos)
         dashboard.refresh_from_db()
         return dashboard
+
+
+class DebeActualizarseHoyTests(_ConFuenteBD):
+    """Lo que se decide acá no es "¿hoy es el día?" sino "¿quedó pendiente?".
+
+    El disparador es el programador de tareas del sistema operativo y puede no correr (servidor
+    apagado, máquina dormida, tarea deshabilitada). Con la pregunta vieja, un domingo perdido
+    costaba el período entero: el dashboard seguía mostrando datos viejos hasta el domingo
+    siguiente, sin reintento y sin ningún error que lo delatara.
+    """
 
     def test_sin_fuente_configurada_nunca_corresponde(self):
         dashboard = crear_dashboard(nombre='Cobranza')  # sin tipo/nombre
@@ -32,63 +53,122 @@ class DebeActualizarseHoyTests(TestCase):
         self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 16)))
 
     def test_semanal_corresponde_los_domingos(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
+        dashboard = self._dashboard(frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 10))
         self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 16)))  # domingo
 
-    def test_semanal_no_corresponde_entre_semana(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
-        for dia in range(10, 16):  # lunes 10 a sábado 15 de agosto de 2026
+    def test_semanal_al_dia_no_corresponde_entre_semana(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 10),
+            ultima_corrida=date(2026, 8, 16),  # el domingo sí corrió
+        )
+        for dia in range(17, 23):  # lunes 17 a sábado 22 de agosto de 2026
             with self.subTest(dia=dia):
                 self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, dia)))
 
-    def test_semanal_no_corre_dos_veces_el_mismo_domingo(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_ultima_actualizacion_automatica=date(2026, 8, 16),
+    def test_semanal_un_domingo_perdido_se_recupera_cualquier_dia_de_la_semana(self):
+        """El caso que motivó el cambio: el domingo 16 el programador no corrió (última corrida, el
+        domingo 9). Antes había que esperar al domingo 23 — 13 días de datos viejos, sin reintento y
+        sin ningún error. Ahora la primera corrida que ocurra, el día que sea, lo pone al día."""
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 9),
         )
-        dashboard.refresh_from_db()
+        for dia in range(17, 23):  # lunes 17 a sábado 22
+            with self.subTest(dia=dia):
+                self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, dia)))
+
+    def test_semanal_no_corre_dos_veces_el_mismo_domingo(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 10),
+            ultima_corrida=date(2026, 8, 16),
+        )
         self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 16)))
 
+    def test_semanal_recien_configurado_espera_a_su_primer_domingo(self):
+        """Sin la fecha de configuración como referencia de respaldo, un dashboard configurado el
+        lunes se actualizaría esa misma noche en vez de esperar al domingo."""
+        dashboard = self._dashboard(frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 10))
+        self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 12)))  # miércoles
+
     def test_mensual_corresponde_el_mismo_dia_del_mes_que_la_ancla(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_fecha_configuracion=date(2026, 6, 12),
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 12),
+            ultima_corrida=date(2026, 7, 12),
         )
-        dashboard.refresh_from_db()
         self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 12)))
 
-    def test_mensual_no_corresponde_otro_dia_del_mes(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_fecha_configuracion=date(2026, 6, 12),
+    def test_mensual_al_dia_no_corresponde_otro_dia_del_mes(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 12),
+            ultima_corrida=date(2026, 8, 12),
         )
-        dashboard.refresh_from_db()
         self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 13)))
 
-    def test_mensual_con_ancla_dia_31_se_recorta_al_ultimo_dia_de_un_mes_mas_corto(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_fecha_configuracion=date(2026, 1, 31),
+    def test_mensual_un_mes_perdido_se_recupera_despues(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 12),
+            ultima_corrida=date(2026, 7, 12),  # el 12 de agosto no corrió
         )
-        dashboard.refresh_from_db()
-        self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 2, 28)))  # febrero de 2026 no es bisiesto
+        self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 25)))
+
+    def test_mensual_con_ancla_dia_31_se_recorta_al_ultimo_dia_de_un_mes_mas_corto(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 1, 31),
+            ultima_corrida=date(2026, 1, 31),
+        )
+        self.assertTrue(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 2, 28)))  # 2026 no es bisiesto
 
     def test_mensual_no_corre_dos_veces_el_mismo_mes(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_fecha_configuracion=date(2026, 6, 12), fuente_bd_ultima_actualizacion_automatica=date(2026, 8, 12),
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 12),
+            ultima_corrida=date(2026, 8, 12),
         )
-        dashboard.refresh_from_db()
         self.assertFalse(fuente_bd_scheduler.debe_actualizarse_hoy(dashboard, date(2026, 8, 12)))
 
 
-class ProximaActualizacionTests(TestCase):
-    def _dashboard(self, **overrides):
-        dashboard = crear_dashboard(nombre='Cobranza')
-        actualizar_fuente_bd(dashboard.dashboard_id, tipo='procedimiento', nombre='dbo.sp_x', **overrides)
-        dashboard.refresh_from_db()
-        return dashboard
+class PeriodosPendientesTests(_ConFuenteBD):
+    """Cuántos períodos se perdieron, no solo si se perdió alguno: la fecha de corte de la consulta
+    avanza un período por ejecución, así que una corrida de recuperación tiene que avanzarla tantas
+    veces como fechas previstas pasaron. Avanzando una sola, el dashboard se pondría al día en la
+    ejecución pero nunca en los datos."""
 
+    def test_al_dia_no_hay_nada_pendiente(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 16),
+        )
+        self.assertEqual(fuente_bd_scheduler.periodos_pendientes(dashboard, date(2026, 8, 19)), 0)
+
+    def test_semanal_cuenta_cada_domingo_perdido(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 9),
+        )
+        # Domingos 16 y 23 sin correr.
+        self.assertEqual(fuente_bd_scheduler.periodos_pendientes(dashboard, date(2026, 8, 25)), 2)
+
+    def test_semanal_desde_una_corrida_de_recuperacion_entre_semana(self):
+        """Una corrida de recuperación deja la última fecha en un día cualquiera, no en domingo: el
+        conteo sigue siendo por domingos pasados, no por semanas exactas desde esa fecha."""
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 12),  # miércoles
+        )
+        self.assertEqual(fuente_bd_scheduler.periodos_pendientes(dashboard, date(2026, 8, 25)), 2)  # 16 y 23
+
+    def test_mensual_cuenta_cada_mes_perdido(self):
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 5, 12),
+            ultima_corrida=date(2026, 6, 12),
+        )
+        # Julio y agosto sin correr.
+        self.assertEqual(fuente_bd_scheduler.periodos_pendientes(dashboard, date(2026, 8, 20)), 2)
+
+    def test_sin_frecuencia_no_hay_periodos_pendientes(self):
+        self.assertEqual(fuente_bd_scheduler.periodos_pendientes(self._dashboard(), date(2026, 8, 20)), 0)
+
+
+class ProximaActualizacionTests(_ConFuenteBD):
     def test_sin_fuente_configurada_devuelve_none(self):
         dashboard = crear_dashboard(nombre='Cobranza')
         self.assertIsNone(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)))
@@ -98,51 +178,69 @@ class ProximaActualizacionTests(TestCase):
         self.assertIsNone(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)))
 
     def test_semanal_un_jueves_devuelve_el_domingo_siguiente(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 9),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)), date(2026, 8, 16))
 
     def test_semanal_un_domingo_sin_correr_todavia_devuelve_hoy_mismo(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 9),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 16)), date(2026, 8, 16))
 
     def test_semanal_un_domingo_que_ya_corrio_devuelve_el_proximo_domingo(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='semanal')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_ultima_actualizacion_automatica=date(2026, 8, 16),
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 16),
         )
-        dashboard.refresh_from_db()
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 16)), date(2026, 8, 23))
 
+    def test_atrasado_devuelve_hoy_en_vez_de_la_proxima_fecha_del_calendario(self):
+        """La pantalla y el comando tienen que decir lo mismo: si quedó pendiente, la próxima
+        corrida lo actualiza — mostrar "el domingo que viene" contradiría al comando, que ya piensa
+        actualizarlo esta misma noche."""
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='semanal', configurado_el=date(2026, 8, 3),
+            ultima_corrida=date(2026, 8, 9),  # se perdió el domingo 16
+        )
+        self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 19)), date(2026, 8, 19))
+
     def test_mensual_antes_del_dia_ancla_devuelve_ese_dia_este_mes(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(fuente_bd_fecha_configuracion=date(2026, 6, 20))
-        dashboard.refresh_from_db()
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 20),
+            ultima_corrida=date(2026, 7, 20),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)), date(2026, 8, 20))
 
     def test_mensual_despues_del_dia_ancla_devuelve_ese_dia_el_mes_siguiente(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(fuente_bd_fecha_configuracion=date(2026, 6, 5))
-        dashboard.refresh_from_db()
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 5),
+            ultima_corrida=date(2026, 8, 5),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)), date(2026, 9, 5))
 
     def test_mensual_en_diciembre_pasa_al_enero_siguiente(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(fuente_bd_fecha_configuracion=date(2026, 6, 5))
-        dashboard.refresh_from_db()
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 5),
+            ultima_corrida=date(2026, 12, 5),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 12, 20)), date(2027, 1, 5))
 
     def test_mensual_el_mismo_dia_ya_corrido_pasa_al_mes_siguiente(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
-            fuente_bd_fecha_configuracion=date(2026, 6, 13), fuente_bd_ultima_actualizacion_automatica=date(2026, 8, 13),
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 6, 13),
+            ultima_corrida=date(2026, 8, 13),
         )
-        dashboard.refresh_from_db()
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 8, 13)), date(2026, 9, 13))
 
     def test_mensual_con_ancla_dia_31_en_un_mes_de_30_dias(self):
-        dashboard = self._dashboard(frecuencia_actualizacion='mensual')
-        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(fuente_bd_fecha_configuracion=date(2026, 1, 31))
-        dashboard.refresh_from_db()
+        dashboard = self._dashboard(
+            frecuencia_actualizacion='mensual', configurado_el=date(2026, 1, 31),
+            ultima_corrida=date(2026, 3, 31),
+        )
         self.assertEqual(fuente_bd_scheduler.proxima_actualizacion(dashboard, date(2026, 4, 1)), date(2026, 4, 30))
 
 
@@ -178,6 +276,30 @@ class AvanzarFechaCorteTests(TestCase):
     def test_sin_parametros_no_hace_nada(self):
         self.assertEqual(fuente_bd_scheduler.avanzar_fecha_corte({}, Dashboard.FuenteBDFrecuencia.SEMANAL), {})
         self.assertEqual(fuente_bd_scheduler.avanzar_fecha_corte(None, Dashboard.FuenteBDFrecuencia.SEMANAL), {})
+
+    def test_semanal_con_varios_periodos_suma_todas_las_semanas(self):
+        """Una corrida de recuperación trae el período ACTUAL, no el que quedó pendiente hace
+        semanas: si avanzara una sola semana, el dashboard se pondría al día en la ejecución pero
+        arrastraría el atraso en los datos para siempre."""
+        resultado = fuente_bd_scheduler.avanzar_fecha_corte(
+            {'FechaCorte': '2026-07-31'}, Dashboard.FuenteBDFrecuencia.SEMANAL, periodos=3,
+        )
+        self.assertEqual(resultado['FechaCorte'], '2026-08-21')
+
+    def test_mensual_con_varios_periodos_suma_todos_los_meses(self):
+        resultado = fuente_bd_scheduler.avanzar_fecha_corte(
+            {'FechaCorte': '2026-05-31'}, Dashboard.FuenteBDFrecuencia.MENSUAL, periodos=3,
+        )
+        self.assertEqual(resultado['FechaCorte'], '2026-08-31')
+
+    def test_periodos_invalidos_avanzan_uno_solo(self):
+        # 0, None o negativo no deben dejar la fecha quieta: eso traería los mismos datos de nuevo.
+        for periodos in (0, None, -2):
+            with self.subTest(periodos=periodos):
+                resultado = fuente_bd_scheduler.avanzar_fecha_corte(
+                    {'FechaCorte': '2026-07-31'}, Dashboard.FuenteBDFrecuencia.SEMANAL, periodos=periodos,
+                )
+                self.assertEqual(resultado['FechaCorte'], '2026-08-07')
 
 
 class ActualizarDashboardTests(TestCase):
@@ -252,6 +374,30 @@ class ActualizarDashboardTests(TestCase):
         )
         dashboard.refresh_from_db()
         self.assertEqual(dashboard.fuente_bd_parametros, {'Fecha': '2026-08-07'})
+
+    @mock.patch('cartera.services.fuente_bd_scheduler.db_source.leer_fuente')
+    def test_una_corrida_de_recuperacion_avanza_la_fecha_de_corte_de_todos_los_periodos_perdidos(self, leer_fuente_mock):
+        """Se perdieron dos domingos (el 16 y el 23): la corrida del 25 tiene que consultar por el
+        corte vigente, no por el que correspondía dos semanas atrás. Si avanzara una sola semana, el
+        dashboard volvería a la rutina pero con los datos permanentemente atrasados."""
+        import pandas as pd
+        dashboard = self._dashboard_con_mapeo_confirmado()
+        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(
+            fuente_bd_fecha_configuracion=date(2026, 8, 3),
+            fuente_bd_ultima_actualizacion_automatica=date(2026, 8, 9),
+        )
+        dashboard.refresh_from_db()
+        leer_fuente_mock.return_value = pd.DataFrame({'Saldo': [500.0], 'Zona': ['Norte']})
+
+        resultado = fuente_bd_scheduler.actualizar_dashboard(dashboard, hoy=date(2026, 8, 25))
+
+        self.assertTrue(resultado['ok'], resultado['mensaje'])
+        # 31/07 + 2 semanas, no + 1.
+        leer_fuente_mock.assert_called_once_with(
+            'procedimiento', 'dbo.sp_Reporte', {'FechaCorte': '2026-08-14'}, fecha_formato='YYYY-MM-DD',
+        )
+        dashboard.refresh_from_db()
+        self.assertEqual(dashboard.fuente_bd_parametros, {'FechaCorte': '2026-08-14'})
 
     @mock.patch('cartera.services.fuente_bd_scheduler.db_source.leer_fuente')
     def test_reaplica_los_aliases_guardados(self, leer_fuente_mock):
