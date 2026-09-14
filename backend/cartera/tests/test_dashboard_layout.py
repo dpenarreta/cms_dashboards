@@ -307,6 +307,38 @@ class ValidarMapeoCalculoTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()['error'], 'TOP_N_INVALIDO')
 
+    def _componente_deudores(self, cuantos):
+        return self._guardar_componente_con_calculo('antiguedad_por_deudor', {
+            'columna_id': 'cliente', 'columna_fecha': 'vencimiento', 'columna_valor': 'saldo',
+            'cuantos': cuantos,
+        })
+
+    def test_antiguedad_por_deudor_con_cantidad_valida_se_guarda(self):
+        data = self._componente_deudores(2)
+        payload = {'version': data['version'], 'components': data['components'], 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_antiguedad_por_deudor_con_cantidad_fuera_de_rango_devuelve_400(self):
+        # El tope existe porque los bloques se muestran uno al lado del otro: más de media docena
+        # deja de ser legible.
+        data = self._componente_deudores(2)
+        comps = data['components']
+        comps[0]['mapeo']['cuantos'] = 50
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'CANTIDAD_DEUDORES_INVALIDA')
+
+    def test_antiguedad_por_deudor_con_cantidad_no_entera_devuelve_400(self):
+        data = self._componente_deudores(2)
+        comps = data['components']
+        comps[0]['mapeo']['cuantos'] = 'dos'
+        payload = {'version': data['version'], 'components': comps, 'changed_by': 'Tester'}
+        resp = self.client.put('/api/dashboards/finanzas/layout', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'CANTIDAD_DEUDORES_INVALIDA')
+
     def test_cumplimiento_metas_con_metas_validas_se_guarda(self):
         data = self._guardar_componente_con_calculo('cumplimiento_metas', {
             'columna_fecha': 'vencimiento', 'columna_valor': 'saldo', 'metas': [{'meta_min': 50}],

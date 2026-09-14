@@ -20,7 +20,9 @@ from apps.audit.services import log_event
 from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
 from ..models import DashboardComponent, DashboardLayout
-from .generic_charts import ETIQUETAS_TRAMOS_ACUMULADOS, TIPOS_VISUALIZACION, evaluar_meta
+from .generic_charts import (
+    ETIQUETAS_TRAMOS_ACUMULADOS, LIMITE_DEUDORES, TIPOS_VISUALIZACION, evaluar_meta,
+)
 
 _CHART_TYPES_VALIDOS = {t['id'] for t in TIPOS_VISUALIZACION} | {''}
 
@@ -329,6 +331,15 @@ def _validar_mapeo_calculo(component_id, tipo, chart_type, mapeo):
         if top_n not in (None, ''):
             if isinstance(top_n, bool) or not isinstance(top_n, int) or not (TOP_N_MIN <= top_n <= TOP_N_MAX):
                 raise CarteraError(f'Cantidad (top-N) inválida en "{component_id}": {top_n!r}.', codigo='TOP_N_INVALIDO')
+    elif calculo == 'antiguedad_por_deudor':
+        cuantos = mapeo.get('cuantos')
+        if cuantos not in (None, ''):
+            if isinstance(cuantos, bool) or not isinstance(cuantos, int) or not (1 <= cuantos <= LIMITE_DEUDORES):
+                raise CarteraError(
+                    f'Cantidad de deudores inválida en "{component_id}": {cuantos!r}. '
+                    f'Debe estar entre 1 y {LIMITE_DEUDORES}.',
+                    codigo='CANTIDAD_DEUDORES_INVALIDA',
+                )
     elif calculo == 'cumplimiento_metas':
         metas = mapeo.get('metas')
         if metas is not None:
@@ -714,6 +725,11 @@ def agregar_componente_generado(dashboard_id, especificacion, reemplazar_existen
             mapeo['columna_id'] = especificacion.get('columna_id')
             mapeo['columna_valor'] = especificacion.get('columna_valor')
             mapeo['top_n'] = especificacion.get('top_n')
+        elif calculo == 'antiguedad_por_deudor':
+            mapeo['columna_id'] = especificacion.get('columna_id')
+            mapeo['columna_fecha'] = especificacion.get('columna_fecha')
+            mapeo['columna_valor'] = especificacion.get('columna_valor')
+            mapeo['cuantos'] = especificacion.get('cuantos')
         else:
             mapeo['columna_valor'] = especificacion.get('columna_valor')
             mapeo['columna_categoria'] = especificacion.get('columna_categoria')

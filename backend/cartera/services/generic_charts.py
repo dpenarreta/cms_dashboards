@@ -873,3 +873,60 @@ def generar_datos_concentracion(df, columna_id, columna_valor, top_n):
         'filas': filas,
         'total': ['Total', round(total_general, 2), 100.0, 100.0],
     }
+
+
+LIMITE_DEUDORES = 6
+
+
+def generar_datos_antiguedad_por_deudor(df, columna_id, columna_fecha, columna_valor,
+                                        cuantos=2, fecha_referencia=None):
+    """Antigüedad de cartera de los `cuantos` mayores deudores, uno por bloque.
+
+    Responde una pregunta que ni la concentración ni la antigüedad contestan por separado: la
+    concentración dice CUÁNTO debe cada cliente, la antigüedad dice CÓMO está repartida la cartera
+    entera — pero para decidir qué hacer con un deudor grande hace falta cruzar las dos. Un cliente
+    con el 60% de su saldo en "+120 días" es mora crónica (renegociación o vía legal); otro con el
+    mismo saldo concentrado en "30 días" es mora reciente (cobranza inmediata antes de que escale).
+
+    Cada deudor trae solo los tramos CON saldo: listar los vacíos alarga el bloque sin agregar nada.
+    `porcentaje` es sobre el saldo de ESE cliente, no sobre la cartera total — es lo que permite
+    comparar dos deudores de tamaños distintos.
+
+    `cuantos` se acota a `LIMITE_DEUDORES`: son bloques que se muestran uno al lado del otro, y más
+    de media docena deja de ser legible. `None` si falta alguna columna.
+    """
+    if any(c not in df.columns for c in (columna_id, columna_fecha, columna_valor)):
+        return None
+    try:
+        cuantos = max(1, min(int(cuantos), LIMITE_DEUDORES)) if cuantos not in (None, '') else 2
+    except (TypeError, ValueError):
+        cuantos = 2
+
+    identidad = df[columna_id].fillna('Sin dato').astype(str)
+    valores = pd.to_numeric(df[columna_valor], errors='coerce')
+    total_general = float(valores.sum())
+    mayores = valores.groupby(identidad).sum().sort_values(ascending=False).iloc[:cuantos]
+
+    deudores = []
+    for nombre, saldo_deudor in mayores.items():
+        del_deudor = df[identidad == nombre]
+        tramos = generar_datos_tramos_antiguedad(del_deudor, columna_fecha, columna_valor, fecha_referencia)
+        valores_tramo = [float(v) for v in tramos['valores']] if tramos else []
+        suma_clasificada = sum(valores_tramo)
+        filas = [
+            [categoria, round(valor, 2), round((valor / suma_clasificada * 100) if suma_clasificada else 0.0, 2)]
+            for categoria, valor in zip(tramos['categorias'], valores_tramo) if valor
+        ] if tramos else []
+        # El tramo más pesado es lo que distingue una mora crónica de una reciente, así que se
+        # señala explícitamente en vez de dejar que se deduzca leyendo la columna.
+        peor = max(filas, key=lambda fila: fila[1]) if filas else None
+        deudores.append({
+            'nombre': nombre,
+            'total': round(float(saldo_deudor), 2),
+            'porcentaje_cartera': round((float(saldo_deudor) / total_general * 100) if total_general else 0.0, 2),
+            'columnas': ['Tramo', str(columna_valor), '%'],
+            'filas': filas,
+            'tramo_mayor': peor[0] if peor else None,
+        })
+
+    return {'tipo': 'antiguedad_por_deudor', 'deudores': deudores}

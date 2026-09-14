@@ -23,15 +23,15 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
 - `services/directorio_cartera.py` + `management/commands/sembrar_directorio_cartera.py` — el
   "Dashboard Directorio" replica la pestaña "6. Cartera" de un informe financiero mensual
-  (`Mockup_Directorio_Cartera_Junio2026.pdf`). Es la excepción del proyecto en PRESENTACIÓN, no en
-  datos: sus 7 secciones se dibujan con renderers propios
+  (`Mockup_Directorio_Cartera_Junio2026.pdf`) con 8 secciones propias. Es la excepción del proyecto
+  en PRESENTACIÓN, no en datos: se dibujan con renderers propios
   (`frontend/src/components/dashboard-directorio/`, activados por `config.render == 'directorio'`)
   porque los genéricos no saben mostrar etiquetas sobre las barras, la meta al lado del valor con
-  ✓/✗ ni tarjetas resumen dentro de una sección.
-  IMPORTANT: el CONTENIDO es el genérico de siempre y cada componente guarda su `mapeo` — es lo que
-  hace que las secciones se puedan reconfigurar desde "Configurar componente → Datos" sin tocar
-  código (columnas, metas, Top-N, filtros). Si alguna vez se guarda ahí una forma de contenido
-  propia, la primera edición desde la interfaz deja la sección en blanco.
+  ✓/✗, tarjetas resumen dentro de una sección ni mini-tablas por deudor.
+  IMPORTANT: el CONTENIDO es el genérico de siempre y cada sección guarda su `mapeo` — es lo que
+  permite reconfigurarlas desde "Configurar componente → Datos" sin tocar código (columnas, metas,
+  Top-N, cantidad de deudores, filtros). Si alguna vez se guarda ahí una forma de contenido propia,
+  la primera edición desde la interfaz deja la sección en blanco.
   `python manage.py sembrar_directorio_cartera --archivo X.xlsx [--aplicar] [--columna-valor ...]
   [--top-n N]` lo reconstruye (simula por defecto). Las 13 posiciones de fábrica quedan ocultas.
   El "Anexo — evolución del saldo" del mockup no está: necesita el saldo al cierre de cada mes y un

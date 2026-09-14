@@ -896,3 +896,49 @@ describe('ComponentDataSection', () => {
     })
   })
 })
+
+describe('ComponentDataSection — antigüedad por deudor', () => {
+  const COMPONENTE = {
+    component_id: 'mayores-deudores',
+    // `type` importa: `ComponentDataSection` solo ofrece datos configurables a un KPI o un gráfico
+    // de Zona Personal (un separador o un título no calculan nada a partir de columnas).
+    type: 'chart',
+    mapeo: {
+      disponible: true, calculo: 'antiguedad_por_deudor', columna_id: 'Zona',
+      columna_fecha: 'Fecha de Vencimiento', columna_valor: 'Saldo', cuantos: 2,
+    },
+  }
+
+  it('ofrece los selectores de identidad, fecha, valor y cantidad de deudores', async () => {
+    // La sección se agregó como un `calculo` de primera clase justamente para que se pueda
+    // reconfigurar desde acá: era la única del Dashboard Directorio que estaba quemada.
+    renderSeccion({ componente: COMPONENTE })
+
+    expect(await screen.findByLabelText('Identidad del deudor de mayores-deudores')).toHaveValue('Zona')
+    expect(screen.getByLabelText('Columna de fecha de mayores-deudores')).toHaveValue('Fecha de Vencimiento')
+    expect(screen.getByLabelText('Columna de valor de mayores-deudores')).toHaveValue('Saldo')
+    expect(screen.getByLabelText('Cantidad de deudores de mayores-deudores')).toHaveValue(2)
+  })
+
+  it('la columna de fecha solo ofrece columnas de tipo fecha', async () => {
+    renderSeccion({ componente: COMPONENTE })
+    const selector = await screen.findByLabelText('Columna de fecha de mayores-deudores')
+    const opciones = [...selector.querySelectorAll('option')].map((o) => o.value).filter(Boolean)
+    expect(opciones).toEqual(['Fecha de Vencimiento'])
+  })
+
+  it('cambiar la cantidad de deudores recalcula el componente', async () => {
+    carteraService.previsualizarMapeoComponente.mockResolvedValue({
+      contenido: { titulo: 'Mayores deudores', deudores: [] },
+    })
+    renderSeccion({ componente: COMPONENTE })
+
+    const campo = await screen.findByLabelText('Cantidad de deudores de mayores-deudores')
+    fireEvent.change(campo, { target: { value: '4' } })
+
+    await waitFor(() => expect(carteraService.previsualizarMapeoComponente).toHaveBeenCalledWith(
+      'carga-1',
+      expect.objectContaining({ mapeo: expect.objectContaining({ cuantos: 4 }) }),
+    ))
+  })
+})

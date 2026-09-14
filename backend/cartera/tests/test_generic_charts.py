@@ -1683,3 +1683,71 @@ class ColapsoEnOtrasTests(TestCase):
             self.assertIn(mes, mostradas)
         # Y los de menor ingreso (y mayor gasto) son los que se colapsan.
         self.assertNotIn('M00', mostradas)
+
+
+class AntiguedadPorDeudorTests(TestCase):
+    """Cruza concentración con antigüedad: cuánto debe cada cliente Y en qué tramo está.
+
+    Es lo que distingue una mora crónica (peso en "+120 días" — renegociación o vía legal) de una
+    reciente (peso en 30-60 días — cobranza inmediata antes de que escale). Ninguno de los dos
+    cálculos por separado lo responde.
+    """
+
+    def setUp(self):
+        self.corte = date(2026, 8, 31)
+        self.df = pd.DataFrame({
+            'Cliente': ['GRANDE', 'GRANDE', 'MEDIANO', 'CHICO'],
+            'Saldo': [1000.0, 500.0, 400.0, 100.0],
+            'Vence': [
+                date(2026, 1, 15),   # vencida hace más de 120 días
+                date(2026, 9, 30),   # aún no vence
+                date(2026, 8, 20),   # vencida hace 11 días
+                date(2026, 8, 20),
+            ],
+        })
+
+    def _datos(self, **kwargs):
+        opciones = {'columna_id': 'Cliente', 'columna_fecha': 'Vence', 'columna_valor': 'Saldo',
+                    'cuantos': 2, 'fecha_referencia': self.corte}
+        opciones.update(kwargs)
+        return generic_charts.generar_datos_antiguedad_por_deudor(self.df, **opciones)
+
+    def test_devuelve_los_mayores_deudores_en_orden(self):
+        deudores = self._datos()['deudores']
+        self.assertEqual([d['nombre'] for d in deudores], ['GRANDE', 'MEDIANO'])
+        self.assertEqual(deudores[0]['total'], 1500.0)
+
+    def test_el_porcentaje_es_sobre_la_cartera_total(self):
+        deudores = self._datos()['deudores']
+        self.assertEqual(deudores[0]['porcentaje_cartera'], 75.0)   # 1500 de 2000
+        self.assertEqual(deudores[1]['porcentaje_cartera'], 20.0)   # 400 de 2000
+
+    def test_el_porcentaje_de_cada_tramo_es_sobre_el_saldo_de_ese_deudor(self):
+        # Es lo que permite comparar dos deudores de tamaños muy distintos.
+        filas = self._datos()['deudores'][0]['filas']
+        self.assertEqual(sum(fila[2] for fila in filas), 100.0)
+
+    def test_solo_lista_tramos_con_saldo(self):
+        filas = self._datos()['deudores'][1]['filas']
+        self.assertEqual(len(filas), 1)
+        self.assertEqual(filas[0][0], '30 días')
+
+    def test_senala_el_tramo_mas_pesado(self):
+        deudores = self._datos()['deudores']
+        self.assertEqual(deudores[0]['tramo_mayor'], '+120 días')  # 1000 en +120 vs 500 anticipado
+        self.assertEqual(deudores[1]['tramo_mayor'], '30 días')
+
+    def test_cuantos_acota_la_cantidad_de_bloques(self):
+        self.assertEqual(len(self._datos(cuantos=1)['deudores']), 1)
+        self.assertEqual(len(self._datos(cuantos=3)['deudores']), 3)
+
+    def test_cuantos_se_recorta_al_limite_en_vez_de_romper(self):
+        # De mejor esfuerzo, igual que `top_n` en concentración: la validación estricta vive en
+        # `dashboard_layout.validar_componentes`; esto nunca debe romper una vista previa en vivo.
+        deudores = self._datos(cuantos=99)['deudores']
+        self.assertLessEqual(len(deudores), generic_charts.LIMITE_DEUDORES)
+        self.assertEqual(len(self._datos(cuantos='x')['deudores']), 2)
+
+    def test_devuelve_none_si_falta_una_columna(self):
+        self.assertIsNone(self._datos(columna_fecha='No existe'))
+        self.assertIsNone(self._datos(columna_id='No existe'))

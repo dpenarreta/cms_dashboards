@@ -119,6 +119,9 @@ export function SelectorTipoGrafico({ contexto, calculo, valor, valorDefecto, on
 
 // Operadores del filtro "Días desde una fecha" — catálogo cerrado, mismo que
 // `services/plantilla.py::_OPERADORES_DIAS_VENCIDOS`.
+// Espejo de `generic_charts.py::LIMITE_DEUDORES`, que es donde se valida de verdad.
+const MAX_DEUDORES = 6
+
 const OPERADORES_DIAS_VENCIDOS = [
   { valor: 'mayor', etiqueta: 'Mayor que (>)' },
   { valor: 'mayor_igual', etiqueta: 'Mayor o igual que (≥)' },
@@ -681,6 +684,31 @@ export function CamposParaSlot({
             onChange={(e) => cambiar('top_n')(e.target.value === '' ? null : Number(e.target.value))}
             aria-label={`Cantidad (top-N) de ${contexto}`}
           />
+        </Form.Group>
+      </>
+    )
+  }
+  if (slot.calculo === 'antiguedad_por_deudor') {
+    return (
+      <>
+        <SelectorColumna etiqueta="Identidad del deudor" contexto={contexto} valor={propuesta.columna_id} opciones={columnas} onCambiar={cambiar('columna_id')} />
+        <AvisoColumnaDuplicada cargaId={cargaId} aliases={aliases} columna={propuesta.columna_id} />
+        <SelectorColumna
+          etiqueta="Columna de fecha" contexto={contexto} valor={propuesta.columna_fecha}
+          opciones={columnas.filter((c) => c.tipo === 'fecha')} onCambiar={cambiar('columna_fecha')}
+        />
+        <SelectorColumna etiqueta="Columna de valor" contexto={contexto} valor={propuesta.columna_valor} opciones={columnas} onCambiar={cambiar('columna_valor')} />
+        <Form.Group className="mb-2">
+          <Form.Label className="mb-1" style={{ fontSize: '0.8rem' }}>Cantidad de deudores</Form.Label>
+          <Form.Control
+            size="sm" type="number" min="1" max={MAX_DEUDORES}
+            value={propuesta.cuantos ?? ''}
+            onChange={(e) => cambiar('cuantos')(e.target.value === '' ? null : Number(e.target.value))}
+            aria-label={`Cantidad de deudores de ${contexto}`}
+          />
+          <Form.Text style={{ fontSize: '0.75rem' }}>
+            Hasta {MAX_DEUDORES}: se muestran uno al lado del otro y más deja de ser legible.
+          </Form.Text>
         </Form.Group>
       </>
     )

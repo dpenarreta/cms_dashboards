@@ -59,7 +59,8 @@ class ParametrizacionTests(TestCase):
     def test_los_calculos_son_los_que_la_interfaz_sabe_editar(self):
         # `SlotFields.jsx` tiene un formulario por cada uno de estos. Un cálculo fuera de esta lista
         # se vería, pero no se podría reconfigurar desde la pantalla.
-        editables = {'kpi', 'tramos_antiguedad', 'cumplimiento_metas', 'concentracion'}
+        editables = {'kpi', 'tramos_antiguedad', 'cumplimiento_metas', 'concentracion',
+                     'antiguedad_por_deudor'}
         for spec in directorio_cartera.especificacion():
             with self.subTest(seccion=spec['component_id']):
                 self.assertIn(spec['calculo'], editables)
@@ -73,6 +74,14 @@ class ParametrizacionTests(TestCase):
         self.assertEqual(mapeos['antiguedad-de-cartera']['columna_fecha'], 'Vence')
         self.assertEqual(mapeos['concentracion-de-cartera']['columna_id'], 'Razón social')
         self.assertEqual(mapeos['al-corriente']['columna_filtro'], 'Vence')
+
+    def test_la_cantidad_de_deudores_es_un_parametro(self):
+        specs = {s['component_id']: s for s in directorio_cartera.especificacion(deudores=4)}
+        self.assertEqual(specs['mayores-deudores']['mapeo']['cuantos'], 4)
+
+    def test_cambiar_la_cantidad_de_deudores_cambia_el_resultado(self):
+        self.assertEqual(len(_contenidos(deudores=1)['mayores-deudores']['deudores']), 1)
+        self.assertEqual(len(_contenidos(deudores=3)['mayores-deudores']['deudores']), 3)
 
     def test_el_top_n_es_un_parametro(self):
         specs = {s['component_id']: s for s in directorio_cartera.especificacion(top_n=3)}
@@ -127,6 +136,7 @@ class EstructuraTests(TestCase):
         self.assertEqual(visibles, [
             'cartera-total', 'al-corriente', 'vencida-total', 'vencida-mas-120-dias',
             'antiguedad-de-cartera', 'cumplimiento-metas-antiguedad', 'concentracion-de-cartera',
+            'mayores-deudores',
         ])
 
     def test_oculta_las_posiciones_de_fabrica(self):
@@ -142,7 +152,7 @@ class EstructuraTests(TestCase):
                 self.assertFalse(componente.config.get('bloqueado'))
                 self.assertEqual(componente.config.get('render'), 'directorio')
                 self.assertIn(componente.config.get('bloque'),
-                              {'kpi', 'antiguedad', 'cumplimiento', 'concentracion'})
+                              {'kpi', 'antiguedad', 'cumplimiento', 'concentracion', 'deudores'})
 
     def test_el_mapeo_queda_persistido_en_cada_componente(self):
         for componente in self.layout.components.filter(is_visible=True):
@@ -154,7 +164,7 @@ class EstructuraTests(TestCase):
         directorio_cartera.construir(DASHBOARD, _df(), CORTE)
         ids = list(self.layout.components.values_list('component_id', flat=True))
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 20)  # 7 secciones + 13 de fábrica
+        self.assertEqual(len(ids), 21)  # 8 secciones + 13 de fábrica
 
 
 class CoherenciaEntreSeccionesTests(TestCase):

@@ -8,9 +8,10 @@ una meta al lado del valor con ✓/✗ ni tarjetas resumen dentro de una secció
 Pero el CONTENIDO se calcula igual que en cualquier otro dashboard: cada componente guarda su
 `mapeo` (`calculo` + columnas + parámetros) y el contenido sale de
 `plantilla.calcular_contenido_por_calculo`. Esto es lo que hace que las secciones sean
-parametrizables: "Configurar componente → Datos" ya sabe editar `kpi`, `tramos_antiguedad`,
-`cumplimiento_metas` y `concentracion` (`SlotFields.jsx`), la vista previa recalcula por el
-endpoint de siempre y el resultado sigue siendo la forma genérica que los renderers consumen.
+parametrizables: "Configurar componente → Datos" sabe editar los cinco cálculos que usa (`kpi`,
+`tramos_antiguedad`, `cumplimiento_metas`, `concentracion` y `antiguedad_por_deudor`, este último
+agregado para esta sección), la vista previa recalcula por el endpoint de siempre y el resultado
+sigue siendo la forma genérica que los renderers consumen.
 
 Una versión anterior de este módulo guardaba una forma de contenido propia (`content['bloque']`) y
 `mapeo` vacío. Se veía igual, pero dejaba todo quemado: cambiar la columna de saldo, las metas o el
@@ -39,6 +40,9 @@ COLUMNA_VALOR = 'Saldo'
 COLUMNA_FECHA = 'Fecha de Vencimiento'
 COLUMNA_CLIENTE = 'Cliente'
 TOP_N = 16
+# Cuántos deudores muestra la sección de antigüedad por deudor. Dos es lo que trae el informe; el
+# tope real (6) lo fija `generic_charts.LIMITE_DEUDORES`.
+DEUDORES = 2
 
 DORADO, VERDE, AZUL = '#D4AF37', '#2E7D32', '#1E88E5'
 ROJO, GRANATE, CORAL, ROSA = '#C62828', '#8B1E1E', '#EF9A9A', '#F48FB1'
@@ -58,6 +62,7 @@ METAS = [
 ANCHO_KPI, ALTO_KPI = 3, 170
 ANCHO_PANEL, ALTO_PANEL = 6, 560
 ALTO_CONCENTRACION = 900
+ALTO_DEUDORES = 520
 
 
 def columnas_requeridas(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA, columna_cliente=COLUMNA_CLIENTE):
@@ -69,7 +74,7 @@ def columnas_faltantes(df, **columnas):
 
 
 def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
-                   columna_cliente=COLUMNA_CLIENTE, top_n=TOP_N):
+                   columna_cliente=COLUMNA_CLIENTE, top_n=TOP_N, deudores=DEUDORES):
     """Las secciones del informe, con su `mapeo` ya armado a partir de las columnas elegidas.
 
     `config['bloque']` le dice al renderer qué sección es. Va en `config` y no en el contenido
@@ -135,6 +140,18 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
         'mapeo': {
             'disponible': True, 'calculo': 'concentracion',
             'columna_id': columna_cliente, 'columna_valor': columna_valor, 'top_n': top_n,
+        },
+    })
+    secciones.append({
+        'component_id': 'mayores-deudores',
+        'titulo': 'ANTIGÜEDAD DE CARTERA — MAYORES DEUDORES',
+        'calculo': 'antiguedad_por_deudor', 'type': 'chart', 'chart_type': 'tabla',
+        'width': 12, 'height': ALTO_DEUDORES, 'styles': {},
+        'config': {'bloque': 'deudores'},
+        'mapeo': {
+            'disponible': True, 'calculo': 'antiguedad_por_deudor',
+            'columna_id': columna_cliente, 'columna_fecha': columna_fecha,
+            'columna_valor': columna_valor, 'cuantos': deudores,
         },
     })
     return secciones

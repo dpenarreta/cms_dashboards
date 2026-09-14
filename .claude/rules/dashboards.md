@@ -40,6 +40,19 @@ otro rompe el contrato.
   (`dashboard_layout.py`, no en datos de migración), afecta a **todos** los usuarios y no se puede
   deshacer — pide confirmación explícita (modal, nunca `window.confirm`).
 
+## Agregar un cálculo nuevo
+
+Un `calculo` (`mapeo['calculo']`) es de primera clase solo si está en los CUATRO lugares; si falta
+alguno, el componente se ve pero no se puede reconfigurar desde la pantalla:
+
+1. `generic_charts.py` — la función que lo computa.
+2. `plantilla.py::_calcular_contenido_slot` — la rama que arma su `content` a partir del mapeo.
+3. `dashboard_layout.py::_validar_mapeo_calculo` — la validación de sus parámetros propios (y, si
+   se crea desde la Zona Personal, el bloque que arma el `mapeo` en `agregar_componente_generado`).
+4. `SlotFields.jsx::CamposParaSlot` — el formulario con sus selectores.
+
+`antiguedad_por_deudor` (antigüedad de los mayores deudores) se agregó así y sirve de referencia.
+
 ## Filtro de una posición
 
 Dos formas, según `mapeo['tipo_filtro']` (ver `plantilla.py::_aplicar_filtro_slot`):

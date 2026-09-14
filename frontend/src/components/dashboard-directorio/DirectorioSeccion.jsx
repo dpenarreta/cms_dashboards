@@ -189,11 +189,56 @@ function SeccionConcentracion({ componente }) {
   )
 }
 
+function SeccionDeudores({ componente }) {
+  const { content } = componente
+  const deudores = content?.deudores || []
+
+  return (
+    <div className="chart-panel directorio-seccion">
+      <TituloSeccion>{content?.titulo}</TituloSeccion>
+      <div className="directorio-deudores">
+        {deudores.map((deudor) => (
+          <div key={deudor.nombre} className="directorio-deudor">
+            <div className="directorio-deudor__titulo">
+              {deudor.nombre} — {moneda(deudor.total)} ({porcentaje(deudor.porcentaje_cartera, 2)} de la cartera total)
+            </div>
+            <table className="directorio-tabla directorio-tabla--compacta">
+              <thead>
+                <tr>
+                  {(deudor.columnas || []).map((columna, i) => (
+                    // eslint-disable-next-line react/no-array-index-key -- encabezados de la sección
+                    <th key={i} className={i === 0 ? undefined : 'text-end'}>{String(columna).toUpperCase()}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(deudor.filas || []).map(([tramo, saldo, pct]) => (
+                  <tr
+                    key={tramo}
+                    // El tramo más pesado es lo que distingue una mora crónica de una reciente.
+                    className={tramo === deudor.tramo_mayor ? 'directorio-tabla__fila--destacada' : undefined}
+                  >
+                    <td>{tramo}</td>
+                    <td className="text-end">{moneda(saldo)}</td>
+                    <td className="text-end">{porcentaje(pct)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
+      <Nota texto={content?.descripcion} />
+    </div>
+  )
+}
+
 const POR_BLOQUE = {
   kpi: TarjetaKpi,
   antiguedad: GraficoAntiguedad,
   cumplimiento: TablaCumplimiento,
   concentracion: SeccionConcentracion,
+  deudores: SeccionDeudores,
 }
 
 export default function DirectorioSeccion({ componente, componentes }) {

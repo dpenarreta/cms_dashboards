@@ -761,6 +761,26 @@ def _calcular_contenido_slot(df, slot, propuesta, dashboard_id=None, fecha_refer
             'columnas': datos['columnas'], 'filas': datos['filas'], 'total': datos['total'],
         }
 
+    if calculo == 'antiguedad_por_deudor':
+        columna_id = propuesta.get('columna_id')
+        columna_fecha = propuesta.get('columna_fecha')
+        columna_valor = propuesta.get('columna_valor')
+        if not columna_id or not columna_fecha or not columna_valor:
+            return None
+        datos = generic_charts.generar_datos_antiguedad_por_deudor(
+            df, columna_id, columna_fecha, columna_valor, propuesta.get('cuantos'), fecha_referencia,
+        )
+        if not datos or not datos['deudores']:
+            return None
+        return {
+            'titulo': titulo,
+            'descripcion': _descripcion_con_filtro(
+                f'Antigüedad de "{columna_valor}" de los mayores deudores por "{columna_id}", '
+                f'según "{columna_fecha}".', propuesta, calculo,
+            ),
+            'deudores': datos['deudores'],
+        }
+
     if calculo == 'concentracion':
         columna_id = propuesta.get('columna_id')
         columna_valor = propuesta.get('columna_valor')
