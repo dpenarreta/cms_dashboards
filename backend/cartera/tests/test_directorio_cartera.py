@@ -86,7 +86,15 @@ class ParametrizacionTests(TestCase):
     def test_el_top_n_es_un_parametro(self):
         specs = {s['component_id']: s for s in directorio_cartera.especificacion(top_n=3)}
         self.assertEqual(specs['concentracion-de-cartera']['mapeo']['top_n'], 3)
-        self.assertIn('TOP 3', specs['concentracion-de-cartera']['titulo'])
+
+    def test_el_titulo_de_concentracion_no_lleva_el_numero_escrito(self):
+        # El número va como marcador `{n}` y lo resuelve el renderer con el `top_n` vigente. Si se
+        # escribiera acá, cambiar el Top-N desde la interfaz actualizaría las tarjetas y la tabla
+        # pero dejaría el título con la cifra vieja — el título se guarda una sola vez.
+        titulo = next(s['titulo'] for s in directorio_cartera.especificacion(top_n=3)
+                      if s['component_id'] == 'concentracion-de-cartera')
+        self.assertIn('{n}', titulo)
+        self.assertNotIn('TOP 3', titulo)
 
     def test_cambiar_el_top_n_cambia_el_resultado(self):
         con_2 = _contenidos(top_n=2)['concentracion-de-cartera']

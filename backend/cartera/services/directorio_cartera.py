@@ -133,7 +133,13 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
     })
     secciones.append({
         'component_id': 'concentracion-de-cartera',
-        'titulo': f'CONCENTRACIÓN DE CARTERA — TOP {top_n} CLIENTES VS. RESTO DE LA CARTERA',
+        # `{n}` lo reemplaza el renderer por el `top_n` vigente (ver `DirectorioSeccion.jsx`). Va
+        # como marcador y no interpolado acá porque el título es texto editable por el usuario y se
+        # guarda una sola vez: si llevara el número ya escrito, cambiar el Top-N desde "Configurar
+        # componente" actualizaría las tarjetas y la tabla pero dejaría el título diciendo otra
+        # cifra. Quien edite el título puede quitar el marcador; entonces manda su texto y no hay
+        # nada que pueda quedar desfasado.
+        'titulo': 'CONCENTRACIÓN DE CARTERA — TOP {n} CLIENTES VS. RESTO DE LA CARTERA',
         'calculo': 'concentracion', 'type': 'chart', 'chart_type': 'tabla',
         'width': 12, 'height': ALTO_CONCENTRACION, 'styles': {},
         'config': {'bloque': 'concentracion'},

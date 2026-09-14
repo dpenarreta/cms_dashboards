@@ -137,10 +137,14 @@ function SeccionConcentracion({ componente }) {
   const topN = mapeo?.top_n ?? principales.length
   const saldoTop = principales.reduce((suma, fila) => suma + (fila[1] || 0), 0)
   const pctTop = principales.reduce((suma, fila) => suma + (fila[2] || 0), 0)
+  // El título trae `{n}` como marcador del Top-N vigente: el número vive en un solo lugar (el
+  // mapeo) y no puede quedar diciendo "TOP 16" después de cambiarlo a 5. Un título editado a mano
+  // sin el marcador se muestra tal cual.
+  const titulo = String(content?.titulo ?? '').replace('{n}', topN)
 
   return (
     <div className="chart-panel directorio-seccion">
-      <TituloSeccion>{content?.titulo}</TituloSeccion>
+      <TituloSeccion>{titulo}</TituloSeccion>
       <div className="directorio-resumen">
         <div className="directorio-kpi directorio-kpi--interno" style={{ borderLeftColor: '#D4AF37' }}>
           <div className="directorio-kpi__etiqueta">TOP {topN} CLIENTES</div>
