@@ -40,7 +40,11 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
   [--aplicar] [--dashboard ID] [--detalle]`. **Simula por defecto**: sin `--aplicar` no escribe
   nada. Recalcula `DashboardComponent.content` con el código de cálculo vigente, contra la misma
   carga y la misma fecha de corte, para que una corrección del núcleo de cálculo llegue a los
-  dashboards que ya existen (el campo es almacenado, nadie los recalcula solo).
+  dashboards que ya existen (el campo es almacenado, nadie los recalcula solo). Alcanza a todo
+  componente con `mapeo`: las 13 posiciones fijas vía `calcular_datos_mapeo` y las de Zona Personal
+  una por una vía `calcular_contenido_por_calculo` (que es donde el Dashboard Directorio tiene sus
+  8 secciones). Conserva el título de cada componente — es texto de quien armó el dashboard, no un
+  dato calculado.
 
 ## Contrato de error (global, no solo de este módulo)
 

@@ -1,7 +1,9 @@
 """`python manage.py reprocesar_dashboards [--aplicar] [--dashboard ID]`
 
 Recalcula el contenido almacenado de los dashboards con el código de cálculo vigente, usando la
-misma fuente y la misma fecha de corte que ya tenían.
+misma fuente y la misma fecha de corte que ya tenían. Alcanza a todo componente con mapeo, tanto
+las 13 posiciones fijas como las de la Zona Personal (donde el Dashboard Directorio tiene sus 8
+secciones). No toca el título: ese lo escribió una persona.
 
 **Simula por defecto.** Sin `--aplicar` no escribe nada: solo informa qué cambiaría. Es a propósito
 — los valores que muestra un dashboard son lo que la gente mira para tomar decisiones, así que
@@ -73,7 +75,10 @@ class Command(BaseCommand):
                 f'({resultado["filas"]} filas, corte {resultado["fecha_corte"]})'
             ))
             for cambio in cambios:
-                self.stdout.write(f'      - {cambio["component_id"]}')
+                # Un componente oculto también se recalcula (puede volver a mostrarse), pero hay que
+                # decirlo: si no, una lista de ids que nadie ve en pantalla parece un error.
+                marca = '' if cambio.get('visible', True) else '  (oculto)'
+                self.stdout.write(f'      - {cambio["component_id"]}{marca}')
                 if detalle:
                     self.stdout.write(f'          antes:   {_resumir(cambio["antes"])}')
                     self.stdout.write(f'          después: {_resumir(cambio["despues"])}')

@@ -10,6 +10,15 @@ Este módulo es el puente para esos casos: recalcula el contenido a partir de la
 datos y la MISMA fecha de corte que se usó la última vez, de modo que cualquier diferencia que
 aparezca viene del cambio de código y de nada más.
 
+Alcanza a TODO componente que tenga un mapeo, no solo a las 13 posiciones fijas. Un dashboard puede
+tener casi todo su contenido en la Zona Personal —el Dashboard Directorio tiene ahí sus 8 secciones
+reales—, y recorrer únicamente `PLANTILLA_SLOTS` dejaba justo esos fuera: el comando informaba
+cambios en posiciones de fábrica ocultas y no tocaba nada de lo que se ve en pantalla.
+
+Lo que se recalcula son los DATOS. El título no: lo escribió una persona y `calcular_datos_mapeo` lo
+rearma desde `PLANTILLA_SLOTS` ("KPI 1", "Gráfico 3"), así que sin conservarlo un reproceso masivo
+revertiría en silencio todos los renombres del proyecto.
+
 No usa `plantilla.aplicar_mapeo` aunque esa función ya no pise la personalización (desde que
 reconstruye sobre `slots_vigentes`, no sobre `PLANTILLA_SLOTS`): para un reproceso masivo sigue
 siendo demasiado. Borra y recrea los 13 componentes, sube la versión del layout —lo que hace que a
@@ -35,6 +44,41 @@ def _mapeo_del_layout(layout):
         for componente in layout.components.all()
         if componente.mapeo
     }
+
+
+def _con_titulo_vigente(contenido, componente):
+    """El contenido recalculado, pero con el título que el componente tiene hoy."""
+    titulo = (componente.content or {}).get('titulo')
+    return {**contenido, 'titulo': titulo} if titulo else contenido
+
+
+def _contenidos_fuera_de_la_plantilla(layout, df, dashboard_id, fecha_corte):
+    """Contenido recalculado de los componentes que NO son una de las 13 posiciones fijas — los de
+    la Zona Personal, que guardan su `calculo` dentro del propio `mapeo` porque no tienen un
+    catálogo externo del que sacarlo.
+
+    Se saltan los que no tienen mapeo (el flujo legado de recomendaciones automáticas no lo
+    guarda): sin él no hay forma de recalcular y adivinar sería peor que dejarlos como están. Un
+    `None` de `calcular_contenido_por_calculo` —una columna mapeada que ya no viene en el archivo—
+    también se salta, conservando el contenido anterior, igual que hacen las posiciones fijas al
+    caer a su dato de respaldo.
+    """
+    ids_de_plantilla = {slot['id'] for slot in plantilla.PLANTILLA_SLOTS}
+    contenidos = {}
+    for componente in layout.components.all():
+        if componente.component_id in ids_de_plantilla:
+            continue
+        propuesta = componente.mapeo or {}
+        calculo = propuesta.get('calculo')
+        if not calculo:
+            continue
+        nuevo = plantilla.calcular_contenido_por_calculo(
+            df, calculo, (componente.content or {}).get('titulo', ''), propuesta,
+            dashboard_id, fecha_corte,
+        )
+        if nuevo is not None:
+            contenidos[componente.component_id] = nuevo
+    return contenidos
 
 
 def _ultima_carga(dashboard_id):
@@ -68,6 +112,8 @@ def analizar_dashboard(dashboard_id):
             'motivo': 'Ningún componente tiene mapeo — nunca se le aplicó una plantilla con datos reales.',
             'cambios': [],
         }
+    # `_mapeo_del_layout` trae el mapeo de TODOS los componentes; `calcular_datos_mapeo` solo sabe
+    # leer el de las 13 posiciones fijas y las de Zona Personal se resuelven aparte, una por una.
 
     carga = _ultima_carga(dashboard_id)
     if carga is None:
@@ -84,14 +130,24 @@ def analizar_dashboard(dashboard_id):
     if dashboard is not None and dashboard.fuente_bd_ultimo_aliases:
         df = db_source.aplicar_alias_columnas(df, dashboard.fuente_bd_ultimo_aliases)
 
-    contenidos = plantilla.calcular_datos_mapeo(df, mapeo, dashboard_id, carga.fecha_corte)
+    contenidos = {
+        **plantilla.calcular_datos_mapeo(df, mapeo, dashboard_id, carga.fecha_corte),
+        **_contenidos_fuera_de_la_plantilla(layout, df, dashboard_id, carga.fecha_corte),
+    }
 
     cambios = []
     for componente in layout.components.all():
         nuevo = contenidos.get(componente.component_id)
-        if nuevo is None or nuevo == componente.content:
+        if nuevo is None:
             continue
-        cambios.append({'component_id': componente.component_id, 'antes': componente.content, 'despues': nuevo})
+        nuevo = _con_titulo_vigente(nuevo, componente)
+        contenidos[componente.component_id] = nuevo
+        if nuevo == componente.content:
+            continue
+        cambios.append({
+            'component_id': componente.component_id, 'antes': componente.content, 'despues': nuevo,
+            'visible': componente.is_visible,
+        })
 
     return {
         'ok': True,
