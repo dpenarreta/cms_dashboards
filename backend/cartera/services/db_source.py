@@ -68,7 +68,11 @@ def _conectar():
             codigo='FUENTE_BD_NO_CONFIGURADA_APP',
         )
     conn_str = (
-        'DRIVER={ODBC Driver 17 for SQL Server};'
+        # Mismo driver que la base propia (`settings.DB_ODBC_DRIVER`): `pyodbc` lo busca por
+        # su nombre exacto y la versión instalada cambia según la máquina — desarrollo tiene
+        # el 17, el servidor de aplicaciones el 18. Tenerlo fijo acá hacía que la conexión
+        # externa fallara en un servidor donde la base propia sí conectaba.
+        f'DRIVER={{{settings.DB_ODBC_DRIVER}}};'
         f'SERVER={settings.EXTERNAL_DB_HOST},{settings.EXTERNAL_DB_PORT};'
         f'DATABASE={settings.EXTERNAL_DB_NAME};'
         f'UID={settings.EXTERNAL_DB_USER};PWD={settings.EXTERNAL_DB_PASSWORD};'

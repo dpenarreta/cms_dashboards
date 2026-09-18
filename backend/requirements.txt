@@ -30,3 +30,10 @@ requests>=2.32,<2.33
 # `style` en línea salvo que se le configure un saneador de CSS aparte (y un correo sin estilos en
 # línea no tiene diseño), y su propio proyecto lo declara en modo mantenimiento recomendando nh3.
 nh3>=0.3,<0.4
+
+# Servidor WSGI para producción. `runserver` no sirve para eso (es de un solo hilo, sin
+# límites de conexión y con la advertencia explícita de Django de no usarlo). Se eligió
+# waitress y no gunicorn porque gunicorn no corre en Windows —depende de `fcntl`— y el
+# servidor de aplicaciones es Windows Server con IIS. waitress es de Pylons, puro Python,
+# multihilo y sin dependencias nativas.
+waitress>=3.0,<3.1

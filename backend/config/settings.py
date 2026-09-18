@@ -102,6 +102,19 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # --- Base de datos ---------------------------------------------------------
 # SQL Server vía mssql-django. Para desarrollo local sin SQL Server disponible,
 # basta con exportar DB_ENGINE=sqlite y no se toca ninguna línea de este archivo.
+#
+# El nombre del driver ODBC se declara acá arriba, fuera del if/else, porque `pyodbc` lo
+# busca por su nombre EXACTO y la versión instalada cambia según la máquina: desarrollo
+# tiene el 17, el servidor de aplicaciones el 18. Lo usan la base propia Y la conexión
+# externa de solo lectura (`cartera/services/db_source.py`), que sigue existiendo aunque
+# DB_ENGINE sea sqlite — así corre la CI.
+#
+# Sobre el 18: cambió el valor por defecto de `Encrypt` de `no` a `yes`. Acá no sorprende,
+# porque DB_ENCRYPT se pasa siempre explícito; pero con cifrado activo contra un servidor
+# de certificado autofirmado hace falta DB_TRUST_SERVER_CERTIFICATE=yes, o la conexión se
+# rechaza por certificado no confiable.
+DB_ODBC_DRIVER = os.getenv('DB_ODBC_DRIVER', 'ODBC Driver 17 for SQL Server')
+
 if os.getenv('DB_ENGINE', 'mssql') == 'sqlite':
     DATABASES = {
         'default': {
@@ -128,7 +141,7 @@ else:
             'HOST': os.getenv('DB_HOST', 'localhost'),
             'PORT': os.getenv('DB_PORT', '1433'),
             'OPTIONS': {
-                'driver': 'ODBC Driver 17 for SQL Server',
+                'driver': DB_ODBC_DRIVER,
                 'extra_params': ';'.join(extra_params),
             },
         }
