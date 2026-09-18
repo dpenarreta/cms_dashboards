@@ -197,3 +197,89 @@
   .directorio-kpi__valor { font-size: 1.4rem; }
   .directorio-seccion { padding: 14px; }
 }
+
+/* --- Consulta puntual por cliente ------------------------------------------
+   Antigüedad a la izquierda (angosta, de ancho fijo) y documentos a la derecha, que es donde está
+   la información densa: el detalle puede traer hasta 28 columnas y necesita todo el ancho que
+   sobre, más su propio scroll horizontal. */
+.directorio-buscador {
+  display: flex;
+  gap: .5rem;
+  margin-bottom: 1rem;
+  max-width: 540px;
+}
+
+.directorio-coincidencias {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.directorio-coincidencias__titulo {
+  padding: .5rem .75rem;
+  font-size: .75rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #6c757d);
+  background: var(--bs-tertiary-bg, #f8f9fa);
+}
+
+.directorio-coincidencia {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 1rem;
+  align-items: center;
+  width: 100%;
+  padding: .5rem .75rem;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  color: inherit;
+}
+
+.directorio-coincidencia:hover,
+.directorio-coincidencia:focus-visible {
+  background: var(--bs-primary-bg-subtle, #e7f1ff);
+}
+
+.directorio-coincidencia__nombre { font-weight: 600; }
+.directorio-coincidencia__id,
+.directorio-coincidencia__filas { font-size: .8rem; color: var(--text-muted, #6c757d); }
+.directorio-coincidencia__saldo { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.directorio-deudor-consulta__encabezado {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: .75rem;
+}
+
+.directorio-deudor-consulta__cuerpo {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+/* `minmax(0, 1fr)` arriba y `overflow-x` acá: sin el `minmax(0, …)`, la columna del detalle se
+   estira con la tabla en vez de acotarla, y el scroll horizontal nunca aparece — la tabla
+   desborda la tarjeta y empuja el ancho de toda la página. */
+.directorio-tabla-scroll {
+  overflow-x: auto;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.directorio-tabla-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bs-body-bg, #fff);
+  z-index: 1;
+}
+
+@media (max-width: 991px) {
+  .directorio-deudor-consulta__cuerpo { grid-template-columns: 1fr; }
+}

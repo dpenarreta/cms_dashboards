@@ -72,11 +72,24 @@ def _contenidos_fuera_de_la_plantilla(layout, df, dashboard_id, fecha_corte):
         calculo = propuesta.get('calculo')
         if not calculo:
             continue
+        anterior = componente.content or {}
         nuevo = plantilla.calcular_contenido_por_calculo(
-            df, calculo, (componente.content or {}).get('titulo', ''), propuesta,
+            df, calculo, anterior.get('titulo', ''), propuesta,
             dashboard_id, fecha_corte,
         )
         if nuevo is not None:
+            # La fecha del corte no la produce ningún cálculo: la agrega el Dashboard Directorio
+            # al KPI que titula el informe ("Corte junio 2026", ver
+            # `directorio_cartera.calcular_contenidos`). Sin reponerla, un reproceso la borraba en
+            # silencio y ese KPI volvía a mostrar la descripción del cálculo — el mismo problema
+            # que ya había con los títulos renombrados.
+            #
+            # Se decide por la marca del COMPONENTE (`es_base_porcentaje`) y no por si el contenido
+            # anterior la traía: un contenido que se perdió es justamente el caso que hay que
+            # reparar, y mirando el contenido viejo el reproceso no lo repararía nunca. La fecha
+            # sale de la carga contra la que se está reprocesando, que es la que corresponde.
+            if (componente.config or {}).get('es_base_porcentaje') and fecha_corte:
+                nuevo['fecha_corte'] = fecha_corte.isoformat() if hasattr(fecha_corte, 'isoformat') else str(fecha_corte)
             contenidos[componente.component_id] = nuevo
     return contenidos
 

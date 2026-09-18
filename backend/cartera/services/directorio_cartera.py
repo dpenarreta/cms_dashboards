@@ -59,8 +59,22 @@ METAS = [
     {'meta_min': 90}, {'meta_min': 95}, {'meta_max': 5},
 ]
 
+# El tope del último tramo ("más de 120 días"), que el informe también señala bajo el KPI. Se lee
+# de METAS en vez de repetirse: son el mismo número y tienen que moverse juntos.
+META_MAXIMA_MAS_120 = METAS[-1]['meta_max']
+
 ANCHO_KPI, ALTO_KPI = 3, 170
 ANCHO_PANEL, ALTO_PANEL = 6, 560
+COLUMNA_RUC = 'Ruc Cliente'
+# Qué columnas muestra el detalle de la consulta por cliente. Son las que hacen falta para
+# reconocer un documento; las otras 20+ del archivo se agregan desde la configuración del
+# componente. Si alguna no existe en el archivo cargado, se ignora sola.
+COLUMNAS_DETALLE_DEUDOR = [
+    'Número de Documento', 'Fecha de Emisión', 'Fecha de Vencimiento', 'Saldo',
+    'Tipo de Venta', 'Causal', 'Observaciones',
+]
+ALTO_CONSULTA_DEUDOR = 620
+
 ALTO_CONCENTRACION = 900
 ALTO_DEUDORES = 520
 
@@ -74,7 +88,8 @@ def columnas_faltantes(df, **columnas):
 
 
 def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
-                   columna_cliente=COLUMNA_CLIENTE, top_n=TOP_N, deudores=DEUDORES):
+                   columna_cliente=COLUMNA_CLIENTE, top_n=TOP_N, deudores=DEUDORES,
+                   columna_ruc=COLUMNA_RUC):
     """Las secciones del informe, con su `mapeo` ya armado a partir de las columnas elegidas.
 
     `config['bloque']` le dice al renderer qué sección es. Va en `config` y no en el contenido
@@ -97,19 +112,30 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
         mapeo = {'disponible': True, 'calculo': 'kpi', 'columna_valor': columna_valor, 'formato': 'moneda'}
         if filtro:
             mapeo.update(filtro)
+        # `es_base_porcentaje` marca contra qué KPI se calcula el "% del portafolio" que el
+        # informe muestra bajo los otros tres. Se resuelve en el frontend, con los valores ya
+        # calculados, para que siga siendo correcto después de cambiar cualquier mapeo.
+        config = {'bloque': 'kpi', 'tono': tono, 'es_base_porcentaje': es_base}
+        if component_id == 'vencida-mas-120-dias':
+            # El informe no muestra este KPI como un porcentaje más: lo señala contra su meta de
+            # control ("excede meta máx. 5%"), porque es el único tramo con un tope. El tope sale
+            # de la misma lista de METAS que alimenta la tabla de cumplimiento, así que cambiarlo
+            # ahí lo cambia en los dos lugares y no pueden quedar diciendo cosas distintas.
+            config['meta_maxima_porcentaje'] = META_MAXIMA_MAS_120
         secciones.append({
             'component_id': component_id, 'titulo': titulo, 'calculo': 'kpi',
             'type': 'kpi', 'chart_type': '', 'width': ANCHO_KPI, 'height': ALTO_KPI,
             'styles': {'colorPrincipal': color},
-            # `es_base_porcentaje` marca contra qué KPI se calcula el "% del portafolio" que el
-            # informe muestra bajo los otros tres. Se resuelve en el frontend, con los valores ya
-            # calculados, para que siga siendo correcto después de cambiar cualquier mapeo.
-            'config': {'bloque': 'kpi', 'tono': tono, 'es_base_porcentaje': es_base},
+            'config': config,
             'mapeo': mapeo,
         })
 
     secciones.append({
-        'component_id': 'antiguedad-de-cartera', 'titulo': 'ANTIGÜEDAD DE CARTERA',
+        'component_id': 'antiguedad-de-cartera',
+        # `{corte}` lo reemplaza el renderer por el mes del corte vigente, igual que `{n}`
+        # en el título de concentración: con el mes ya escrito, el título quedaría
+        # anunciando el corte anterior en cuanto se cargue un archivo nuevo.
+        'titulo': 'ANTIGÜEDAD DE CARTERA — {corte}',
         'calculo': 'tramos_antiguedad', 'type': 'chart', 'chart_type': 'barras_verticales',
         'width': ANCHO_PANEL, 'height': ALTO_PANEL,
         'styles': {'coloresPorCategoria': dict(COLORES_TRAMOS)},
@@ -150,7 +176,9 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
     })
     secciones.append({
         'component_id': 'mayores-deudores',
-        'titulo': 'ANTIGÜEDAD DE CARTERA — MAYORES DEUDORES',
+        # `{n}` (cantidad de deudores) y `{corte}` (mes del corte) los reemplaza el renderer,
+        # por el mismo motivo que en las otras dos secciones con marcador.
+        'titulo': 'ANTIGÜEDAD DE CARTERA — {n} MAYORES DEUDORES ({corte})',
         'calculo': 'antiguedad_por_deudor', 'type': 'chart', 'chart_type': 'tabla',
         'width': 12, 'height': ALTO_DEUDORES, 'styles': {},
         'config': {'bloque': 'deudores'},
@@ -158,6 +186,33 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
             'disponible': True, 'calculo': 'antiguedad_por_deudor',
             'columna_id': columna_cliente, 'columna_fecha': columna_fecha,
             'columna_valor': columna_valor, 'cuantos': deudores,
+        },
+    })
+    secciones.append({
+        'component_id': 'consulta-deudor',
+        'titulo': 'CONSULTA POR CLIENTE — ANTIGÜEDAD Y DOCUMENTOS',
+        # Va AL FINAL del dashboard, después de la última sección del informe. Las de arriba son
+        # la réplica de la pestaña impresa y se leen en ese orden; esta es una herramienta de
+        # consulta que se usa a demanda, así que no se interpone entre ellas — y menos entre el
+        # gráfico de antigüedad y la tabla de cumplimiento, que ocupan media página cada uno y van
+        # lado a lado: una sección de ancho completo en el medio parte esa fila.
+        #
+        # No tiene `calculo`: su contenido no se precalcula, se consulta en vivo contra el archivo
+        # (`services/consulta_deudor.py`). El contenido guardado es solo el título, para que el
+        # editor lo trate como cualquier otra sección (moverla, ocultarla, renombrarla).
+        'calculo': None, 'type': 'chart', 'chart_type': 'tabla',
+        'width': 12, 'height': ALTO_CONSULTA_DEUDOR, 'styles': {},
+        'config': {
+            'bloque': 'consulta-deudor',
+            'columnas_detalle': list(COLUMNAS_DETALLE_DEUDOR),
+        },
+        # Sin `calculo` y con `disponible: False` a propósito: no hay contenido que calcular ni
+        # que reprocesar. El mapeo existe igual porque la consulta SÍ necesita saber qué columnas
+        # usar, y así la sección sigue siendo reconfigurable como las demás.
+        'mapeo': {
+            'disponible': False,
+            'columna_id': columna_cliente, 'columna_ruc': columna_ruc,
+            'columna_fecha': columna_fecha, 'columna_valor': columna_valor,
         },
     })
     return secciones
@@ -170,6 +225,13 @@ def calcular_contenidos(df, fecha_corte, **columnas):
         contenido = plantilla.calcular_contenido_por_calculo(
             df, spec['calculo'], spec['titulo'], spec['mapeo'], fecha_referencia=fecha_corte,
         )
+        # La fecha del corte viaja en el CONTENIDO del KPI total, no en su `config`: el contenido
+        # se recalcula con cada archivo nuevo y la fecha cambia con él, mientras que `config` se
+        # conserva entre recálculos y quedaría anunciando el corte anterior.
+        if spec['config'].get('es_base_porcentaje') and fecha_corte:
+            contenido['fecha_corte'] = (
+                fecha_corte.isoformat() if hasattr(fecha_corte, 'isoformat') else str(fecha_corte)
+            )
         piezas.append((spec, contenido))
     return piezas
 

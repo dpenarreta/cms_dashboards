@@ -339,7 +339,16 @@ export default function DashboardAreaPage() {
         // meta con ✓/✗, tarjetas resumen dentro de una sección, mini-tablas por deudor). Es el
         // único dashboard con renderers propios, y se reconoce por `config.render`.
         if (componente.config?.render === 'directorio') {
-          return <DirectorioSeccion componente={componente} componentes={layout.borrador} />
+          // El hallazgo de IA llega igual que a los genéricos: el informe pone bajo cada sección
+          // un párrafo de análisis, no la descripción del cálculo, y ese párrafo ya lo genera
+          // `generar_hallazgos_ia` por componente. Sin él (sin permiso, sin clave de Gemini o
+          // mientras la llamada está en vuelo), cada sección cae a su descripción.
+          return <DirectorioSeccion
+            componente={componente}
+            componentes={layout.borrador}
+            hallazgoIA={hallazgosIA[componente.component_id]}
+            dashboardId={dashboardId}
+          />
         }
         if (componente.type === 'title') return <GenericTitleBlock content={componente.content} />
         if (componente.type === 'text') return <GenericSeparator content={componente.content} />

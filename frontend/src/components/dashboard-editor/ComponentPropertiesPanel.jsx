@@ -3,6 +3,7 @@ import { Accordion, Alert, Button, Form, Offcanvas } from 'react-bootstrap'
 import WidthHeightControls from './WidthHeightControls'
 import FilterFieldReorderList from './FilterFieldReorderList'
 import ComponentDataSection from './ComponentDataSection'
+import SelectorColumnasDetalle from './SelectorColumnasDetalle'
 import TableCellsEditor from './TableCellsEditor'
 import { SelectorTipoGrafico } from '../dashboard-generic/SlotFields'
 import { POSICIONES_LEYENDA } from '../../utils/legendPosition'
@@ -367,6 +368,23 @@ export default function ComponentPropertiesPanel({
                       onCambiarTotal={(total) => onActualizarContenido(componente.component_id, { total })}
                     />
                   </div>
+                </>
+              )}
+
+              {/* La consulta por cliente no tiene "valores de la tabla" que editar —su contenido
+                  se consulta en vivo— pero sí decide qué columnas del archivo muestra el detalle.
+                  Se guarda en el componente, así que todos ven las mismas. */}
+              {componente.config?.bloque === 'consulta-deudor' && (
+                <>
+                  <h6>Columnas del detalle</h6>
+                  <SelectorColumnasDetalle
+                    dashboardId={dashboardId}
+                    seleccionadas={componente.config?.columnas_detalle}
+                    onCambiar={(columnas) => onActualizarConfig(componente.component_id, {
+                      ...componente.config,
+                      columnas_detalle: columnas,
+                    })}
+                  />
                 </>
               )}
 

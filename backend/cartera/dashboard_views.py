@@ -7,7 +7,7 @@ from apps.permissions.permissions import IsSuperuser, require_permission
 
 from . import dashboard_registry, permisos
 from .exceptions import CarteraError
-from .services import dashboard_interpretation
+from .services import consulta_deudor, dashboard_interpretation
 from .services import dashboard_layout as dl
 from .services import dashboards as dashboards_service
 
@@ -374,3 +374,50 @@ class DashboardVersionsView(APIView):
             }
             for e in entradas
         ])
+
+
+class DashboardConsultaDeudorView(APIView):
+    """`GET /api/dashboards/<dashboard_id>/deudor` — consulta puntual de un cliente.
+
+    Dos modos sobre el mismo endpoint, porque son dos pasos de la misma pregunta y comparten
+    validación y control de acceso:
+
+    - `?buscar=texto` devuelve las coincidencias (nombre, saldo, cuántas filas) para ELEGIR una.
+    - `?identidad=X` devuelve la antigüedad por tramos de ese cliente y sus filas del archivo.
+
+    Solo pide `dashboard.view`: es una lectura del archivo que el dashboard ya muestra agregado,
+    no expone nada que quien puede abrir el dashboard no pueda ver sumado. Las columnas del detalle
+    llegan por parámetro (`columnas`) y las decide el componente, no la petición: ver
+    `services/consulta_deudor.py`.
+    """
+
+    def get(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
+
+        columna_nombre = request.query_params.get('columna_nombre') or 'Cliente'
+        columna_ruc = request.query_params.get('columna_ruc') or ''
+        columna_fecha = request.query_params.get('columna_fecha') or 'Fecha de Vencimiento'
+        columna_valor = request.query_params.get('columna_valor') or 'Saldo'
+
+        texto = request.query_params.get('buscar')
+        if texto is not None:
+            return Response(consulta_deudor.buscar(
+                dashboard_id, texto,
+                columna_nombre=columna_nombre, columna_valor=columna_valor, columna_ruc=columna_ruc,
+            ))
+
+        identidad = request.query_params.get('identidad')
+        if not identidad:
+            # Sin parámetros se informan las columnas del archivo: es lo que necesita el panel de
+            # configuración para ofrecer cuáles mostrar en el detalle, y evita un endpoint aparte
+            # para una sola lista.
+            return Response(consulta_deudor.columnas_disponibles(dashboard_id))
+
+        columnas = [c for c in (request.query_params.get('columnas') or '').split('|') if c]
+        return Response(consulta_deudor.detalle(
+            dashboard_id, identidad,
+            columna_nombre=columna_nombre, columna_fecha=columna_fecha,
+            columna_valor=columna_valor, columna_ruc=columna_ruc,
+            columnas_detalle=columnas or None,
+        ))

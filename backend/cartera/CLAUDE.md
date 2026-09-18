@@ -18,7 +18,8 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
   `DashboardAuditLog`.
 - `services/` — `excel_reader`, `column_mapper`, `validators`, `ingest`, `calculator`,
   `aggregations`, `export_service`, `filters`, `dashboard_layout`, `historico`, `plantilla`,
-  `carga_archivos` (releer el archivo de una carga), `reproceso` (recalcular contenido almacenado).
+  `carga_archivos` (releer el archivo de una carga), `reproceso` (recalcular contenido almacenado),
+  `consulta_deudor` (antigüedad y documentos de UN cliente, leídos del archivo en vivo).
 - `permisos.py` — resolución de permisos legacy + control de acceso por-dashboard.
 - `management/commands/clean_temp_uploads.py` — `python manage.py clean_temp_uploads --horas N`.
 - `services/directorio_cartera.py` + `management/commands/sembrar_directorio_cartera.py` — el
@@ -34,6 +35,11 @@ error usado por **toda** la API (`exceptions.py`, ver raíz del repo).
   la primera edición desde la interfaz deja la sección en blanco.
   `python manage.py sembrar_directorio_cartera --archivo X.xlsx [--aplicar] [--columna-valor ...]
   [--top-n N]` lo reconstruye (simula por defecto). Las 13 posiciones de fábrica quedan ocultas.
+  La sección "Consulta por cliente" es la excepción dentro de la excepción: su contenido NO se
+  precalcula, se consulta en vivo contra el archivo de la carga vigente
+  (`services/consulta_deudor.py` + `GET /api/dashboards/<id>/deudor`). Qué columnas muestra su
+  detalle vive en `config.columnas_detalle` del componente — se elige desde "Configurar
+  componente" y la ven todos, no es una preferencia por usuario.
   El "Anexo — evolución del saldo" del mockup no está: necesita el saldo al cierre de cada mes y un
   corte de cobranza es una foto única (el propio mockup dice que sale de otro informe).
 - `management/commands/reprocesar_dashboards.py` — `python manage.py reprocesar_dashboards

@@ -888,7 +888,11 @@ def generar_datos_antiguedad_por_deudor(df, columna_id, columna_fecha, columna_v
     con el 60% de su saldo en "+120 días" es mora crónica (renegociación o vía legal); otro con el
     mismo saldo concentrado en "30 días" es mora reciente (cobranza inmediata antes de que escale).
 
-    Cada deudor trae solo los tramos CON saldo: listar los vacíos alarga el bloque sin agregar nada.
+    Cada deudor trae SIEMPRE los seis tramos, con 0 en los que no tienen documentos. Un tramo
+    vacío es información —dice que ese cliente no tiene mora ahí— y, sobre todo, hace que los
+    bloques de dos deudores se lean fila por fila: omitiendo los ceros, uno con mora en todos los
+    tramos y otro con mora solo en 30 días quedaban con distinta cantidad de filas y no se podían
+    comparar de un vistazo.
     `porcentaje` es sobre el saldo de ESE cliente, no sobre la cartera total — es lo que permite
     comparar dos deudores de tamaños distintos.
 
@@ -915,11 +919,13 @@ def generar_datos_antiguedad_por_deudor(df, columna_id, columna_fecha, columna_v
         suma_clasificada = sum(valores_tramo)
         filas = [
             [categoria, round(valor, 2), round((valor / suma_clasificada * 100) if suma_clasificada else 0.0, 2)]
-            for categoria, valor in zip(tramos['categorias'], valores_tramo) if valor
+            for categoria, valor in zip(tramos['categorias'], valores_tramo)
         ] if tramos else []
         # El tramo más pesado es lo que distingue una mora crónica de una reciente, así que se
-        # señala explícitamente en vez de dejar que se deduzca leyendo la columna.
-        peor = max(filas, key=lambda fila: fila[1]) if filas else None
+        # señala explícitamente en vez de dejar que se deduzca leyendo la columna. Se exige que
+        # haya algún saldo: con todos los tramos en cero, `max` devolvería el primero y se
+        # destacaría un tramo vacío como si fuera el problema.
+        peor = max(filas, key=lambda fila: fila[1]) if any(fila[1] for fila in filas) else None
         deudores.append({
             'nombre': nombre,
             'total': round(float(saldo_deudor), 2),

@@ -1727,10 +1727,37 @@ class AntiguedadPorDeudorTests(TestCase):
         filas = self._datos()['deudores'][0]['filas']
         self.assertEqual(sum(fila[2] for fila in filas), 100.0)
 
-    def test_solo_lista_tramos_con_saldo(self):
+    def test_lista_los_seis_tramos_aunque_esten_en_cero(self):
+        # Criterio cambiado a pedido: antes se omitían los tramos vacíos. Un tramo en 0 dice que
+        # ese cliente NO tiene mora ahí, y además los bloques de dos deudores se leen fila por
+        # fila — omitiendo los ceros, uno con seis tramos y otro con uno solo no se podían
+        # comparar de un vistazo.
         filas = self._datos()['deudores'][1]['filas']
-        self.assertEqual(len(filas), 1)
-        self.assertEqual(filas[0][0], '30 días')
+        self.assertEqual(len(filas), 6)
+        self.assertEqual([fila[0] for fila in filas], list(generic_charts.ETIQUETAS_TRAMOS_ANTIGUEDAD))
+        con_saldo = [fila for fila in filas if fila[1]]
+        self.assertEqual(len(con_saldo), 1)
+        self.assertEqual(con_saldo[0][0], '30 días')
+
+    def test_un_tramo_sin_documentos_vale_cero_en_saldo_y_en_porcentaje(self):
+        filas = self._datos()['deudores'][1]['filas']
+        vacios = [fila for fila in filas if fila[0] != '30 días']
+        for fila in vacios:
+            with self.subTest(tramo=fila[0]):
+                self.assertEqual(fila[1], 0)
+                self.assertEqual(fila[2], 0)
+
+    def test_un_deudor_sin_saldo_clasificado_no_destaca_ningun_tramo(self):
+        # Con todos los tramos en cero, `max` devolvería el primero y se señalaría un tramo vacío
+        # como si fuera el problema del cliente.
+        df = pd.DataFrame({
+            'Cliente': ['SOLO'],
+            'Saldo': [0.0],
+            'Vence': [date(2026, 1, 1)],
+        })
+        datos = generic_charts.generar_datos_antiguedad_por_deudor(
+            df, 'Cliente', 'Vence', 'Saldo', cuantos=1, fecha_referencia=date(2026, 8, 31))
+        self.assertIsNone(datos['deudores'][0]['tramo_mayor'])
 
     def test_senala_el_tramo_mas_pesado(self):
         deudores = self._datos()['deudores']

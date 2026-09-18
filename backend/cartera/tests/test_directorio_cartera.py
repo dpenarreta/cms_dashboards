@@ -41,11 +41,62 @@ def _contenidos(**parametros):
             for spec, contenido in directorio_cartera.calcular_contenidos(_df(), CORTE, **parametros)}
 
 
+def _specs_calculadas():
+    """Las secciones que PRECALCULAN contenido — todas menos la consulta por cliente, que lo pide
+    en vivo. Las invariantes de mapeo y cálculo aplican a estas."""
+    return [s for s in directorio_cartera.especificacion() if s['calculo']]
+
+
+class SeccionDeConsultaTests(TestCase):
+    """La consulta por cliente no precalcula nada: su contenido lo trae `services/consulta_deudor.py`
+    cuando alguien busca. Este bloque fija lo que SÍ tiene que cumplir, para que no se cuele por el
+    hueco que deja no tener cálculo."""
+
+    def setUp(self):
+        self.spec = next(s for s in directorio_cartera.especificacion()
+                         if s['component_id'] == 'consulta-deudor')
+
+    def test_no_declara_calculo_porque_no_precalcula_nada(self):
+        self.assertIsNone(self.spec['calculo'])
+        self.assertNotIn('calculo', self.spec['mapeo'])
+
+    def test_no_queda_disponible_para_recalculo(self):
+        # Con `disponible: True` un reproceso intentaría calcular un contenido que no existe.
+        self.assertFalse(self.spec['mapeo']['disponible'])
+
+    def test_declara_las_columnas_que_la_consulta_necesita(self):
+        for clave in ('columna_id', 'columna_ruc', 'columna_fecha', 'columna_valor'):
+            with self.subTest(clave=clave):
+                self.assertIn(clave, self.spec['mapeo'])
+
+    def test_las_columnas_son_parametros_como_en_el_resto_de_las_secciones(self):
+        spec = next(s for s in directorio_cartera.especificacion(columna_valor='Importe',
+                                                                columna_cliente='Razón social')
+                    if s['component_id'] == 'consulta-deudor')
+        self.assertEqual(spec['mapeo']['columna_valor'], 'Importe')
+        self.assertEqual(spec['mapeo']['columna_id'], 'Razón social')
+
+    def test_trae_columnas_de_detalle_por_defecto(self):
+        # Sin ninguna elegida el detalle mostraría las 28 del archivo, que no se lee.
+        self.assertTrue(self.spec['config']['columnas_detalle'])
+
+    def test_va_al_final_del_dashboard(self):
+        # Las secciones de arriba son la réplica del informe impreso y se leen en ese orden; esta
+        # es una herramienta de consulta a demanda, así que cierra el dashboard en vez de
+        # interponerse (entre el gráfico y la tabla de cumplimiento, además, partía la fila que
+        # esos dos forman).
+        ids = [s['component_id'] for s in directorio_cartera.especificacion()]
+        self.assertEqual(ids[-1], 'consulta-deudor')
+
+
 class ParametrizacionTests(TestCase):
     """El motivo de ser de este archivo: que nada quede quemado."""
 
     def test_cada_seccion_guarda_un_mapeo_completo(self):
-        for spec in directorio_cartera.especificacion():
+        # Solo las secciones CALCULADAS: "Consulta por cliente" no precalcula nada (su contenido se
+        # consulta en vivo contra el archivo), así que no declara cálculo. Su propio contrato está
+        # en `SeccionDeConsultaTests`.
+        for spec in _specs_calculadas():
             with self.subTest(seccion=spec['component_id']):
                 mapeo = spec['mapeo']
                 self.assertTrue(mapeo.get('disponible'))
@@ -61,7 +112,7 @@ class ParametrizacionTests(TestCase):
         # se vería, pero no se podría reconfigurar desde la pantalla.
         editables = {'kpi', 'tramos_antiguedad', 'cumplimiento_metas', 'concentracion',
                      'antiguedad_por_deudor'}
-        for spec in directorio_cartera.especificacion():
+        for spec in _specs_calculadas():
             with self.subTest(seccion=spec['component_id']):
                 self.assertIn(spec['calculo'], editables)
 
@@ -114,7 +165,14 @@ class ParametrizacionTests(TestCase):
     def test_el_contenido_es_el_generico_no_una_forma_propia(self):
         # Si el contenido tuviera una forma propia, la primera edición desde la interfaz —que
         # recalcula con `calcular_contenido_por_calculo`— dejaría la sección en blanco.
+        #
+        # `fecha_corte` en el KPI total es la única clave agregada, y es ADITIVA: el informe la
+        # muestra como "Corte junio 2026" bajo el total, y el renderer cae a la descripción cuando
+        # no está. Por eso no rompe la invariante que este test protege — se compara el resto.
+        calculadas = {s['component_id'] for s in _specs_calculadas()}
         for component_id, contenido in _contenidos().items():
+            if component_id not in calculadas:
+                continue  # la consulta por cliente no produce contenido: ver SeccionDeConsultaTests
             with self.subTest(seccion=component_id):
                 self.assertIsNotNone(contenido)
                 self.assertNotIn('bloque', contenido)
@@ -128,7 +186,37 @@ class ParametrizacionTests(TestCase):
                          if s['component_id'] == component_id),
                     fecha_referencia=CORTE,
                 )
-                self.assertEqual(contenido, esperado)
+                self.assertEqual({k: v for k, v in contenido.items() if k != 'fecha_corte'}, esperado)
+
+    def test_el_kpi_total_lleva_la_fecha_del_corte_para_titularlo(self):
+        # El informe titula el total con el corte al que corresponde ("Corte junio 2026"). Viaja en
+        # el CONTENIDO y no en `config` porque cambia con cada archivo, y `config` se conserva
+        # entre recálculos: ahí quedaría anunciando el corte anterior.
+        contenidos = _contenidos()
+        self.assertEqual(contenidos['cartera-total']['fecha_corte'], CORTE.isoformat())
+
+    def test_solo_el_kpi_total_lleva_la_fecha(self):
+        # Los otros tres muestran su participación sobre el portafolio, no el corte.
+        contenidos = _contenidos()
+        for component_id in ('al-corriente', 'vencida-total', 'vencida-mas-120-dias'):
+            with self.subTest(seccion=component_id):
+                self.assertNotIn('fecha_corte', contenidos[component_id])
+
+    def test_el_kpi_de_mas_120_conoce_su_meta_maxima_y_sale_de_METAS(self):
+        # El informe lo señala como el único fuera de meta ("excede meta máx. 5%"). El tope sale de
+        # la misma lista que alimenta la tabla de cumplimiento: si se editara solo en un lado, el
+        # KPI y la tabla dirían cosas distintas sobre el mismo tramo.
+        spec = next(s for s in directorio_cartera.especificacion()
+                    if s['component_id'] == 'vencida-mas-120-dias')
+        self.assertEqual(spec['config']['meta_maxima_porcentaje'],
+                         directorio_cartera.METAS[-1]['meta_max'])
+
+    def test_los_demas_kpis_no_declaran_meta_maxima(self):
+        for component_id in ('cartera-total', 'al-corriente', 'vencida-total'):
+            spec = next(s for s in directorio_cartera.especificacion()
+                        if s['component_id'] == component_id)
+            with self.subTest(seccion=component_id):
+                self.assertNotIn('meta_maxima_porcentaje', spec['config'])
 
 
 class EstructuraTests(TestCase):
@@ -144,7 +232,7 @@ class EstructuraTests(TestCase):
         self.assertEqual(visibles, [
             'cartera-total', 'al-corriente', 'vencida-total', 'vencida-mas-120-dias',
             'antiguedad-de-cartera', 'cumplimiento-metas-antiguedad', 'concentracion-de-cartera',
-            'mayores-deudores',
+            'mayores-deudores', 'consulta-deudor',
         ])
 
     def test_oculta_las_posiciones_de_fabrica(self):
@@ -160,19 +248,26 @@ class EstructuraTests(TestCase):
                 self.assertFalse(componente.config.get('bloqueado'))
                 self.assertEqual(componente.config.get('render'), 'directorio')
                 self.assertIn(componente.config.get('bloque'),
-                              {'kpi', 'antiguedad', 'cumplimiento', 'concentracion', 'deudores'})
+                              {'kpi', 'antiguedad', 'consulta-deudor', 'cumplimiento',
+                               'concentracion', 'deudores'})
 
     def test_el_mapeo_queda_persistido_en_cada_componente(self):
+        # El mapeo es lo que hace reconfigurable a cada sección: sin él, "Configurar componente →
+        # Datos" no tiene de dónde leer las columnas. `calculo` solo lo llevan las que calculan
+        # algo — la consulta por cliente guarda sus columnas igual, pero no precalcula nada.
+        calculadas = {s['component_id'] for s in _specs_calculadas()}
         for componente in self.layout.components.filter(is_visible=True):
             with self.subTest(seccion=componente.component_id):
-                self.assertTrue(componente.mapeo, 'sin mapeo no hay nada que configurar')
-                self.assertIn('calculo', componente.mapeo)
+                self.assertTrue(componente.mapeo)
+                self.assertTrue(any(c.startswith('columna_') for c in componente.mapeo))
+                if componente.component_id in calculadas:
+                    self.assertIn('calculo', componente.mapeo)
 
     def test_reconstruir_no_duplica_componentes(self):
         directorio_cartera.construir(DASHBOARD, _df(), CORTE)
         ids = list(self.layout.components.values_list('component_id', flat=True))
         self.assertEqual(len(ids), len(set(ids)))
-        self.assertEqual(len(ids), 21)  # 8 secciones + 13 de fábrica
+        self.assertEqual(len(ids), 22)  # 9 secciones + 13 de fábrica
 
 
 class CoherenciaEntreSeccionesTests(TestCase):

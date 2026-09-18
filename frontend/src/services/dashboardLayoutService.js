@@ -104,3 +104,48 @@ export function generarInterpretacion(dashboardId) {
 export function generarHallazgosIA(dashboardId) {
   return api.post(`/${dashboardId}/hallazgos-ia`, {}, { timeout: _TIMEOUT_IA_MS }).then((r) => r.data)
 }
+
+/**
+ * Consulta puntual de un deudor del dashboard: primero las coincidencias del texto, después el
+ * detalle del cliente elegido.
+ *
+ * Son dos pasos y no uno solo porque un texto parcial puede tocar a varias razones sociales: el
+ * usuario elige cuál antes de que se calcule nada, para no ver sumados dos clientes distintos.
+ *
+ * Las columnas del mapeo viajan como parámetros en vez de estar fijas en el backend: la sección es
+ * reconfigurable como el resto del Directorio (otro archivo puede llamar distinto a la columna de
+ * cliente o de saldo).
+ */
+export function buscarDeudores(dashboardId, { texto, columnas }) {
+  return api.get(`/${dashboardId}/deudor`, {
+    params: { buscar: texto, ...columnasAParams(columnas) },
+  }).then((r) => r.data)
+}
+
+export function obtenerDetalleDeudor(dashboardId, { identidad, columnas, columnasDetalle }) {
+  return api.get(`/${dashboardId}/deudor`, {
+    params: {
+      identidad,
+      ...columnasAParams(columnas),
+      // Se separan con `|` y no con coma: los nombres de columna del archivo traen comas
+      // ("Vendedor / Ejecutivo Ventas" hoy, cualquier cosa mañana) y partirían mal del otro lado.
+      columnas: (columnasDetalle || []).join('|'),
+    },
+  }).then((r) => r.data)
+}
+
+function columnasAParams(columnas) {
+  return {
+    columna_nombre: columnas?.nombre,
+    columna_ruc: columnas?.ruc,
+    columna_fecha: columnas?.fecha,
+    columna_valor: columnas?.valor,
+  }
+}
+
+/** Columnas del archivo vigente del dashboard — las ofrece el panel de configuración para elegir
+ * cuáles muestra el detalle de la consulta por cliente. Mismo endpoint que la consulta: sin
+ * `buscar` ni `identidad` devuelve solo la lista. */
+export function obtenerColumnasDelArchivo(dashboardId) {
+  return api.get(`/${dashboardId}/deudor`).then((r) => r.data)
+}
