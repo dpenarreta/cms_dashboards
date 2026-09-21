@@ -214,6 +214,64 @@
   max-width: 540px;
 }
 
+/* El campo y su lista de sugerencias: la lista se posiciona contra ESTE contenedor, no contra
+   el formulario, para que no se corra al lado del botón "Consultar". */
+.directorio-buscador__campo {
+  position: relative;
+  flex: 1;
+}
+
+.directorio-sugerencias {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
+  overflow: hidden;
+}
+
+.directorio-sugerencia {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .45rem .7rem;
+  cursor: pointer;
+  font-size: .85rem;
+}
+
+/* El resaltado sigue al teclado igual que al puntero: la fila activa es una sola, venga de una
+   flecha o del mouse (`onMouseEnter` mueve el mismo índice). */
+.directorio-sugerencia--activa {
+  background: rgba(var(--color-primary-rgb, 30, 136, 229), 0.12);
+}
+
+.directorio-sugerencia__nombre {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.directorio-sugerencia__saldo {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.directorio-sugerencias__resto {
+  padding: .4rem .7rem;
+  font-size: .76rem;
+  font-style: italic;
+  color: var(--text-secondary);
+  border-top: 1px solid var(--border);
+}
+
 .directorio-coincidencias {
   border: 1px solid var(--border);
   border-radius: 8px;

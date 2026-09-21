@@ -46,9 +46,12 @@ class ConsultaDeudorTests(TestCase):
             tamano_bytes=1, estado=CargaArchivo.Estado.PROCESADO, fecha_corte=CORTE,
         )
         parche = patch.object(consulta_deudor.carga_archivos, 'leer_archivo_de_carga',
-                              return_value=('ruta.xlsx', _df()))
+                              side_effect=lambda carga: ('ruta.xlsx', _df()))
         self.lector = parche.start()
         self.addCleanup(parche.stop)
+        # La caché de archivos vive en el módulo, así que sobrevive de un test al siguiente.
+        consulta_deudor.limpiar_cache()
+        self.addCleanup(consulta_deudor.limpiar_cache)
 
     def _buscar(self, texto):
         return consulta_deudor.buscar(
@@ -161,3 +164,68 @@ class ConsultaDeudorTests(TestCase):
                 columna_nombre='Columna Que No Existe', columna_valor='Saldo',
             )
         self.assertEqual(contexto.exception.codigo, 'COLUMNAS_NO_DISPONIBLES')
+
+
+class CacheDeArchivoTests(TestCase):
+    """El archivo se lee del disco una vez y se reutiliza.
+
+    Deja de ser un detalle de rendimiento desde que el buscador pide sugerencias mientras se
+    escribe: sin caché, cada tecla releía el .xlsx entero (~1,4 s con el archivo de producción,
+    de 10.374 filas), así que escribir el nombre de un cliente costaba varios segundos de CPU
+    sobre el mismo archivo.
+    """
+
+    def setUp(self):
+        self.carga = CargaArchivo.objects.create(
+            dashboard_id='directorio-cartera', nombre_original='x.xlsx', nombre_hoja='Hoja1',
+            tamano_bytes=1, estado=CargaArchivo.Estado.PROCESADO, fecha_corte=CORTE,
+        )
+        parche = patch.object(consulta_deudor.carga_archivos, 'leer_archivo_de_carga',
+                              side_effect=lambda carga: ('ruta.xlsx', _df()))
+        self.lector = parche.start()
+        self.addCleanup(parche.stop)
+        consulta_deudor.limpiar_cache()
+        self.addCleanup(consulta_deudor.limpiar_cache)
+
+    def _buscar(self, texto):
+        return consulta_deudor.buscar(
+            'directorio-cartera', texto,
+            columna_nombre='Cliente', columna_valor='Saldo', columna_ruc='Ruc Cliente',
+        )
+
+    def test_varias_busquedas_seguidas_leen_el_archivo_una_sola_vez(self):
+        for texto in ('tr', 'tra', 'tran', 'trans'):
+            self._buscar(texto)
+        self.assertEqual(self.lector.call_count, 1)
+
+    def test_una_carga_nueva_vuelve_a_leer_el_archivo(self):
+        # La clave de la caché es la carga, así que procesar uno nuevo la invalida sola: nadie
+        # tiene que acordarse de limpiarla al cargar datos.
+        self._buscar('trans')
+        CargaArchivo.objects.create(
+            dashboard_id='directorio-cartera', nombre_original='y.xlsx', nombre_hoja='Hoja1',
+            tamano_bytes=1, estado=CargaArchivo.Estado.PROCESADO, fecha_corte=CORTE,
+        )
+        self._buscar('trans')
+        self.assertEqual(self.lector.call_count, 2)
+
+    def test_modificar_el_dataframe_devuelto_no_contamina_la_consulta_siguiente(self):
+        # Los cálculos de `generic_charts` agregan columnas derivadas al dataframe que reciben.
+        # Con el original compartido en memoria, esa mutación se filtraría a la consulta que
+        # viene; por eso `_df_de` entrega una copia.
+        df, _ = consulta_deudor._df_de('directorio-cartera')
+        df['columna_intrusa'] = 1
+        df.drop(df.index[0], inplace=True)
+
+        otro, _ = consulta_deudor._df_de('directorio-cartera')
+        self.assertNotIn('columna_intrusa', otro.columns)
+        self.assertEqual(len(otro), len(_df()))
+
+    def test_no_crece_sin_limite(self):
+        for i in range(consulta_deudor._CACHE_MAXIMO + 3):
+            CargaArchivo.objects.create(
+                dashboard_id=f'dash-{i}', nombre_original='x.xlsx', nombre_hoja='Hoja1',
+                tamano_bytes=1, estado=CargaArchivo.Estado.PROCESADO, fecha_corte=CORTE,
+            )
+            consulta_deudor._df_de(f'dash-{i}')
+        self.assertLessEqual(len(consulta_deudor._cache_archivos), consulta_deudor._CACHE_MAXIMO)

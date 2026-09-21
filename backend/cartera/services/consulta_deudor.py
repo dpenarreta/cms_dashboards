@@ -7,9 +7,12 @@ se devuelve su antigüedad por tramos más las filas del archivo donde aparece.
 
 Lee el archivo de la carga vigente en vez de una tabla: los dashboards genéricos —el Directorio
 entre ellos— no insertan sus filas en `RegistroCartera` (eso es del dashboard legado de cartera),
-así que el Excel guardado es la única fuente. Son ~2.700 filas por archivo, una lectura de
-milisegundos; si algún día un archivo creciera lo suficiente como para que eso pese, el lugar de
-la caché es acá y no en el llamador.
+así que el Excel guardado es la única fuente.
+
+Ese archivo se cachea en memoria (`_df_de`). Cuando esto se escribió eran ~2.700 filas y una
+lectura por consulta no pesaba; hoy el archivo de producción trae 10.374 y cada lectura cuesta
+~1,4 s, con el buscador pidiendo sugerencias a medida que se escribe. Sin caché, escribir el
+nombre de un cliente disparaba varios segundos de CPU releyendo el mismo archivo.
 
 La antigüedad se calcula con `generic_charts.generar_datos_tramos_antiguedad`, la MISMA función que
 alimenta el gráfico del dashboard: si se calculara aparte, el total de un cliente podría no cuadrar
@@ -18,7 +21,9 @@ los que no tienen filas.
 """
 
 import datetime
+import threading
 import unicodedata
+from collections import OrderedDict
 
 import pandas as pd
 
@@ -60,10 +65,50 @@ def _carga_vigente(dashboard_id):
     return carga
 
 
+# Archivos ya leídos, por id de carga. La clave es la carga y no el dashboard: al procesar una
+# carga nueva cambia el id, así que la entrada vieja deja de usarse sola y no hay que invalidar
+# nada a mano. Se guardan pocas entradas porque cada una es el archivo entero en memoria
+# (~10.000 filas × 21 columnas, unas decenas de MB).
+_CACHE_MAXIMO = 2
+_cache_archivos = OrderedDict()
+_candado_cache = threading.Lock()
+
+
 def _df_de(dashboard_id):
+    """El archivo de la carga vigente, leído del disco una vez y reutilizado después.
+
+    Devuelve una COPIA. Los cálculos que reciben este dataframe (`generic_charts`) son libres de
+    agregarle columnas derivadas, algo que hasta ahora era inofensivo porque cada consulta leía su
+    propio archivo; con el original compartido en memoria, esa mutación se filtraría a la consulta
+    siguiente. Copiar cuesta milisegundos contra el segundo y medio que cuesta releer el .xlsx.
+    """
     carga = _carga_vigente(dashboard_id)
+    clave = str(carga.id)
+
+    with _candado_cache:
+        cacheado = _cache_archivos.get(clave)
+        if cacheado is not None:
+            _cache_archivos.move_to_end(clave)
+            return cacheado.copy(), carga
+
+    # La lectura queda FUERA del candado: es lo lento, y bloquear acá dejaría a todas las
+    # peticiones esperando a la primera. Dos lecturas simultáneas del mismo archivo la primera vez
+    # son trabajo repetido, no un error: la segunda simplemente pisa la entrada con lo mismo.
     _, df = carga_archivos.leer_archivo_de_carga(carga)
-    return df, carga
+
+    with _candado_cache:
+        _cache_archivos[clave] = df
+        _cache_archivos.move_to_end(clave)
+        while len(_cache_archivos) > _CACHE_MAXIMO:
+            _cache_archivos.popitem(last=False)
+    return df.copy(), carga
+
+
+def limpiar_cache():
+    """Vacía la caché de archivos. Para las pruebas, que crean cargas nuevas con el mismo id de
+    dashboard y necesitan que la lectura vuelva a ir al disco."""
+    with _candado_cache:
+        _cache_archivos.clear()
 
 
 def _validar_columnas(df, columnas):

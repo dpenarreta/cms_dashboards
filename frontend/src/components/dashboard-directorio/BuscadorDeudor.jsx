@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { buscarDeudores, obtenerDetalleDeudor } from '../../services/dashboardLayoutService'
 import { TituloSeccion } from './comunes'
 import { moneda, porcentaje } from './formato'
@@ -17,7 +17,22 @@ import { moneda, porcentaje } from './formato'
  * Qué columnas trae el detalle lo decide `config.columnas_detalle` del componente —o sea, quien
  * arma el dashboard— y no cada usuario: es parte de la configuración que se guarda y se ve igual
  * para todos.
+ *
+ * Mientras se escribe se piden SUGERENCIAS al mismo endpoint de búsqueda, con una espera de
+ * `ESPERA_SUGERENCIAS` desde la última tecla. Esa espera no es cosmética: cada consulta lee el
+ * archivo de la carga, y aunque ahora está cacheado en el servidor
+ * (`services/consulta_deudor.py`), disparar una petición por pulsación igual manda ráfagas de
+ * peticiones que llegan desordenadas. Por eso además se descarta toda respuesta que no sea la del
+ * texto que está escrito en ese momento: sin eso, la respuesta lenta de "cor" puede pisar a la de
+ * "corporacion" y mostrar sugerencias que no corresponden a lo que se ve en el campo.
  */
+
+/** Milisegundos desde la última tecla antes de pedir sugerencias. */
+const ESPERA_SUGERENCIAS = 300
+/** Mínimo de caracteres para sugerir (el backend rechaza menos de dos). */
+const MINIMO_PARA_SUGERIR = 2
+/** Cuántas sugerencias se listan; el resto se resume en una línea al pie. */
+const MAXIMO_SUGERENCIAS = 8
 export default function BuscadorDeudor({ componente, dashboardId }) {
   const { content, mapeo, config } = componente
   const [texto, setTexto] = useState('')
@@ -25,6 +40,12 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
   const [detalle, setDetalle] = useState(null)
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState('')
+  const [sugerencias, setSugerencias] = useState(null)
+  const [totalSugerencias, setTotalSugerencias] = useState(0)
+  const [resaltada, setResaltada] = useState(-1)
+  // Tras elegir una sugerencia el campo queda con ese nombre exacto; sin esta marca, ese mismo
+  // texto dispararía una consulta nueva y la lista volvería a abrirse sobre el resultado.
+  const sugerirDesactivado = useRef(false)
 
   // El dashboard llega por prop desde la página (que lo tiene de la ruta) y no desde `config`:
   // es una propiedad de DÓNDE está montado el componente, no de cómo está configurado, y meterlo
@@ -37,12 +58,76 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
     valor: mapeo?.columna_valor,
   }
 
+  // Sugerencias mientras se escribe. El efecto se vuelve a montar con cada tecla, así que el
+  // `clearTimeout` de la limpieza es lo que hace el "esperar a que deje de escribir".
+  useEffect(() => {
+    const consulta = texto.trim()
+    if (sugerirDesactivado.current || consulta.length < MINIMO_PARA_SUGERIR) {
+      setSugerencias(null)
+      return undefined
+    }
+    let vigente = true
+    const temporizador = setTimeout(() => {
+      buscarDeudores(dashboardId, { texto: consulta, columnas })
+        .then((datos) => {
+          if (!vigente) return
+          setSugerencias(datos.coincidencias)
+          setTotalSugerencias(datos.total)
+          setResaltada(-1)
+        })
+        // Un fallo sugiriendo no se le muestra a nadie: la persona no pidió esto, está
+        // escribiendo. El error sí aparece si después pulsa "Consultar".
+        .catch(() => { if (vigente) setSugerencias(null) })
+    }, ESPERA_SUGERENCIAS)
+    return () => { vigente = false; clearTimeout(temporizador) }
+    // `columnas` se rearma en cada render (es un objeto literal); depender de él re-dispararía
+    // el efecto sin que haya cambiado nada. Lo que importa es el texto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [texto, dashboardId])
+
+  function escribir(valor) {
+    sugerirDesactivado.current = false
+    setTexto(valor)
+  }
+
+  function elegirSugerencia(sugerencia) {
+    sugerirDesactivado.current = true
+    setTexto(sugerencia.nombre)
+    setSugerencias(null)
+    setResaltada(-1)
+    // Se guarda como "la única coincidencia" para que el detalle no ofrezca "elegir otro": la
+    // elección ya se hizo acá.
+    setCoincidencias([sugerencia])
+    elegir(sugerencia.identidad)
+  }
+
+  function teclear(evento) {
+    const visibles = (sugerencias || []).slice(0, MAXIMO_SUGERENCIAS)
+    if (!visibles.length) return
+    if (evento.key === 'ArrowDown') {
+      evento.preventDefault()
+      setResaltada((i) => (i + 1) % visibles.length)
+    } else if (evento.key === 'ArrowUp') {
+      evento.preventDefault()
+      setResaltada((i) => (i <= 0 ? visibles.length - 1 : i - 1))
+    } else if (evento.key === 'Enter' && resaltada >= 0) {
+      // Solo intercepta el Enter cuando hay una sugerencia resaltada; si no, deja que el
+      // formulario haga la búsqueda de siempre.
+      evento.preventDefault()
+      elegirSugerencia(visibles[resaltada])
+    } else if (evento.key === 'Escape') {
+      setSugerencias(null)
+      setResaltada(-1)
+    }
+  }
+
   function buscar(evento) {
     evento?.preventDefault()
     if (!texto.trim()) return
     setCargando(true)
     setError('')
     setDetalle(null)
+    setSugerencias(null)
     buscarDeudores(dashboardId, { texto: texto.trim(), columnas })
       .then((datos) => {
         setCoincidencias(datos.coincidencias)
@@ -68,15 +153,49 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
     <div className="chart-panel directorio-seccion">
       <TituloSeccion>{content?.titulo || 'CONSULTA POR CLIENTE'}</TituloSeccion>
 
-      <form className="directorio-buscador" onSubmit={buscar}>
-        <input
-          type="search"
-          className="form-control"
-          placeholder="Nombre o identificador del cliente"
-          value={texto}
-          onChange={(e) => setTexto(e.target.value)}
-          aria-label="Nombre o identificador del cliente"
-        />
+      <form className="directorio-buscador" onSubmit={buscar} autoComplete="off">
+        <div className="directorio-buscador__campo">
+          <input
+            type="search"
+            className="form-control"
+            placeholder="Nombre o identificador del cliente"
+            value={texto}
+            onChange={(e) => escribir(e.target.value)}
+            onKeyDown={teclear}
+            // El cierre va en `onBlur` y la elección en `onMouseDown`, que ocurre ANTES: con
+            // `onClick` la lista ya se habría cerrado y el clic caería en el vacío.
+            onBlur={() => { setSugerencias(null); setResaltada(-1) }}
+            aria-label="Nombre o identificador del cliente"
+            role="combobox"
+            aria-expanded={Boolean(sugerencias?.length)}
+            aria-controls="sugerencias-deudor"
+            aria-autocomplete="list"
+            aria-activedescendant={resaltada >= 0 ? `sugerencia-deudor-${resaltada}` : undefined}
+          />
+          {Boolean(sugerencias?.length) && (
+            <ul className="directorio-sugerencias" id="sugerencias-deudor" role="listbox">
+              {sugerencias.slice(0, MAXIMO_SUGERENCIAS).map((sugerencia, i) => (
+                <li
+                  key={sugerencia.identidad}
+                  id={`sugerencia-deudor-${i}`}
+                  role="option"
+                  aria-selected={i === resaltada}
+                  className={`directorio-sugerencia${i === resaltada ? ' directorio-sugerencia--activa' : ''}`}
+                  onMouseDown={(e) => { e.preventDefault(); elegirSugerencia(sugerencia) }}
+                  onMouseEnter={() => setResaltada(i)}
+                >
+                  <span className="directorio-sugerencia__nombre">{sugerencia.nombre}</span>
+                  <span className="directorio-sugerencia__saldo">{moneda(sugerencia.saldo)}</span>
+                </li>
+              ))}
+              {totalSugerencias > MAXIMO_SUGERENCIAS && (
+                <li className="directorio-sugerencias__resto" role="presentation">
+                  y {totalSugerencias - MAXIMO_SUGERENCIAS} más — seguí escribiendo para afinar
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
         <button type="submit" className="btn btn-primary" disabled={cargando || !texto.trim()}>
           {cargando ? 'Consultando…' : 'Consultar'}
         </button>

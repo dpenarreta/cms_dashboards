@@ -1,5 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import BuscadorDeudor from '../components/dashboard-directorio/BuscadorDeudor'
 import { buscarDeudores, obtenerDetalleDeudor } from '../services/dashboardLayoutService'
@@ -151,5 +151,138 @@ describe('BuscadorDeudor', () => {
     expect(buscarDeudores).toHaveBeenCalledWith('directorio-cartera', expect.objectContaining({
       columnas: { nombre: 'Cliente', ruc: 'Ruc Cliente', fecha: 'Fecha de Vencimiento', valor: 'Saldo' },
     }))
+  })
+})
+
+
+describe('BuscadorDeudor — sugerencias mientras se escribe', () => {
+  /**
+   * Lo que se protege acá no es que "aparezca una lista", sino las dos cosas que hacen que un
+   * buscador así sea usable o insoportable: que no dispare una petición por tecla, y que una
+   * respuesta lenta de un texto viejo no pise a la del texto que está escrito.
+   */
+
+  const COINCIDENCIAS = [
+    { identidad: '111', nombre: 'TRANSEXPRESS', saldo: 1000, filas: 2 },
+    { identidad: '222', nombre: 'TRANSEXPORT SA', saldo: 50, filas: 1 },
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function escribir(texto) {
+    const usuario = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await usuario.type(screen.getByLabelText('Nombre o identificador del cliente'), texto)
+    return usuario
+  }
+
+  it('no pide una búsqueda por cada tecla, sino una vez que se deja de escribir', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: COINCIDENCIAS, total: 2 })
+    pintar()
+    await escribir('transex')
+
+    expect(buscarDeudores).not.toHaveBeenCalled()
+    await act(async () => { vi.advanceTimersByTime(400) })
+    expect(buscarDeudores).toHaveBeenCalledTimes(1)
+    expect(buscarDeudores.mock.calls[0][1].texto).toBe('transex')
+  })
+
+  it('con menos de dos caracteres no molesta al servidor', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: [], total: 0 })
+    pintar()
+    await escribir('t')
+    await act(async () => { vi.advanceTimersByTime(400) })
+    expect(buscarDeudores).not.toHaveBeenCalled()
+  })
+
+  it('muestra las sugerencias y al elegir una abre su detalle', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: COINCIDENCIAS, total: 2 })
+    obtenerDetalleDeudor.mockResolvedValue(DETALLE)
+    pintar()
+    await escribir('transex')
+    await act(async () => { vi.advanceTimersByTime(400) })
+
+    const opciones = await screen.findAllByRole('option')
+    expect(opciones).toHaveLength(2)
+
+    fireEvent.mouseDown(screen.getByText('TRANSEXPORT SA'))
+    await waitFor(() => expect(obtenerDetalleDeudor).toHaveBeenCalledWith(
+      'directorio-cartera', expect.objectContaining({ identidad: '222' }),
+    ))
+  })
+
+  it('se puede elegir con el teclado, sin tocar el mouse', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: COINCIDENCIAS, total: 2 })
+    obtenerDetalleDeudor.mockResolvedValue(DETALLE)
+    pintar()
+    const usuario = await escribir('transex')
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await screen.findAllByRole('option')
+
+    await usuario.keyboard('{ArrowDown}{ArrowDown}{Enter}')
+    await waitFor(() => expect(obtenerDetalleDeudor).toHaveBeenCalledWith(
+      'directorio-cartera', expect.objectContaining({ identidad: '222' }),
+    ))
+  })
+
+  it('al elegir una sugerencia no se vuelve a abrir la lista sobre el resultado', async () => {
+    // El campo queda con el nombre elegido; sin desactivar la sugerencia, ese texto dispararía
+    // otra consulta y la lista taparía el detalle que se acaba de abrir.
+    buscarDeudores.mockResolvedValue({ coincidencias: COINCIDENCIAS, total: 2 })
+    obtenerDetalleDeudor.mockResolvedValue(DETALLE)
+    pintar()
+    await escribir('transex')
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await screen.findAllByRole('option')
+
+    fireEvent.mouseDown(screen.getByText('TRANSEXPRESS'))
+    await waitFor(() => expect(obtenerDetalleDeudor).toHaveBeenCalled())
+    buscarDeudores.mockClear()
+    await act(async () => { vi.advanceTimersByTime(600) })
+
+    expect(buscarDeudores).not.toHaveBeenCalled()
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+  })
+
+  it('una respuesta que llega tarde no pisa a la del texto actual', async () => {
+    // El caso que ensucia estos buscadores: "cor" tarda, "corporacion" contesta antes, y cuando
+    // por fin llega "cor" reemplaza la lista por sugerencias que no corresponden a lo escrito.
+    let resolverPrimera
+    buscarDeudores
+      .mockImplementationOnce(() => new Promise((resolve) => { resolverPrimera = resolve }))
+      .mockResolvedValue({ coincidencias: [COINCIDENCIAS[1]], total: 1 })
+    pintar()
+
+    await escribir('tra')
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await escribir('nsexport')
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await screen.findByText('TRANSEXPORT SA')
+
+    await act(async () => {
+      resolverPrimera({ coincidencias: COINCIDENCIAS, total: 2 })
+    })
+
+    expect(screen.queryByText('TRANSEXPRESS')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+  })
+
+  it('avisa cuántas coincidencias quedaron fuera de la lista', async () => {
+    const muchas = Array.from({ length: 12 }, (_, i) => (
+      { identidad: `id-${i}`, nombre: `CLIENTE ${i}`, saldo: 10, filas: 1 }
+    ))
+    buscarDeudores.mockResolvedValue({ coincidencias: muchas, total: 40 })
+    pintar()
+    await escribir('cliente')
+    await act(async () => { vi.advanceTimersByTime(400) })
+
+    expect(await screen.findByText(/y 32 más/)).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(8)
   })
 })
