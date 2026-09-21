@@ -238,6 +238,27 @@ class AgregarYRestablecerBloqueadosTests(TestCase):
         )
         self.assertEqual(resp.status_code, 201)
 
+    def test_no_se_pueden_borrar_los_datos(self):
+        """La puerta por la que el Dashboard Directorio de producción perdió sus 9 secciones.
+
+        "Borrar datos" no es solo datos: se lleva los componentes de la Zona Personal y resiembra
+        las 13 posiciones de ejemplo. Pedía escribir el nombre del dashboard, pero no consultaba
+        el bloqueo, así que un dashboard "bloqueado" se podía convertir en el genérico sin más.
+        """
+        resp = self.client.post(
+            f'/api/dashboards/{DASHBOARD}/borrar-datos', {'confirmation_name': 'Finanzas'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'DASHBOARD_BLOQUEADO')
+        self.assertEqual(DashboardComponent.objects.filter(layout__dashboard_id=DASHBOARD).count(), 2)
+
+    def test_se_pueden_borrar_los_datos_confirmando_la_contrasena(self):
+        resp = self.client.post(
+            f'/api/dashboards/{DASHBOARD}/borrar-datos',
+            {'confirmation_name': 'Finanzas', 'password_confirmacion': CLAVE}, format='json',
+        )
+        self.assertEqual(resp.status_code, 204)
+
     def test_no_se_puede_restablecer_el_diseno(self):
         resp = self.client.post(f'/api/dashboards/{DASHBOARD}/layout/reset', {}, format='json')
         self.assertEqual(resp.status_code, 400)

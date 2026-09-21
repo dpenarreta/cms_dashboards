@@ -80,8 +80,10 @@ export function actualizarFuenteBD(dashboardId, { tipo, nombre, parametros, fech
   }).then((r) => r.data)
 }
 
-export function borrarDatosDashboard(dashboardId, confirmationName) {
-  return api.post(`/${dashboardId}/borrar-datos`, { confirmation_name: confirmationName }).then((r) => r.data)
+export function borrarDatosDashboard(dashboardId, confirmationName, passwordConfirmacion) {
+  return api.post(`/${dashboardId}/borrar-datos`, {
+    confirmation_name: confirmationName, ...cuerpoConfirmacion(passwordConfirmacion),
+  }).then((r) => r.data)
 }
 
 export function obtenerAcceso(dashboardId) {

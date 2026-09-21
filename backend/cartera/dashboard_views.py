@@ -266,6 +266,11 @@ class DashboardBorrarDatosView(APIView):
             request, dashboard_id, permiso_global=permisos.DASHBOARD_CONFIGURATION_RESET, requiere_edicion=True,
         ):
             return _denegado(request, dashboard_id, permisos.DASHBOARD_CONFIGURATION_RESET, 'No tiene permiso para borrar los datos de este dashboard.')
+        # La puerta más destructiva de todas: además de los datos se lleva los componentes de la
+        # Zona Personal —que en el Dashboard Directorio son TODO el informe— y resiembra las 13
+        # posiciones de ejemplo. Escribir el nombre del dashboard no alcanza cuando el diseño está
+        # bloqueado: ya pasó una vez, y el dashboard quedó convertido en el genérico.
+        desbloqueo.exigir_desbloqueo(request, dashboard_id, 'borrar los datos de este dashboard')
         dashboards_service.borrar_datos_dashboard(
             dashboard_id, confirmacion_nombre=request.data.get('confirmation_name', ''),
             actor=request.user, request=request,

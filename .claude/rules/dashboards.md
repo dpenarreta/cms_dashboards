@@ -55,10 +55,15 @@ siguen editando, porque son justo lo que hay que poder arreglar cuando cambia el
 - No lo exime ser superusuario. La única salida es confirmar la **contraseña propia** en la misma
   petición (`services/desbloqueo.py`, campo `password_confirmacion`), y vale para esa operación
   sola: no abre una ventana de tiempo ni deja el dashboard desbloqueado.
-- Son CUATRO las puertas que hay que cerrar, no una: `PUT .../layout`,
-  `POST .../componentes-presentacionales`, `POST /api/cartera/agregar-grafica` y
-  `POST .../layout/reset`. Al agregar un endpoint que toque la estructura, pasalo por
-  `desbloqueo.exigir_desbloqueo(...)` o queda un agujero.
+- Son CINCO las puertas que hay que cerrar, no una: `PUT .../layout`,
+  `POST .../componentes-presentacionales`, `POST /api/cartera/agregar-grafica`,
+  `POST .../layout/reset` y `POST .../borrar-datos`. Al agregar un endpoint que toque la
+  estructura, pasalo por `desbloqueo.exigir_desbloqueo(...)` o queda un agujero. La quinta se
+  descubrió en producción: "Borrar datos" no borra solo datos, se lleva los componentes de la
+  Zona Personal —que en el Dashboard Directorio son el informe entero— y resiembra las 13
+  posiciones de ejemplo. `plantilla.aplicar_mapeo` (cargar un archivo, conectar la fuente,
+  actualización automática) NO se bloquea a propósito: conserva la Zona Personal y su orden
+  relativo, y bloquearla dejaría al dashboard sin poder actualizar sus datos.
 - IMPORTANT: es distinto de `config.bloqueado` (marca por componente, plantilla base), que SÍ
   exime al superusuario. Conviven a propósito y se distinguen por el código de error:
   `DASHBOARD_BLOQUEADO` (con `detalles.puede_confirmar`, el editor ofrece el cuadro de contraseña)

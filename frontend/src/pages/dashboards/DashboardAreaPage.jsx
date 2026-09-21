@@ -294,11 +294,6 @@ export default function DashboardAreaPage() {
   // creado (`services/dashboards.py::borrar_datos_dashboard`) — hay que refrescar tanto el layout
   // (ahora con las posiciones fijas en datos de ejemplo) como el estado de fuente BD (ahora vacío)
   // para que la pantalla deje de mostrar el archivo/conexión que ya no existe.
-  const borrarDatosDashboard = async (confirmationName) => {
-    await dashboardLayoutService.borrarDatosDashboard(dashboardId, confirmationName)
-    await layout.recargar()
-    cargarEstadoFuenteBD()
-  }
 
   /**
    * Corre una operación estructural y, si el backend la rechaza por el bloqueo del dashboard,
@@ -368,6 +363,25 @@ export default function DashboardAreaPage() {
   )
 
   const estructuraBloqueada = Boolean(layout.layoutGuardado?.estructura_bloqueada)
+
+  // "Borrar datos" también se lleva los componentes de la Zona Personal, así que en un dashboard
+  // bloqueado pasa por la misma puerta que el resto. Va después de `conConfirmacion` porque lo usa.
+  const ejecutarBorrarDatos = async (confirmationName, clave) => {
+    try {
+      // La clave solo se agrega si hay una: sin bloqueo, la llamada queda igual que siempre.
+      await (clave
+        ? dashboardLayoutService.borrarDatosDashboard(dashboardId, confirmationName, clave)
+        : dashboardLayoutService.borrarDatosDashboard(dashboardId, confirmationName))
+    } catch (e) {
+      const confirmacion = requiereConfirmacion(e)
+      if (!confirmacion) throw e
+      return confirmacion
+    }
+    await layout.recargar()
+    cargarEstadoFuenteBD()
+    return { ok: true }
+  }
+  const borrarDatosDashboard = conConfirmacion('borrar los datos de este dashboard', ejecutarBorrarDatos)
 
   const guardarLayout = conConfirmacion('guardar estos cambios', (clave) => layout.guardar(clave))
   const restablecerLayout = conConfirmacion('restablecer el diseño', (clave) => layout.restablecer(clave))
@@ -716,13 +730,6 @@ export default function DashboardAreaPage() {
               guardar se perderán. ¿Continuar?
             </Alert>
           </ConfirmModal>
-
-          <ConfirmarClaveModal
-            show={Boolean(confirmacionClave)}
-            accion={confirmacionClave?.accion}
-            onConfirmar={(clave) => confirmacionClave.ejecutar(clave)}
-            onCancelar={() => setConfirmacionClave(null)}
-          />
         </>
       )}
 
@@ -739,6 +746,13 @@ export default function DashboardAreaPage() {
         dashboardNombre={dashboardInfo?.name || dashboardId}
         onConectar={conectarFuenteBD}
         onDatosBorrados={borrarDatosDashboard}
+      />
+
+      <ConfirmarClaveModal
+        show={Boolean(confirmacionClave)}
+        accion={confirmacionClave?.accion}
+        onConfirmar={(clave) => confirmacionClave.ejecutar(clave)}
+        onCancelar={() => setConfirmacionClave(null)}
       />
     </div>
   )
