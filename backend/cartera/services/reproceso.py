@@ -52,48 +52,6 @@ def _con_titulo_vigente(contenido, componente):
     return {**contenido, 'titulo': titulo} if titulo else contenido
 
 
-def _contenidos_fuera_de_la_plantilla(layout, df, dashboard_id, fecha_corte):
-    """Contenido recalculado de los componentes que NO son una de las 13 posiciones fijas — los de
-    la Zona Personal, que guardan su `calculo` dentro del propio `mapeo` porque no tienen un
-    catálogo externo del que sacarlo.
-
-    Se saltan los que no tienen mapeo (el flujo legado de recomendaciones automáticas no lo
-    guarda): sin él no hay forma de recalcular y adivinar sería peor que dejarlos como están. Un
-    `None` de `calcular_contenido_por_calculo` —una columna mapeada que ya no viene en el archivo—
-    también se salta, conservando el contenido anterior, igual que hacen las posiciones fijas al
-    caer a su dato de respaldo.
-    """
-    ids_de_plantilla = {slot['id'] for slot in plantilla.PLANTILLA_SLOTS}
-    contenidos = {}
-    for componente in layout.components.all():
-        if componente.component_id in ids_de_plantilla:
-            continue
-        propuesta = componente.mapeo or {}
-        calculo = propuesta.get('calculo')
-        if not calculo:
-            continue
-        anterior = componente.content or {}
-        nuevo = plantilla.calcular_contenido_por_calculo(
-            df, calculo, anterior.get('titulo', ''), propuesta,
-            dashboard_id, fecha_corte,
-        )
-        if nuevo is not None:
-            # La fecha del corte no la produce ningún cálculo: la agrega el Dashboard Directorio
-            # al KPI que titula el informe ("Corte junio 2026", ver
-            # `directorio_cartera.calcular_contenidos`). Sin reponerla, un reproceso la borraba en
-            # silencio y ese KPI volvía a mostrar la descripción del cálculo — el mismo problema
-            # que ya había con los títulos renombrados.
-            #
-            # Se decide por la marca del COMPONENTE (`es_base_porcentaje`) y no por si el contenido
-            # anterior la traía: un contenido que se perdió es justamente el caso que hay que
-            # reparar, y mirando el contenido viejo el reproceso no lo repararía nunca. La fecha
-            # sale de la carga contra la que se está reprocesando, que es la que corresponde.
-            if (componente.config or {}).get('es_base_porcentaje') and fecha_corte:
-                nuevo['fecha_corte'] = fecha_corte.isoformat() if hasattr(fecha_corte, 'isoformat') else str(fecha_corte)
-            contenidos[componente.component_id] = nuevo
-    return contenidos
-
-
 def _ultima_carga(dashboard_id):
     return (
         CargaArchivo.objects
@@ -145,7 +103,7 @@ def analizar_dashboard(dashboard_id):
 
     contenidos = {
         **plantilla.calcular_datos_mapeo(df, mapeo, dashboard_id, carga.fecha_corte),
-        **_contenidos_fuera_de_la_plantilla(layout, df, dashboard_id, carga.fecha_corte),
+        **plantilla.recalcular_zona_personal(layout, df, dashboard_id, carga.fecha_corte),
     }
 
     cambios = []

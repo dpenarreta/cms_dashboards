@@ -918,31 +918,83 @@ def _construir_componente(slot, orden, contenido, propuesta=None):
     }
 
 
-def _componentes_zona_personal(layout):
+def recalcular_zona_personal(layout, df, dashboard_id=None, fecha_referencia=None):
+    """Contenido recalculado de los componentes que NO son una de las 13 posiciones fijas — los
+    de la Zona Personal, que guardan su `calculo` dentro del propio `mapeo` porque no tienen un
+    catálogo externo del que sacarlo. Devuelve `{component_id: contenido}`.
+
+    La usan los dos caminos que traen datos nuevos: aplicar un mapeo (cargar un archivo, conectar
+    la fuente, la actualización automática) y `services/reproceso.py`. Estaba solo en el segundo,
+    y por eso el Dashboard Directorio —que tiene TODO su informe en la Zona Personal— se quedaba
+    con los números del archivo anterior hasta que alguien corriera el reproceso a mano.
+
+    Dos casos se saltan, conservando el contenido que el componente ya tenía:
+
+    - Sin `calculo` en el mapeo (el flujo legado de recomendaciones automáticas no lo guarda):
+      no hay forma de recalcular y adivinar sería peor.
+    - Un `None` de `calcular_contenido_por_calculo`, que es una columna mapeada que el archivo
+      nuevo ya no trae. Es el resguardo que las 13 posiciones fijas tienen con su dato ficticio
+      y que un componente de Zona Personal no tenía: sin esto, cargar un archivo con otras
+      columnas dejaría la sección en blanco en vez de mostrar lo último que se pudo calcular.
+    """
+    ids_de_plantilla = {slot['id'] for slot in PLANTILLA_SLOTS}
+    contenidos = {}
+    for componente in layout.components.all():
+        if componente.component_id in ids_de_plantilla:
+            continue
+        propuesta = componente.mapeo or {}
+        calculo = propuesta.get('calculo')
+        if not calculo:
+            continue
+        anterior = componente.content or {}
+        nuevo = calcular_contenido_por_calculo(
+            df, calculo, anterior.get('titulo', ''), propuesta, dashboard_id, fecha_referencia,
+        )
+        if nuevo is None:
+            continue
+        # La fecha del corte no la produce ningún cálculo: la agrega el Dashboard Directorio al
+        # KPI que titula el informe ("Corte junio 2026"). Se decide por la marca del COMPONENTE
+        # (`es_base_porcentaje`) y no por si el contenido anterior la traía: un contenido que se
+        # perdió es justamente el caso que hay que reparar.
+        if (componente.config or {}).get('es_base_porcentaje') and fecha_referencia:
+            nuevo['fecha_corte'] = (
+                fecha_referencia.isoformat() if hasattr(fecha_referencia, 'isoformat') else str(fecha_referencia)
+            )
+        contenidos[componente.component_id] = nuevo
+    return contenidos
+
+
+def _componentes_zona_personal(layout, contenidos=None):
     """Los componentes que el usuario agregó a mano a la "Zona Personal" (`config.zona ==
-    'personal'`, ver `dashboard_layout.agregar_componente_generado`) — se preservan tal cual (sin
-    recalcular contra el archivo nuevo) cada vez que se vuelve a sembrar/aplicar la plantilla de
-    13 posiciones: recalcular abriría una superficie nueva de "la columna ya no existe" que la
-    plantilla fija ya resuelve cayendo a datos ficticios, pero un componente de Zona Personal no
-    tiene ese resguardo. Se lee directo de `DashboardComponent` (no de `componentes_validos`, que
-    no expone `is_visible`) para no perder el estado oculto de cada uno."""
+    'personal'`, ver `dashboard_layout.agregar_componente_generado`), con su contenido recalculado
+    si se le pasan `contenidos` (`recalcular_zona_personal`).
+
+    Antes se preservaban tal cual, sin recalcular, por miedo a "la columna ya no existe": la
+    plantilla fija resuelve ese caso cayendo a datos ficticios y un componente de Zona Personal no
+    tenía ese resguardo. Ahora sí lo tiene —`recalcular_zona_personal` conserva el contenido
+    anterior cuando el cálculo no se puede hacer—, así que no recalcular solo lograba que un
+    dashboard armado sobre la Zona Personal siguiera mostrando los números del archivo viejo.
+
+    Se lee directo de `DashboardComponent` para conservar el estado oculto de cada uno."""
     return [
         {
             'component_id': c.component_id, 'type': c.type, 'chart_type': c.chart_type,
             'row': c.row, 'order': c.order, 'width': c.width, 'height': c.height,
-            'is_visible': c.is_visible, 'content': c.content, 'styles': c.styles,
-            'config': c.config, 'mapeo': c.mapeo,
+            'is_visible': c.is_visible,
+            'content': (contenidos or {}).get(c.component_id, c.content),
+            'styles': c.styles, 'config': c.config, 'mapeo': c.mapeo,
         }
         for c in DashboardComponent.objects.filter(layout=layout)
         if (c.config or {}).get('zona') == 'personal'
     ]
 
 
-def _escribir_plantilla(dashboard_id, contenidos_por_slot, mapeo=None, slots=None):
+def _escribir_plantilla(dashboard_id, contenidos_por_slot, mapeo=None, slots=None,
+                        contenidos_personales=None):
     slots = slots if slots is not None else PLANTILLA_SLOTS
     mapeo = mapeo or {}
     layout = dashboard_layout.obtener_o_crear_layout(dashboard_id)
-    personales = _componentes_zona_personal(layout)
+    personales = _componentes_zona_personal(layout, contenidos_personales)
     componentes = [
         _construir_componente(slot, i + 1, contenidos_por_slot[slot['id']], mapeo.get(slot['id']))
         for i, slot in enumerate(slots)
@@ -982,7 +1034,16 @@ def aplicar_mapeo(dashboard_id, df, mapeo, actor=None, request=None, fecha_refer
     era un caso de borde: lo disparaba cada actualización automática semanal/mensual
     (`fuente_bd_scheduler`), cada archivo nuevo y cada reconfiguración desde la pantalla."""
     contenidos = calcular_datos_mapeo(df, mapeo, dashboard_id, fecha_referencia)
-    layout = _escribir_plantilla(dashboard_id, contenidos, mapeo, slots=slots_vigentes(dashboard_id))
+    # La Zona Personal también se recalcula contra el archivo nuevo. Sin esto, un dashboard que
+    # tiene ahí su contenido real —el Directorio tiene sus 9 secciones— quedaba con los números
+    # del archivo anterior después de cargar datos, y solo se actualizaba si alguien se acordaba
+    # de correr `reprocesar_dashboards` a mano.
+    layout_actual = dashboard_layout.obtener_o_crear_layout(dashboard_id)
+    personales = recalcular_zona_personal(layout_actual, df, dashboard_id, fecha_referencia)
+    layout = _escribir_plantilla(
+        dashboard_id, contenidos, mapeo, slots=slots_vigentes(dashboard_id),
+        contenidos_personales=personales,
+    )
 
     log_event(
         domain=AuditEvent.Domain.DASHBOARD_CONFIGURATION, action='DASHBOARD_TEMPLATE_APPLIED', actor=actor,
