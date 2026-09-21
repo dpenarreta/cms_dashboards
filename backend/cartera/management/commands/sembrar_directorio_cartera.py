@@ -24,7 +24,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from cartera.models import CargaArchivo, Dashboard
-from cartera.services import carga_archivos, db_source, directorio_cartera
+from cartera.services import carga_archivos, db_source, directorio_cartera, estructura
 from cartera.services.carga_archivos import HOJA_ARCHIVO_PERMANENTE
 from cartera.utils.archivos import asegurar_directorio
 from cartera.utils.dates import fecha_corte_por_defecto
@@ -105,6 +105,12 @@ class Command(BaseCommand):
             return
 
         resultados = directorio_cartera.construir(dashboard_id, df, fecha_corte, **parametros)
+        # Sembrar es la única operación que define legítimamente una estructura nueva. Si el
+        # dashboard está bloqueado, la foto que se repone tiene que pasar a ser ÉSTA: si no, la
+        # reposición devolvería el layout a la estructura anterior.
+        if estructura.fijada_de(dashboard_id):
+            estructura.fijar(dashboard_id)
+            self.stdout.write('  Estructura fijada de nuevo (el dashboard está bloqueado).')
         if carga is None:
             self._registrar_carga(dashboard_id, df, fecha_corte)
         elif carga.fecha_corte != fecha_corte:

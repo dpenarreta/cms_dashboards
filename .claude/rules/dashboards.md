@@ -73,6 +73,20 @@ siguen editando, porque son justo lo que hay que poder arreglar cuando cambia el
   (`BruteForceProtectionService`): es la misma contraseña. Un acierto no se registra como login
   exitoso, para que esta puerta no sirva para limpiar el bloqueo del login.
 
+Bloquear las puertas no alcanza, porque el layout también se reescribe por caminos que NO son
+"editar el diseño": borrar los datos, aplicar un mapeo (cargar un archivo, conectar la fuente, la
+actualización automática) y restablecer el diseño. Son operaciones de DATOS legítimas —sin ellas
+el dashboard no se puede actualizar—, así que en vez de prohibirlas se REPONE la estructura:
+`Dashboard.estructura_fijada` guarda la foto al bloquear y `services/estructura.py::aplicar`
+la vuelve a imponer desde `dashboard_layout._escribir_componentes`, que es el único punto de
+escritura de componentes que hay. Tipos, orden, dimensiones y visibilidad vuelven solos; el
+contenido no se toca (es lo que esas operaciones vienen a cambiar).
+
+- IMPORTANT: si algún día hay un segundo punto de escritura de componentes, tiene que pasar por
+  `estructura.aplicar` o el dashboard deja de repararse por ese camino.
+- Sembrar es la excepción: es la única operación que define legítimamente una estructura nueva,
+  así que `sembrar_directorio_cartera --aplicar` vuelve a fijar la foto al terminar.
+
 ## Agregar un cálculo nuevo
 
 Un `calculo` (`mapeo['calculo']`) es de primera clase solo si está en los CUATRO lugares; si falta

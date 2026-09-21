@@ -341,9 +341,17 @@ class ComandoTests(TestCase):
         self._correr(DASHBOARD, '--desbloquear')
         self.assertFalse(Dashboard.objects.get(dashboard_id=DASHBOARD).estructura_bloqueada)
 
-    def test_repetirlo_no_es_un_error(self):
+    def test_repetirlo_actualiza_la_foto_de_la_estructura(self):
+        # Volver a correrlo sobre un dashboard ya bloqueado no es un error ni un no-op: vuelve a
+        # fotografiar la estructura actual. Es lo que permite confirmar una estructura nueva
+        # después de cambiarla a propósito, y lo que le da foto a un dashboard que se bloqueó
+        # antes de que la reposición existiera.
         self._correr(DASHBOARD)
-        self.assertIn('Sin cambios', self._correr(DASHBOARD))
+        self.assertIn('se actualizó la foto', self._correr(DASHBOARD))
+
+    def test_desbloquear_dos_veces_no_es_un_error(self):
+        self._correr(DASHBOARD, '--desbloquear')
+        self.assertIn('Sin cambios', self._correr(DASHBOARD, '--desbloquear'))
 
     def test_un_dashboard_inexistente_lista_los_que_hay(self):
         with self.assertRaises(CommandError) as ctx:

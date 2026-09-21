@@ -20,7 +20,7 @@ from apps.audit.services import log_event
 from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
 from ..models import DashboardComponent, DashboardLayout
-from . import desbloqueo
+from . import desbloqueo, estructura
 from .generic_charts import (
     ETIQUETAS_TRAMOS_ACUMULADOS, LIMITE_DEUDORES, TIPOS_VISUALIZACION, evaluar_meta,
 )
@@ -92,6 +92,15 @@ def obtener_o_crear_layout(dashboard_id):
 
 
 def _escribir_componentes(layout, componentes):
+    """Reescribe los componentes del layout. ÚNICO punto de escritura: por acá pasan el editor,
+    la aplicación de un mapeo, el borrado de datos, el restablecimiento y la siembra.
+
+    Que sea único es lo que permite reponer la estructura fijada en un solo lugar
+    (`services/estructura.py`): un dashboard bloqueado conserva sus tipos, orden y dimensiones
+    venga la escritura de donde venga, sin tener que acordarse de cubrir cada camino por separado.
+    """
+    actuales = list(DashboardComponent.objects.filter(layout=layout))
+    componentes = estructura.aplicar(layout.dashboard_id, componentes, actuales=actuales)
     DashboardComponent.objects.filter(layout=layout).delete()
     objetos = [
         DashboardComponent(

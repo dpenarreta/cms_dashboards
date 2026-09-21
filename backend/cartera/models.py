@@ -104,6 +104,18 @@ class Dashboard(models.Model):
     # Un superusuario puede saltear el bloqueo operación por operación confirmando su contraseña
     # (`services/desbloqueo.py`); para todos los demás es infranqueable desde la aplicación.
     estructura_bloqueada = models.BooleanField(default=False)
+    # Foto de la estructura al momento de bloquear: por cada componente, su tipo, posición,
+    # tamaño y visibilidad. Es lo que se REPONE cada vez que algo reescribe el layout
+    # (`services/estructura.py`), así el diseño sobrevive incluso a "Borrar datos", que elimina
+    # los componentes de la Zona Personal y resiembra las 13 posiciones de ejemplo.
+    #
+    # Guarda una foto en vez de apuntar a la definición en código (`directorio_cartera`) a
+    # propósito: sirve para cualquier dashboard, y lo que se promete conservar es la estructura
+    # que el dashboard TENÍA cuando se bloqueó, no la que un cambio de código decida mañana.
+    #
+    # Vacía cuando el dashboard no está bloqueado: no es un segundo interruptor, es el contenido
+    # del primero.
+    estructura_fijada = models.JSONField(default=list, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Pestañas dentro de un mismo dashboard: cada pestaña es un `Dashboard` más (su propia
