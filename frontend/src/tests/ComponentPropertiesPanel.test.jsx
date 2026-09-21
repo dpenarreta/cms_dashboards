@@ -3,8 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import ComponentPropertiesPanel from '../components/dashboard-editor/ComponentPropertiesPanel'
 import * as carteraService from '../services/carteraService'
+import * as dashboardLayoutService from '../services/dashboardLayoutService'
 
 vi.mock('../services/carteraService')
+vi.mock('../services/dashboardLayoutService')
 
 function componenteDePrueba(extra = {}) {
   return {
@@ -522,5 +524,60 @@ describe('ComponentPropertiesPanel', () => {
         filas: [['Nuevo nombre', 100], ['B', 200]],
       })
     })
+  })
+})
+
+
+describe('ComponentPropertiesPanel — identificador del cliente (consulta por cliente)', () => {
+  /**
+   * Sin este selector, habilitar la búsqueda por RUC exigía editar el mapeo a mano en la base:
+   * la sección de consulta no declara cálculo, así que el panel no le ofrecía ningún campo de
+   * datos. El caso concreto es el de producción, cuya vista todavía no trae el identificador.
+   */
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+    dashboardLayoutService.obtenerColumnasDelArchivo.mockResolvedValue({
+      columnas: ['Cliente', 'Ruc Cliente', 'Saldo Total'],
+    })
+  })
+
+  function componenteConsulta(mapeo = {}) {
+    return componenteDePrueba({
+      component_id: 'consulta-deudor',
+      type: 'chart',
+      config: { bloque: 'consulta-deudor' },
+      mapeo: { columna_id: 'Cliente', ...mapeo },
+    })
+  }
+
+  it('ofrece las columnas del archivo para elegir el identificador', async () => {
+    renderPanel({ componente: componenteConsulta() })
+    const selector = await screen.findByLabelText('Columna que identifica al cliente')
+    expect([...selector.options].map((o) => o.value)).toEqual(['', 'Cliente', 'Ruc Cliente', 'Saldo Total'])
+  })
+
+  it('al elegir una columna la guarda en el mapeo del componente', async () => {
+    const { props } = renderPanel({ componente: componenteConsulta() })
+    const selector = await screen.findByLabelText('Columna que identifica al cliente')
+
+    await userEvent.selectOptions(selector, 'Ruc Cliente')
+
+    expect(props.onActualizarComponente).toHaveBeenCalledWith('consulta-deudor', {
+      mapeo: { columna_id: 'Cliente', columna_ruc: 'Ruc Cliente' },
+    })
+  })
+
+  it('sin identificador explica qué se pierde, en vez de dejarlo como un campo vacío más', async () => {
+    renderPanel({ componente: componenteConsulta() })
+    expect(await screen.findByText(/no se puede buscar por RUC/)).toBeInTheDocument()
+  })
+
+  it('avisa si la columna configurada ya no viene en el archivo', async () => {
+    // El mapeo puede haberse guardado con un archivo anterior; la columna se conserva en la
+    // lista para no hacer creer que no hay nada configurado.
+    renderPanel({ componente: componenteConsulta({ columna_ruc: 'Ruc Viejo' }) })
+    expect(await screen.findByText(/El archivo cargado no trae «Ruc Viejo»/)).toBeInTheDocument()
   })
 })

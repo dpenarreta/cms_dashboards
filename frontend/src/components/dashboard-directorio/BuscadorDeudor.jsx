@@ -79,6 +79,13 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
     fecha: mapeo?.columna_fecha,
     valor: mapeo?.columna_valor,
   }
+  // El campo solo ofrece buscar por identificador si el dashboard tiene una columna que lo
+  // contenga. Prometerlo igual —como hacía el texto fijo "Nombre o identificador"— deja a quien
+  // pega un RUC creyendo que el buscador falla, cuando lo que pasa es que ese dato no está en el
+  // archivo. Se configura en "Configurar componente → Identificador del cliente".
+  const etiquetaBusqueda = columnas.ruc
+    ? 'Nombre o identificador del cliente'
+    : 'Nombre del cliente'
 
   // Sugerencias mientras se escribe. El efecto se vuelve a montar con cada tecla, así que el
   // `clearTimeout` de la limpieza es lo que hace el "esperar a que deje de escribir".
@@ -180,14 +187,14 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
           <input
             type="search"
             className="form-control"
-            placeholder="Nombre o identificador del cliente"
+            placeholder={etiquetaBusqueda}
             value={texto}
             onChange={(e) => escribir(e.target.value)}
             onKeyDown={teclear}
             // El cierre va en `onBlur` y la elección en `onMouseDown`, que ocurre ANTES: con
             // `onClick` la lista ya se habría cerrado y el clic caería en el vacío.
             onBlur={() => { setSugerencias(null); setResaltada(-1) }}
-            aria-label="Nombre o identificador del cliente"
+            aria-label={etiquetaBusqueda}
             role="combobox"
             aria-expanded={Boolean(sugerencias?.length)}
             aria-controls="sugerencias-deudor"

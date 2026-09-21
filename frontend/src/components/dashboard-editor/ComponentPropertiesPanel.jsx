@@ -3,6 +3,7 @@ import { Accordion, Alert, Button, Form, Offcanvas } from 'react-bootstrap'
 import WidthHeightControls from './WidthHeightControls'
 import FilterFieldReorderList from './FilterFieldReorderList'
 import ComponentDataSection from './ComponentDataSection'
+import SelectorColumnaIdentificador from './SelectorColumnaIdentificador'
 import SelectorColumnasDetalle from './SelectorColumnasDetalle'
 import TableCellsEditor from './TableCellsEditor'
 import { SelectorTipoGrafico } from '../dashboard-generic/SlotFields'
@@ -378,6 +379,15 @@ export default function ComponentPropertiesPanel({
                   Se guarda en el componente, así que todos ven las mismas. */}
               {componente.config?.bloque === 'consulta-deudor' && (
                 <>
+                  <h6>Identificador del cliente</h6>
+                  <SelectorColumnaIdentificador
+                    dashboardId={dashboardId}
+                    valor={componente.mapeo?.columna_ruc}
+                    onCambiar={(columna) => onActualizarComponente(componente.component_id, {
+                      mapeo: { ...componente.mapeo, columna_ruc: columna },
+                    })}
+                  />
+
                   <h6>Columnas del detalle</h6>
                   <SelectorColumnasDetalle
                     dashboardId={dashboardId}

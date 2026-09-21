@@ -364,3 +364,32 @@ describe('BuscadorDeudor — aviso de identidad dudosa', () => {
     expect(screen.queryByText(/Revisá la identidad/)).not.toBeInTheDocument()
   })
 })
+
+
+describe('BuscadorDeudor — cuando el origen no trae identificador', () => {
+  /**
+   * El caso de producción: la vista devuelve el nombre del cliente y nada más. El campo decía
+   * "Nombre o identificador del cliente", así que quien pegaba un RUC y no encontraba nada
+   * concluía —con razón -- que el buscador estaba roto, cuando el dato no está en el archivo.
+   */
+
+  const SIN_IDENTIFICADOR = {
+    ...COMPONENTE,
+    mapeo: { ...COMPONENTE.mapeo, columna_ruc: '' },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('el campo no ofrece buscar por identificador', () => {
+    render(<BuscadorDeudor componente={SIN_IDENTIFICADOR} dashboardId="directorio-cartera" />)
+    expect(screen.getByLabelText('Nombre del cliente')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Nombre o identificador del cliente')).not.toBeInTheDocument()
+  })
+
+  it('con identificador configurado sí lo ofrece', () => {
+    render(<BuscadorDeudor componente={COMPONENTE} dashboardId="directorio-cartera" />)
+    expect(screen.getByLabelText('Nombre o identificador del cliente')).toBeInTheDocument()
+  })
+})

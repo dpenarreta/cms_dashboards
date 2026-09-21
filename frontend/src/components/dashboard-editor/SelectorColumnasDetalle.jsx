@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
 import { Form, Spinner } from 'react-bootstrap'
-import { obtenerColumnasDelArchivo } from '../../services/dashboardLayoutService'
+import { useColumnasDelArchivo } from '../../hooks/useColumnasDelArchivo'
 
 /**
  * Qué columnas del archivo muestra el detalle de la consulta por cliente.
@@ -14,18 +13,7 @@ import { obtenerColumnasDelArchivo } from '../../services/dashboardLayoutService
  * compara las dos cosas.
  */
 export default function SelectorColumnasDetalle({ dashboardId, seleccionadas, onCambiar }) {
-  const [columnas, setColumnas] = useState(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let cancelado = false
-    obtenerColumnasDelArchivo(dashboardId)
-      .then((datos) => { if (!cancelado) setColumnas(datos.columnas) })
-      .catch((e) => {
-        if (!cancelado) setError(e.response?.data?.mensaje || 'No se pudieron leer las columnas del archivo.')
-      })
-    return () => { cancelado = true }
-  }, [dashboardId])
+  const { columnas, error } = useColumnasDelArchivo(dashboardId)
 
   if (error) return <p className="text-warning small mb-3">{error}</p>
   if (!columnas) return <Spinner animation="border" size="sm" className="mb-3" />
