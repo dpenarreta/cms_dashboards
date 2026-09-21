@@ -776,6 +776,49 @@ describe('DashboardAreaPage', () => {
       expect(screen.queryByText('Componentes')).not.toBeInTheDocument()
     })
 
+    it('"Guardar cambios" en un dashboard bloqueado abre el cuadro de contraseña', async () => {
+      // La prueba que faltaba. `EditModeToolbar` usa `onClick={onGuardar}`, así que el handler
+      // recibe el EVENTO de React como primer argumento; el envoltorio lo tomaba por la
+      // contraseña y axios moría al serializarlo, antes de hacer la petición. En pantalla se veía
+      // "No se pudo guardar la configuración" y ningún cuadro donde escribir nada.
+      const guardar = vi.fn(async (clave) => (clave
+        ? { ok: true }
+        : { ok: false, requiereConfirmacion: true, mensaje: 'El diseño está bloqueado.' }))
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({
+        modoEdicion: true, guardar,
+        layoutGuardado: { version: 1, components: [], estructura_bloqueada: true },
+      }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+
+      expect(await screen.findByText('Confirmá tu contraseña')).toBeInTheDocument()
+      // Lo que se le pasó a `guardar` no puede ser un evento: o es la contraseña, o nada.
+      expect(guardar.mock.calls[0][0]).toBeUndefined()
+    })
+
+    it('la contraseña escrita llega a la operación que se estaba guardando', async () => {
+      const guardar = vi.fn(async (clave) => (clave
+        ? { ok: true }
+        : { ok: false, requiereConfirmacion: true, mensaje: 'El diseño está bloqueado.' }))
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({
+        modoEdicion: true, guardar,
+        layoutGuardado: { version: 1, components: [], estructura_bloqueada: true },
+      }))
+      renderPagina()
+      await screen.findByRole('heading', { name: 'Finanzas' })
+      await userEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+      await screen.findByText('Confirmá tu contraseña')
+
+      await userEvent.type(screen.getByLabelText('Contraseña'), 'mi-clave')
+      await userEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+
+      await waitFor(() => expect(guardar).toHaveBeenCalledWith('mi-clave'))
+    })
+
     it('en modo edición, el panel de paleta se abre solo (sin acción adicional del usuario)', async () => {
       useGenericDashboardBuilder.mockReturnValue(builderBase())
       useDashboardLayout.mockReturnValue(layoutBase({ modoEdicion: true }))

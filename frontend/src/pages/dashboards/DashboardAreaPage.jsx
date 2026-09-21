@@ -304,7 +304,9 @@ export default function DashboardAreaPage() {
    * decide.
    */
   const conConfirmacion = (accion, operacion) => async (...args) => {
-    const resultado = await operacion(...args)
+    // Un handler escrito como `onClick={guardarLayout}` entrega el evento de React como primer
+    // argumento. Sin descartarlo, ese evento viajaba como si fuera la contraseña.
+    const resultado = await operacion(...args.filter((a) => !(a && typeof a === 'object' && 'nativeEvent' in a)))
     if (resultado?.requiereConfirmacion) {
       setConfirmacionClave({
         accion,
@@ -628,7 +630,7 @@ export default function DashboardAreaPage() {
               cargando={layout.cargando}
               hayCambiosSinGuardar={layout.hayCambiosSinGuardar}
               onActivarEdicion={layout.activarEdicion}
-              onGuardar={guardarLayout}
+              onGuardar={() => guardarLayout()}
               onCancelar={layout.cancelar}
               onAlternarVistaPrevia={layout.alternarVistaPrevia}
               onRestablecer={restablecerLayout}

@@ -23,9 +23,19 @@ export function restablecerLayout(dashboardId, { passwordConfirmacion } = {}) {
   return api.post(`/${dashboardId}/layout/reset`, cuerpoConfirmacion(passwordConfirmacion)).then((r) => r.data)
 }
 
-/** El campo solo aparece en el cuerpo si hay algo que confirmar. */
+/**
+ * El campo solo aparece en el cuerpo si hay una contraseña de verdad.
+ *
+ * La comprobación es `typeof === 'string'` y no un simple truthy por un caso real: un handler
+ * escrito como `onClick={guardar}` le pasa a la operación el EVENTO de React como primer
+ * argumento, que llegaba hasta acá como si fuera la contraseña. Axios entonces intentaba
+ * serializar ese objeto —que es circular— y reventaba ANTES de hacer la petición: la pantalla
+ * mostraba "No se pudo guardar la configuración", sin cuadro de contraseña, sin request y sin
+ * nada en el log del servidor.
+ */
 function cuerpoConfirmacion(passwordConfirmacion) {
-  return passwordConfirmacion ? { password_confirmacion: passwordConfirmacion } : {}
+  const clave = typeof passwordConfirmacion === 'string' ? passwordConfirmacion.trim() : ''
+  return clave ? { password_confirmacion: clave } : {}
 }
 
 /** Agrega un componente de solo presentación (título o separador, panel lateral de componentes)
