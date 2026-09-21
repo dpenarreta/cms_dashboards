@@ -14,8 +14,9 @@ from .constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from .exceptions import CarteraError
 from .models import CargaArchivo, Dashboard, RegistroCartera
 from .services import (
-    aggregations, carga_archivos, column_mapper, dashboard_layout, db_source, export_service,
-    excel_reader, filters, fuente_bd_scheduler, generic_charts, historico, ingest, plantilla,
+    aggregations, carga_archivos, column_mapper, dashboard_layout, db_source, desbloqueo,
+    export_service, excel_reader, filters, fuente_bd_scheduler, generic_charts, historico,
+    ingest, plantilla,
 )
 from .services.calculator import anotar_estado_y_mora, resumen_kpis
 from .utils.archivos import asegurar_directorio
@@ -215,7 +216,10 @@ class ConectarFuenteBDView(APIView):
         )
 
         nombre_original = f'{dashboard.fuente_bd_nombre} (base de datos)'
-        carga = db_source.crear_carga_temporal(dashboard_id, df, nombre_original, subido_por=request.user)
+        carga = db_source.crear_carga_temporal(
+            dashboard_id, df, nombre_original, subido_por=request.user,
+            fecha_corte=db_source.fecha_corte_de_parametros(dashboard.fuente_bd_parametros),
+        )
 
         mapeo_sugerido = column_mapper.detectar_mapeo(df.columns.tolist())
         preview = excel_reader.preview_hoja(df, 20)
@@ -443,6 +447,9 @@ class AgregarGraficaView(APIView):
         carga = get_object_or_404(CargaArchivo, id=carga_id)
         if not _tiene_acceso(request, carga.dashboard_id, requiere_edicion=True):
             return _acceso_denegado()
+        # Agregar una gráfica es un cambio estructural, y con `reemplazar_existentes` además borra
+        # todo lo anterior: en un dashboard bloqueado va por la misma puerta que el resto.
+        desbloqueo.exigir_desbloqueo(request, carga.dashboard_id, 'agregar un componente')
         _ruta_temp, df = _leer_archivo_temporal_de_carga(carga)
 
         if calculo == 'tabla' and usa_historico:

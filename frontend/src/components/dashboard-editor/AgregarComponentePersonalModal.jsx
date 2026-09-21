@@ -124,7 +124,7 @@ function construirPayload({ tipoId, tipoVisualizacionPorDefecto, cargaId, titulo
  * ambos quedan guardados en `DashboardComponent.config` para que "Hallazgos clave" los use al
  * interpretar este componente puntual, sin afectar cómo se calcula ni se dibuja.
  */
-export default function AgregarComponentePersonalModal({ show, onHide, dashboardId, componentesPersonales, onAgregado, tipoInicial }) {
+export default function AgregarComponentePersonalModal({ show, onHide, dashboardId, componentesPersonales, onAgregado, tipoInicial, passwordConfirmacion }) {
   const [archivoActual, setArchivoActual] = useState(null)
   const [cargandoArchivo, setCargandoArchivo] = useState(true)
   const [errorArchivo, setErrorArchivo] = useState('')
@@ -185,11 +185,16 @@ export default function AgregarComponentePersonalModal({ show, onHide, dashboard
     setEnviando(true)
     setError('')
     try {
-      await carteraService.agregarComponentePersonal(construirPayload({
+      const payload = construirPayload({
         tipoId, tipoVisualizacionPorDefecto: tipoSeleccionado.tipoVisualizacion,
         cargaId: archivoActual.carga_id, titulo, descripcion, propuesta, ancho,
         instruccionIA, columnaContextoIA,
-      }))
+      })
+      // La confirmación se pasa solo si existe: en un dashboard sin bloquear la llamada queda
+      // exactamente como era, con un único argumento.
+      await (passwordConfirmacion
+        ? carteraService.agregarComponentePersonal(payload, passwordConfirmacion)
+        : carteraService.agregarComponentePersonal(payload))
       await onAgregado()
     } catch (e) {
       setError(e.response?.data?.mensaje || 'No se pudo agregar el componente.')

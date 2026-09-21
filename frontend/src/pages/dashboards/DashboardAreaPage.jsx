@@ -3,7 +3,7 @@ import { Alert, Button, Spinner } from 'react-bootstrap'
 import { Link, useParams } from 'react-router-dom'
 import { DndContext, PointerSensor, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { useGenericDashboardBuilder } from '../../hooks/useGenericDashboardBuilder'
-import { useDashboardLayout } from '../../hooks/useDashboardLayout'
+import { requiereConfirmacion, useDashboardLayout } from '../../hooks/useDashboardLayout'
 import { PERMISOS, usePermisos } from '../../hooks/usePermisos'
 import { useAuth } from '../../context/AuthContext'
 import FileUploadZone from '../../components/upload/FileUploadZone'
@@ -21,6 +21,7 @@ import ComponentPropertiesPanel from '../../components/dashboard-editor/Componen
 import AgregarComponentePersonalModal from '../../components/dashboard-editor/AgregarComponentePersonalModal'
 import ComponentPaletteSidebar from '../../components/dashboard-editor/ComponentPaletteSidebar'
 import ConfirmModal from '../../components/dashboard-editor/ConfirmModal'
+import ConfirmarClaveModal from '../../components/dashboard-editor/ConfirmarClaveModal'
 import DashboardTabsBar from '../../components/dashboards/DashboardTabsBar'
 import InterpretacionDashboardModal from '../../components/dashboards/InterpretacionDashboardModal'
 import ConectarFuenteBDModal from '../../components/dashboards/ConectarFuenteBDModal'
@@ -113,6 +114,11 @@ export default function DashboardAreaPage() {
   const [mostrarInterpretacion, setMostrarInterpretacion] = useState(false)
   const [mostrarConectarFuenteBD, setMostrarConectarFuenteBD] = useState(false)
   const [confirmandoAgregarTipo, setConfirmandoAgregarTipo] = useState(null)
+  // Cambio estructural esperando que se confirme la contraseña, en un dashboard con el diseño
+  // bloqueado: `{ accion, ejecutar }`. `ejecutar(clave)` reintenta la MISMA operación que acaba
+  // de ser rechazada — no se guarda la contraseña en ningún lado, solo se la pasa a ese reintento.
+  const [confirmacionClave, setConfirmacionClave] = useState(null)
+  const [claveComponenteNuevo, setClaveComponenteNuevo] = useState('')
   const builder = useGenericDashboardBuilder(dashboardId)
   const layout = useDashboardLayout(dashboardId)
   // Estado de "Última actualización"/"Próxima actualización automática" bajo los botones del
@@ -160,7 +166,11 @@ export default function DashboardAreaPage() {
     setErrorPDF('')
     try {
       await generarPDFDesdeElemento(dashboardRef.current, `${dashboardInfo?.name || dashboardId}.pdf`)
-    } catch {
+    } catch (e) {
+      // El error se registra además de mostrarse: la captura falla por cosas que el mensaje
+      // amable no puede explicar (un recurso que no carga, un color que html2canvas no sabe
+      // parsear), y sin esto no queda rastro de cuál fue — el usuario solo ve "no se pudo".
+      console.error('[PDF] No se pudo generar el PDF:', e)
       setErrorPDF('No se pudo generar el PDF. Intentá de nuevo.')
     } finally {
       setGenerandoPDF(false)
@@ -290,29 +300,84 @@ export default function DashboardAreaPage() {
     cargarEstadoFuenteBD()
   }
 
+  /**
+   * Corre una operación estructural y, si el backend la rechaza por el bloqueo del dashboard,
+   * abre el cuadro de contraseña con el mismo reintento adentro.
+   *
+   * Está acá y no dentro del hook porque el hook no puede abrir modales, y la pantalla no debería
+   * tener que saber qué operaciones son estructurales: cada una se envuelve igual y el backend
+   * decide.
+   */
+  const conConfirmacion = (accion, operacion) => async (...args) => {
+    const resultado = await operacion(...args)
+    if (resultado?.requiereConfirmacion) {
+      setConfirmacionClave({
+        accion,
+        ejecutar: async (clave) => {
+          // El try/catch no es defensivo de más: si algo acá lanza, el cuadro se queda girando
+          // para siempre porque nadie más atrapa esa excepción — ya pasó con la contraseña
+          // incorrecta, antes de que `requiereConfirmacion` reconociera ese código.
+          try {
+            const reintento = await operacion(...args, clave)
+            if (reintento?.ok) setConfirmacionClave(null)
+            return reintento
+          } catch (e) {
+            return { ok: false, mensaje: e.response?.data?.mensaje || 'No se pudo completar el cambio.' }
+          }
+        },
+      })
+    }
+    return resultado
+  }
+
   // Agregar un componente (desde la paleta, sea presentacional o vía el modal) persiste de
   // inmediato y refresca el layout con la última versión guardada en el servidor — no pasa por
   // "Guardar cambios". Si hay ediciones de diseño sin guardar (mover/ocultar/redimensionar), se
   // pide confirmación antes de perderlas en silencio (`manejarElegirTipo`); esta función solo
   // ejecuta la acción ya confirmada.
-  const ejecutarAgregarTipo = async (tipo) => {
+  const ejecutarAgregarTipo = async (tipo, clave = '') => {
     if (tipo in TIPO_BACKEND_PRESENTACIONAL) {
-      await dashboardLayoutService.agregarComponentePresentacional(dashboardId, {
-        tipo: TIPO_BACKEND_PRESENTACIONAL[tipo], zona: 'personal',
-      })
+      try {
+        await dashboardLayoutService.agregarComponentePresentacional(dashboardId, {
+          // La clave solo se agrega si hay una: sin bloqueo, la llamada queda igual que siempre.
+          tipo: TIPO_BACKEND_PRESENTACIONAL[tipo], zona: 'personal',
+          ...(clave ? { passwordConfirmacion: clave } : {}),
+        })
+      } catch (e) {
+        const confirmacion = requiereConfirmacion(e)
+        if (!confirmacion) throw e
+        return confirmacion
+      }
       await layout.recargar()
-      return
+      return { ok: true }
     }
+    // KPI/gráfico/tabla se arman en un modal con varios pasos, así que la contraseña se pide
+    // ANTES de abrirlo y viaja con el alta final: pedirla al confirmar el modal obligaría a
+    // encadenar dos cuadros y a rehacer el formulario si la primera vez se escribe mal.
+    if (layout.layoutGuardado?.estructura_bloqueada && !clave) {
+      return { ok: false, requiereConfirmacion: true }
+    }
+    setClaveComponenteNuevo(clave)
     setTipoModalPersonal(tipo)
     setMostrarModalPersonal(true)
+    return { ok: true }
   }
+
+  const agregarTipoConConfirmacion = conConfirmacion(
+    'agregar un componente', (tipo, clave) => ejecutarAgregarTipo(tipo, clave),
+  )
+
+  const estructuraBloqueada = Boolean(layout.layoutGuardado?.estructura_bloqueada)
+
+  const guardarLayout = conConfirmacion('guardar estos cambios', (clave) => layout.guardar(clave))
+  const restablecerLayout = conConfirmacion('restablecer el diseño', (clave) => layout.restablecer(clave))
 
   const manejarElegirTipo = (tipo) => {
     if (layout.hayCambiosSinGuardar()) {
       setConfirmandoAgregarTipo(tipo)
       return
     }
-    ejecutarAgregarTipo(tipo)
+    agregarTipoConConfirmacion(tipo)
   }
 
   const manejarSoltarPaleta = (event) => {
@@ -549,12 +614,22 @@ export default function DashboardAreaPage() {
               cargando={layout.cargando}
               hayCambiosSinGuardar={layout.hayCambiosSinGuardar}
               onActivarEdicion={layout.activarEdicion}
-              onGuardar={layout.guardar}
+              onGuardar={guardarLayout}
               onCancelar={layout.cancelar}
               onAlternarVistaPrevia={layout.alternarVistaPrevia}
-              onRestablecer={layout.restablecer}
+              onRestablecer={restablecerLayout}
             />
           </div>
+
+          {estructuraBloqueada && layout.modoEdicion && (
+            <Alert variant="secondary" className="py-2">
+              🔒 El diseño de este dashboard está bloqueado: no se puede agregar, eliminar,
+              reordenar, redimensionar ni ocultar componentes.{' '}
+              {user?.is_superuser
+                ? 'Al guardar se te va a pedir tu contraseña para autorizar el cambio.'
+                : 'Los datos, títulos y colores sí se pueden seguir editando.'}
+            </Alert>
+          )}
 
           {layout.error && <Alert variant="danger">{layout.error}</Alert>}
           {layout.conflicto && (
@@ -580,6 +655,7 @@ export default function DashboardAreaPage() {
               permiteEstilo={permisos.tiene(PERMISOS.DASHBOARD_COMPONENT_STYLE)}
               permiteEliminar={permisos.tiene(PERMISOS.DASHBOARD_COMPONENT_DELETE)}
               esSuperusuario={user?.is_superuser}
+              estructuraBloqueada={estructuraBloqueada}
             />
 
             {layout.modoEdicion && mostrarPaletaEfectivo && <ZonaPersonalDropTarget />}
@@ -603,6 +679,7 @@ export default function DashboardAreaPage() {
               onActualizarConfig={(id, config) => layout.actualizarComponente(id, { config })}
               onActualizarComponente={layout.actualizarComponente}
               esSuperusuario={user?.is_superuser}
+              estructuraBloqueada={estructuraBloqueada}
             />
           )}
 
@@ -612,9 +689,12 @@ export default function DashboardAreaPage() {
             dashboardId={dashboardId}
             componentesPersonales={layout.borrador.filter((c) => c.config?.zona === 'personal')}
             tipoInicial={tipoModalPersonal}
+            passwordConfirmacion={claveComponenteNuevo}
             onAgregado={async () => {
               await layout.recargar()
               setMostrarModalPersonal(false)
+              // La contraseña no sobrevive al alta: la próxima vez se vuelve a pedir.
+              setClaveComponenteNuevo('')
             }}
           />
 
@@ -626,7 +706,7 @@ export default function DashboardAreaPage() {
             onConfirm={() => {
               const tipo = confirmandoAgregarTipo
               setConfirmandoAgregarTipo(null)
-              ejecutarAgregarTipo(tipo)
+              agregarTipoConConfirmacion(tipo)
             }}
             onCancel={() => setConfirmandoAgregarTipo(null)}
           >
@@ -636,6 +716,13 @@ export default function DashboardAreaPage() {
               guardar se perderán. ¿Continuar?
             </Alert>
           </ConfirmModal>
+
+          <ConfirmarClaveModal
+            show={Boolean(confirmacionClave)}
+            accion={confirmacionClave?.accion}
+            onConfirmar={(clave) => confirmacionClave.ejecutar(clave)}
+            onCancelar={() => setConfirmacionClave(null)}
+          />
         </>
       )}
 

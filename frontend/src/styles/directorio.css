@@ -159,7 +159,12 @@
   margin-top: 16px;
   padding: 10px 14px;
   border-left: 3px solid var(--color-primary, #1E88E5);
-  background: color-mix(in srgb, var(--color-primary, #1E88E5) 7%, transparent);
+  /* `rgba(var(--color-primary-rgb), …)` y no `color-mix(…)`: Chrome computa un `color-mix` como
+     `color(srgb …)`, y html2canvas —con el que se arma "Imprimir como PDF"— corta la captura con
+     "Attempting to parse an unsupported color function \"color\"". El dashboard se veía bien en
+     pantalla y el PDF no salía nunca. Es además el criterio que ya seguía el resto del proyecto
+     (ver `ThemeContext.jsx`, que calcula las mezclas por canal en vez de usar `color-mix`). */
+  background: rgba(var(--color-primary-rgb, 30, 136, 229), 0.07);
   border-radius: 0 4px 4px 0;
 }
 

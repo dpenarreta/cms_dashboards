@@ -45,6 +45,29 @@ otro rompe el contrato.
   (`dashboard_layout.py`, no en datos de migración), afecta a **todos** los usuarios y no se puede
   deshacer — pide confirmación explícita (modal, nunca `window.confirm`).
 
+## Bloqueo estructural de un dashboard
+
+`Dashboard.estructura_bloqueada` (comando `manage.py bloquear_dashboard <id> [--desbloquear]`)
+congela la ESTRUCTURA de un dashboard: no se puede agregar, eliminar, reordenar, redimensionar ni
+ocultar ningún componente. Los DATOS no se congelan — mapeo de columnas, título y colores se
+siguen editando, porque son justo lo que hay que poder arreglar cuando cambia el origen.
+
+- No lo exime ser superusuario. La única salida es confirmar la **contraseña propia** en la misma
+  petición (`services/desbloqueo.py`, campo `password_confirmacion`), y vale para esa operación
+  sola: no abre una ventana de tiempo ni deja el dashboard desbloqueado.
+- Son CUATRO las puertas que hay que cerrar, no una: `PUT .../layout`,
+  `POST .../componentes-presentacionales`, `POST /api/cartera/agregar-grafica` y
+  `POST .../layout/reset`. Al agregar un endpoint que toque la estructura, pasalo por
+  `desbloqueo.exigir_desbloqueo(...)` o queda un agujero.
+- IMPORTANT: es distinto de `config.bloqueado` (marca por componente, plantilla base), que SÍ
+  exime al superusuario. Conviven a propósito y se distinguen por el código de error:
+  `DASHBOARD_BLOQUEADO` (con `detalles.puede_confirmar`, el editor ofrece el cuadro de contraseña)
+  vs `COMPONENTE_BLOQUEADO` (solo se avisa). El bloqueo del dashboard NO se copia a `config` de
+  cada componente: dos fuentes de verdad para el mismo hecho terminan contradiciéndose.
+- Los intentos fallidos de confirmación gastan el mismo contador de fuerza bruta que el login
+  (`BruteForceProtectionService`): es la misma contraseña. Un acierto no se registra como login
+  exitoso, para que esta puerta no sirva para limpiar el bloqueo del login.
+
 ## Agregar un cálculo nuevo
 
 Un `calculo` (`mapeo['calculo']`) es de primera clase solo si está en los CUATRO lugares; si falta

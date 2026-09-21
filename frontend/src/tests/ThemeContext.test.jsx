@@ -41,6 +41,18 @@ describe('ThemeContext', () => {
     expect(document.title).toBe('Mi Institución')
   })
 
+  it('publica los canales del color primario, para poder usarlo con transparencia sin color-mix()', async () => {
+    // `.directorio-hallazgos` necesita el primario al 7%. Con `color-mix(in srgb, …)` Chrome
+    // computa `color(srgb …)` y html2canvas ("Imprimir como PDF") corta la captura entera con
+    // "unsupported color function". Con los canales sueltos, `rgba(var(--color-primary-rgb), .07)`
+    // da el mismo resultado y se captura sin problema.
+    brandingService.getCurrent.mockResolvedValue(TEMA)
+    render(<ThemeProvider><Sonda /></ThemeProvider>)
+
+    await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('Mi Institución'))
+    expect(document.documentElement.style.getPropertyValue('--color-primary-rgb')).toBe('18, 52, 86')
+  })
+
   it('inyecta una hoja de estilos que reteñe los componentes reales de Bootstrap (Módulo B)', async () => {
     // Bootstrap 5.3 precompilado fija el color de `.btn-primary` como variable interna propia
     // (`--bs-btn-bg`), no como `var(--bs-primary)` — por eso la integración no puede limitarse a

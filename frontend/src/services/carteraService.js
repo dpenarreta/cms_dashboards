@@ -62,8 +62,13 @@ export function obtenerArchivoActualDashboard(dashboardId) {
  * `EditableGrid.jsx`). A diferencia del resto del editor de dashboard, esto persiste de inmediato
  * (no pasa por el borrador ni "Guardar cambios") — el llamador debe refrescar el layout después
  * (`useDashboardLayout().recargar()`). */
-export function agregarComponentePersonal(payload) {
-  return api.post('/agregar-grafica', { ...payload, zona: 'personal' }).then((r) => r.data)
+/** `passwordConfirmacion` solo viaja si el dashboard tiene el diseño bloqueado y la persona ya
+ * confirmó su contraseña para autorizar este alta (ver `services/desbloqueo.py`). */
+export function agregarComponentePersonal(payload, passwordConfirmacion) {
+  return api.post('/agregar-grafica', {
+    ...payload, zona: 'personal',
+    ...(passwordConfirmacion ? { password_confirmacion: passwordConfirmacion } : {}),
+  }).then((r) => r.data)
 }
 
 export function procesarArchivo({ cargaId, mapeo, fechaCorte, hoja }) {

@@ -7,7 +7,7 @@ from apps.permissions.permissions import IsSuperuser, require_permission
 
 from . import dashboard_registry, permisos
 from .exceptions import CarteraError
-from .services import consulta_deudor, dashboard_interpretation
+from .services import consulta_deudor, dashboard_interpretation, desbloqueo
 from .services import dashboard_layout as dl
 from .services import dashboards as dashboards_service
 
@@ -66,8 +66,13 @@ class DashboardLayoutView(APIView):
                 **dl.serializar_layout(layout_actual),
             }, status=409)
 
+        # La confirmación se resuelve ANTES de validar, pero no se exige acá: `validar_componentes`
+        # es quien sabe si el cambio entrante toca la estructura o solo el título/los datos, y a
+        # quien solo renombró una sección no hay que pedirle la contraseña.
+        confirmado = desbloqueo.confirmacion_valida(request, dashboard_id, 'cambiar el diseño')
         componentes = dl.validar_componentes(
-            dashboard_id, request.data.get('components') or [], es_superusuario=request.user.is_superuser,
+            dashboard_id, request.data.get('components') or [],
+            es_superusuario=request.user.is_superuser, desbloqueo_confirmado=confirmado,
         )
         changed_by = _etiqueta_actor(request)
         layout = dl.aplicar_layout(dashboard_id, componentes, changed_by, actor=request.user, request=request)
@@ -85,6 +90,8 @@ class DashboardComponentePresentacionalView(APIView):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_LAYOUT_EDIT, requiere_edicion=True):
             return _denegado(request, dashboard_id, permisos.DASHBOARD_LAYOUT_EDIT, 'No tiene permiso para editar el layout.')
 
+        desbloqueo.exigir_desbloqueo(request, dashboard_id, 'agregar un componente')
+
         tipo = request.data.get('tipo')
         ancho_columnas = request.data.get('ancho_columnas') or None
         zona = request.data.get('zona') or None
@@ -98,6 +105,8 @@ class DashboardLayoutResetView(APIView):
     def post(self, request, dashboard_id):
         if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_CONFIGURATION_RESET, requiere_edicion=True):
             return _denegado(request, dashboard_id, permisos.DASHBOARD_CONFIGURATION_RESET, 'No tiene permiso para restablecer el diseño.')
+
+        desbloqueo.exigir_desbloqueo(request, dashboard_id, 'restablecer el diseño')
 
         changed_by = _etiqueta_actor(request)
         layout = dl.restablecer_layout(dashboard_id, changed_by, actor=request.user, request=request)

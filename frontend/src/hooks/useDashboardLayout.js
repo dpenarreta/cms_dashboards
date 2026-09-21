@@ -1,6 +1,30 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as dashboardLayoutService from '../services/dashboardLayoutService'
 
+/**
+ * Traduce el rechazo de un dashboard con el diseño bloqueado a algo que la pantalla pueda usar.
+ *
+ * Son DOS los códigos que piden la contraseña, y hay que cubrir los dos: `DASHBOARD_BLOQUEADO`
+ * (todavía no se escribió ninguna) y `CONFIRMACION_INVALIDA` (se escribió y estaba mal). Con solo
+ * el primero, escribir mal la contraseña dejaba el cuadro girando para siempre: el segundo error
+ * se propagaba como excepción y nadie lo atrapaba.
+ *
+ * Distingue además la situación sin salida: cuando `puede_confirmar` es falso —un usuario que no
+ * es superusuario— lo único honesto es mostrar el mensaje, y ofrecerle el cuadro sería mandarlo a
+ * escribir una contraseña que no va a servirle. Si la interfaz lo dedujera por su cuenta de
+ * `is_superuser`, esa decisión quedaría duplicada en dos lugares.
+ *
+ * Devuelve `null` cuando el error es cualquier otra cosa, para que el llamador siga con su
+ * manejo de siempre.
+ */
+export function requiereConfirmacion(error) {
+  const datos = error?.response?.data
+  const codigo = datos?.error
+  if (codigo !== 'DASHBOARD_BLOQUEADO' && codigo !== 'CONFIRMACION_INVALIDA') return null
+  if (!datos?.detalles?.puede_confirmar) return null
+  return { ok: false, requiereConfirmacion: true, mensaje: datos.mensaje }
+}
+
 function clonar(componentes) {
   return componentes.map((c) => ({
     ...c,
@@ -133,13 +157,14 @@ export function useDashboardLayout(dashboardId) {
     })
   }, [])
 
-  const guardar = useCallback(async () => {
+  const guardar = useCallback(async (passwordConfirmacion) => {
     setCargando(true)
     setError(null)
     try {
       const data = await dashboardLayoutService.guardarLayout(dashboardId, {
         version: layoutGuardado.version,
         components: recalcularFilas(borrador),
+        passwordConfirmacion,
       })
       setLayoutGuardado(data)
       setBorrador(clonar(data.components))
@@ -152,6 +177,8 @@ export function useDashboardLayout(dashboardId) {
         setConflicto(e.response.data)
         return { ok: false, conflicto: true }
       }
+      const confirmacion = requiereConfirmacion(e)
+      if (confirmacion) return confirmacion
       setError(e.response?.data?.mensaje || 'No se pudo guardar la configuración.')
       return { ok: false }
     } finally {
@@ -166,15 +193,17 @@ export function useDashboardLayout(dashboardId) {
     setConflicto(null)
   }, [conflicto])
 
-  const restablecer = useCallback(async () => {
+  const restablecer = useCallback(async (passwordConfirmacion) => {
     setCargando(true)
     setError(null)
     try {
-      const data = await dashboardLayoutService.restablecerLayout(dashboardId)
+      const data = await dashboardLayoutService.restablecerLayout(dashboardId, { passwordConfirmacion })
       setLayoutGuardado(data)
       setBorrador(clonar(data.components))
       return { ok: true }
     } catch (e) {
+      const confirmacion = requiereConfirmacion(e)
+      if (confirmacion) return confirmacion
       setError(e.response?.data?.mensaje || 'No se pudo restablecer el diseño.')
       return { ok: false }
     } finally {

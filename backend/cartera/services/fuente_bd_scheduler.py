@@ -216,6 +216,7 @@ def actualizar_dashboard(dashboard, hoy=None):
         )
         carga = db_source.crear_carga_temporal(
             dashboard.dashboard_id, df, f'{dashboard.fuente_bd_nombre} (actualización automática)',
+            fecha_corte=db_source.fecha_corte_de_parametros(parametros_nuevos),
         )
         df = db_source.aplicar_alias_columnas(df, dashboard.fuente_bd_ultimo_aliases)
 

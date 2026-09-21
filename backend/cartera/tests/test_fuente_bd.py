@@ -4,6 +4,7 @@ una base real en los tests), configuración por dashboard (`services/dashboards.
 endpoints (`DashboardFuenteBDView`, `ConectarFuenteBDView`)."""
 
 import decimal
+from datetime import date
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -276,6 +277,27 @@ class FormatearValorFechaCorteServiceTests(TestCase):
         with self.assertRaises(CarteraError) as ctx:
             db_source.leer_fuente('vista', 'dbo.vacia')
         self.assertEqual(ctx.exception.codigo, 'FUENTE_BD_SIN_COLUMNAS')
+
+
+class FechaCorteDeParametrosTests(TestCase):
+    """De dónde sale la fecha de corte de una fuente de base."""
+
+    def test_toma_el_parametro_de_fecha(self):
+        self.assertEqual(db_source.fecha_corte_de_parametros({'FechaCorte': '2026-07-31'}), date(2026, 7, 31))
+
+    def test_no_asume_el_nombre_del_parametro(self):
+        # El nombre lo elige quien configura la conexión ("Nombre del parámetro" en el modal).
+        self.assertEqual(db_source.fecha_corte_de_parametros({'Corte': '2026-07-31'}), date(2026, 7, 31))
+
+    def test_sin_parametros_no_hay_fecha(self):
+        self.assertIsNone(db_source.fecha_corte_de_parametros({}))
+        self.assertIsNone(db_source.fecha_corte_de_parametros(None))
+
+    def test_un_valor_que_no_es_fecha_no_rompe_la_lectura(self):
+        # La fecha es informativa para el cálculo; un parámetro que no lo sea (una zona, un código)
+        # no puede impedir que la fuente se lea.
+        self.assertIsNone(db_source.fecha_corte_de_parametros({'Zona': 'Norte'}))
+        self.assertIsNone(db_source.fecha_corte_de_parametros({'FechaCorte': ''}))
 
 
 class ActualizarFuenteBDServiceTests(TestCase):
@@ -684,6 +706,39 @@ class ConectarFuenteBDViewTests(TestCase):
         leer_fuente_mock.assert_called_once_with(
             'procedimiento', 'dbo.sp_Reporte_Seguimiento_Cartera', {'FechaCorte': '2026-07-31'}, fecha_formato='YYYY-MM-DD',
         )
+
+    @mock.patch('cartera.views.db_source.leer_fuente')
+    def test_la_carga_toma_la_fecha_de_corte_del_parametro(self, leer_fuente_mock):
+        """El corte de una fuente de base es su parámetro, no una columna del resultado.
+
+        La carga que sale de acá es la que después leen `aplicar_mapeo` y el reproceso para saber
+        contra qué fecha calcular la mora; sin la fecha, la calculaban contra el día de la conexión.
+        """
+        import pandas as pd
+        dashboard = crear_dashboard(nombre='Cobranza')
+        actualizar_fuente_bd(
+            dashboard.dashboard_id, tipo='procedimiento', nombre='dbo.sp_Reporte_Seguimiento_Cartera',
+            parametros={'FechaCorte': '2026-07-31'},
+        )
+        leer_fuente_mock.return_value = pd.DataFrame({'Saldo': [100.0]})
+
+        resp = self.client.post('/api/cartera/conectar-fuente-bd', {'dashboard_id': dashboard.dashboard_id}, format='json')
+
+        carga = CargaArchivo.objects.get(id=resp.json()['carga_id'])
+        self.assertEqual(carga.fecha_corte, date(2026, 7, 31))
+
+    @mock.patch('cartera.views.db_source.leer_fuente')
+    def test_sin_parametros_la_carga_queda_sin_fecha_de_corte(self, leer_fuente_mock):
+        # Una vista sin parámetros no dice a qué fecha corresponde: inventarle una sería peor que
+        # dejarla vacía (el resto del pipeline ya tiene su propio valor por defecto).
+        import pandas as pd
+        dashboard = crear_dashboard(nombre='Cobranza')
+        actualizar_fuente_bd(dashboard.dashboard_id, tipo='vista', nombre='dbo.v_cartera')
+        leer_fuente_mock.return_value = pd.DataFrame({'Saldo': [100.0]})
+
+        resp = self.client.post('/api/cartera/conectar-fuente-bd', {'dashboard_id': dashboard.dashboard_id}, format='json')
+
+        self.assertIsNone(CargaArchivo.objects.get(id=resp.json()['carga_id']).fecha_corte)
 
     @mock.patch('cartera.views.db_source.leer_fuente')
     def test_la_carga_resultante_sirve_para_el_paso_de_mapeo(self, leer_fuente_mock):

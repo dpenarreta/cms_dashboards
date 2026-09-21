@@ -20,6 +20,7 @@ from apps.audit.services import log_event
 from ..constants import PAGE_SIZE_POR_DEFECTO, PAGE_SIZES_PERMITIDOS
 from ..exceptions import CarteraError
 from ..models import DashboardComponent, DashboardLayout
+from . import desbloqueo
 from .generic_charts import (
     ETIQUETAS_TRAMOS_ACUMULADOS, LIMITE_DEUDORES, TIPOS_VISUALIZACION, evaluar_meta,
 )
@@ -69,6 +70,13 @@ def componentes_validos(dashboard_id):
             'order': c.order,
             'width': c.width,
             'height': c.height,
+            # `is_visible` no estaba, y su ausencia se notaba en dos lugares: al agregar un
+            # componente nuevo, `_escribir_componentes` reescribía TODOS los existentes con su
+            # default `True` y sacaba de golpe a la luz los que estaban ocultos (en el Dashboard
+            # Directorio, las 13 posiciones de fábrica); y `validar_componentes` comparaba la
+            # visibilidad entrante contra ese mismo `True` supuesto, así que en un componente
+            # bloqueado el cambio "de oculto a visible" no se detectaba como cambio.
+            'is_visible': c.is_visible,
             'content': c.content,
             'styles': c.styles,
             'config': c.config,
@@ -112,6 +120,10 @@ def serializar_layout(layout):
         'version': layout.version,
         'scope': layout.scope,
         'theme': layout.theme,
+        # Lo necesita el editor para deshabilitar los controles de estructura y avisar por qué,
+        # en vez de dejar que la persona reacomode todo y recién al guardar se entere de que no
+        # se podía. La comprobación real sigue estando en el backend.
+        'estructura_bloqueada': desbloqueo.esta_bloqueado(layout.dashboard_id),
         'components': [
             {
                 'component_id': c.component_id,
@@ -359,22 +371,52 @@ def _validar_mapeo_calculo(component_id, tipo, chart_type, mapeo):
             mapeo['metas'] = nuevas_metas
 
 
-def validar_componentes(dashboard_id, componentes, es_superusuario=False):
+def validar_componentes(dashboard_id, componentes, es_superusuario=False, desbloqueo_confirmado=False):
     """Valida y sanitiza la lista de componentes entrante. Lanza CarteraError si algo no es
     válido. Devuelve la lista ya sanitizada, lista para persistir. Una lista vacía es válida: el
     editor visual permite borrar componentes (sección "editor del dashboard"), y borrarlos todos
     deja el dashboard vacío — el mismo estado en el que nace cualquier dashboard nuevo.
 
-    `es_superusuario=False` hace que un componente guardado con `config.bloqueado=True` (ver
-    `Dashboard Directorio`, sembrado por migración) rechace cualquier cambio de posición relativa/
-    ancho/alto/visibilidad/eliminación con `CarteraError(codigo='COMPONENTE_BLOQUEADO')` — el
-    mapeo/contenido de datos NUNCA se bloquea, solo la estructura. Con `es_superusuario=True` no
-    se aplica ninguna restricción extra, igual que hoy."""
+    Hay DOS bloqueos, con alcance distinto, y los dos rechazan el cambio con
+    `CarteraError(codigo='COMPONENTE_BLOQUEADO')`. En ambos casos lo que se congela es la
+    ESTRUCTURA (posición relativa, ancho, alto, visibilidad, eliminación): el mapeo y el contenido
+    de datos nunca se bloquean, porque son justo lo que hay que poder ajustar cuando cambia el
+    origen de los datos.
+
+    - **Por componente** (`config.bloqueado=True`, plantilla base sembrada por migración): lo
+      exime `es_superusuario=True`, igual que siempre.
+    - **Por dashboard** (`Dashboard.estructura_bloqueada`): alcanza a TODOS sus componentes y no
+      lo exime ser superusuario — solo `desbloqueo_confirmado=True`, que la vista obtiene
+      verificando la contraseña de quien hace el cambio (`services/desbloqueo.py`).
+    """
     validos = componentes_validos(dashboard_id)
-    ids_bloqueados = {
+    # Los que llevan el flag en su propio `config`: se distingue del conjunto de abajo porque es
+    # el único que hay que volver a escribir en `config` al guardar. El bloqueo por dashboard no
+    # se copia a cada componente a propósito — tener el mismo hecho en dos lugares es lo que hace
+    # que después se contradigan.
+    ids_con_flag_propio = {
         component_id for component_id, definicion in validos.items()
         if (definicion.get('config') or {}).get('bloqueado')
     }
+    ids_bloqueados = set() if es_superusuario else set(ids_con_flag_propio)
+    bloqueo_del_dashboard = desbloqueo.esta_bloqueado(dashboard_id) and not desbloqueo_confirmado
+    if bloqueo_del_dashboard:
+        ids_bloqueados |= set(validos)
+
+    def _error_bloqueo(mensaje):
+        """El código distingue los dos bloqueos, porque el editor reacciona distinto a cada uno.
+
+        Al bloqueo del dashboard se le puede responder confirmando la contraseña, así que la
+        interfaz abre el cuadro para hacerlo; al de componente no, y ahí solo queda avisar. Sin
+        esta distinción el editor tendría que deducirla, y le ofrecería el cuadro a quien no
+        puede usarlo.
+        """
+        if bloqueo_del_dashboard:
+            return CarteraError(
+                mensaje, codigo=desbloqueo.CODIGO_BLOQUEADO,
+                detalles={'puede_confirmar': bool(es_superusuario)},
+            )
+        return CarteraError(mensaje, codigo='COMPONENTE_BLOQUEADO')
 
     if not isinstance(componentes, list):
         raise CarteraError('La configuración debe ser una lista de componentes.', codigo='LAYOUT_INVALIDO')
@@ -390,7 +432,7 @@ def validar_componentes(dashboard_id, componentes, es_superusuario=False):
         ids_vistos.add(component_id)
 
         definicion = validos[component_id]
-        bloqueado = component_id in ids_bloqueados and not es_superusuario
+        bloqueado = component_id in ids_bloqueados
 
         width = comp.get('width', definicion['width'])
         if not isinstance(width, int) or not (ANCHO_MIN <= width <= ANCHO_MAX):
@@ -405,9 +447,9 @@ def validar_componentes(dashboard_id, componentes, es_superusuario=False):
             width != definicion['width'] or height != definicion['height']
             or is_visible != bool(definicion.get('is_visible', True))
         ):
-            raise CarteraError(
+            raise _error_bloqueo(
                 f'El componente "{component_id}" está bloqueado: no se puede mover, redimensionar '
-                'ni ocultar.', codigo='COMPONENTE_BLOQUEADO',
+                'ni ocultar.'
             )
 
         content = dict(comp.get('content') or {})
@@ -423,7 +465,7 @@ def validar_componentes(dashboard_id, componentes, es_superusuario=False):
         config = dict(comp.get('config') if comp.get('config') is not None else definicion.get('config', {}))
         if definicion['type'] == DashboardComponent.Tipo.TABLE:
             config = _sanitizar_config_paginacion(config)
-        if component_id in ids_bloqueados:
+        if component_id in ids_con_flag_propio:
             # Reafirma el bloqueo pase lo que pase en el `config` entrante — el mapeo/paginación
             # de arriba sí se puede tocar libremente, pero el flag estructural nunca se pierde
             # (evita que un payload que mande `config: {}` desbloquee el componente sin querer).
@@ -458,12 +500,11 @@ def validar_componentes(dashboard_id, componentes, es_superusuario=False):
             'mapeo': mapeo,
         })
 
-    if not es_superusuario and ids_bloqueados:
+    if ids_bloqueados:
         faltantes = ids_bloqueados - ids_vistos
         if faltantes:
-            raise CarteraError(
-                f'El componente "{sorted(faltantes)[0]}" está bloqueado: no se puede eliminar.',
-                codigo='COMPONENTE_BLOQUEADO',
+            raise _error_bloqueo(
+                f'El componente "{sorted(faltantes)[0]}" está bloqueado: no se puede eliminar.'
             )
         # Posición relativa entre sí: comparar la sub-secuencia de ids bloqueados en el orden en
         # que aparecían (guardado) contra la sub-secuencia de esos mismos ids en el orden nuevo —
@@ -479,9 +520,8 @@ def validar_componentes(dashboard_id, componentes, es_superusuario=False):
             if comp['component_id'] in ids_bloqueados
         ]
         if secuencia_nueva != secuencia_anterior:
-            raise CarteraError(
-                'No se puede cambiar el orden relativo de los componentes bloqueados entre sí.',
-                codigo='COMPONENTE_BLOQUEADO',
+            raise _error_bloqueo(
+                'No se puede cambiar el orden relativo de los componentes bloqueados entre sí.'
             )
 
     return resultado

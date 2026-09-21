@@ -91,6 +91,19 @@ class Dashboard(models.Model):
     # nadie que lo repita.
     fuente_bd_ultimo_mapeo = models.JSONField(default=dict, blank=True)
     fuente_bd_ultimo_aliases = models.JSONField(default=dict, blank=True)
+    # Congela la ESTRUCTURA del dashboard: no se puede agregar, eliminar, reordenar, redimensionar
+    # ni ocultar ningún componente. Los DATOS no se congelan — el mapeo de columnas, el título y
+    # los colores se siguen editando normalmente, porque son justamente lo que hay que poder
+    # ajustar cuando cambia el origen (ver `services/db_source.py`).
+    #
+    # Vive acá y no como `config.bloqueado` en cada componente (el mecanismo anterior, que sigue
+    # vigente para la plantilla base) por dos motivos: "no agregar componentes nuevos" no es una
+    # propiedad de ningún componente existente, y una marca por componente se pierde en cuanto se
+    # vuelve a sembrar el dashboard, que reescribe la lista entera.
+    #
+    # Un superusuario puede saltear el bloqueo operación por operación confirmando su contraseña
+    # (`services/desbloqueo.py`); para todos los demás es infranqueable desde la aplicación.
+    estructura_bloqueada = models.BooleanField(default=False)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     # Pestañas dentro de un mismo dashboard: cada pestaña es un `Dashboard` más (su propia

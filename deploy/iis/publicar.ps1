@@ -234,6 +234,14 @@ Paso 'Configuracion (.env y web.config)'
 if (-not $ArchivoEnv) { $ArchivoEnv = Join-Path $Origen 'deploy\.env.produccion' }
 $destEnv = Join-Path $destBackend '.env'
 if (Test-Path $ArchivoEnv) {
+    # Un despliegue anterior deja el .env con la herencia cortada y permisos restringidos; sin
+    # devolvérsela, `Copy-Item` no puede reemplazarlo ni siquiera como administrador ("Acceso
+    # denegado"). Se restaura acá y se vuelve a restringir más abajo, ya con el archivo nuevo.
+    if (Test-Path $destEnv) {
+        $aclPrevia = Get-Acl $destEnv
+        $aclPrevia.SetAccessRuleProtection($false, $true)
+        Set-Acl $destEnv $aclPrevia
+    }
     Copy-Item $ArchivoEnv $destEnv -Force
     Ok ".env instalado desde $ArchivoEnv"
 } elseif (Test-Path $destEnv) {
@@ -369,14 +377,18 @@ if (-not $SoloCodigo) {
         # identidad". Los SID son los mismos en cualquier idioma.
         #   S-1-5-32-544 = Administradores locales
         #   S-1-5-18     = SYSTEM
-        $cuentas = @(
-            (New-Object System.Security.Principal.NTAccount($identidad)),
-            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')),
-            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18'))
+        # El proceso de la aplicación solo LEE el archivo; Administradores y SYSTEM necesitan
+        # control total para poder actualizarlo. Dárselo también en 'Read' dejaba el .env
+        # imposible de reemplazar en el siguiente despliegue, incluso con permisos de
+        # administrador.
+        $permisos = @(
+            @{ Cuenta = (New-Object System.Security.Principal.NTAccount($identidad)); Derecho = 'Read' },
+            @{ Cuenta = (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')); Derecho = 'FullControl' },
+            @{ Cuenta = (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')); Derecho = 'FullControl' }
         )
-        foreach ($cuenta in $cuentas) {
+        foreach ($permiso in $permisos) {
             $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
-                $cuenta, 'Read', 'Allow')))
+                $permiso.Cuenta, $permiso.Derecho, 'Allow')))
         }
         Set-Acl $destEnv $acl
         Ok 'Permisos del .env restringidos'

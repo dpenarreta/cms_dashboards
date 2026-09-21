@@ -168,14 +168,16 @@ function CampoColor({ etiqueta, valor, porDefecto, onCambiar }) {
 export default function ComponentPropertiesPanel({
   componente, dashboardId, onCerrar, onActualizarContenido, onActualizarEstilos, onCambiarAncho, onCambiarAlto,
   onActualizarConfig, onActualizarComponente, modoPlantillaBase = false, esSuperusuario,
+  estructuraBloqueada = false,
 }) {
   if (!componente) return null
 
-  // Mismo criterio que `ComponentWrapper.jsx`: un componente bloqueado (`config.bloqueado`,
-  // sembrado como estructura fija de un dashboard puntual) no permite cambiar tamaño salvo que
-  // el usuario sea superusuario — el mapeo/contenido de datos (sección "Datos" más abajo) NUNCA
-  // se bloquea, para nadie.
-  const bloqueado = Boolean(componente.config?.bloqueado) && !esSuperusuario
+  // Mismo criterio que `ComponentWrapper.jsx`: ni el bloqueo del componente ni el del dashboard
+  // entero permiten cambiar el tamaño, y a un superusuario no se le deshabilita nada porque de
+  // uno está exento y del otro puede salir confirmando su contraseña. El mapeo/contenido de datos
+  // (sección "Datos" más abajo) NUNCA se bloquea, para nadie: es lo que hay que poder arreglar
+  // cuando cambian las columnas del origen.
+  const bloqueado = (Boolean(componente.config?.bloqueado) || estructuraBloqueada) && !esSuperusuario
 
   const filasColor = filasColorPara(componente)
   const restablecerColores = () => onActualizarEstilos(componente.component_id, estilosDeRestablecerPara(componente))

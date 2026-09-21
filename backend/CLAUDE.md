@@ -14,6 +14,11 @@ propio de la capa backend.
 
 - Reconstruir el Dashboard Directorio con un archivo (simula salvo `--aplicar`):
   `python manage.py sembrar_directorio_cartera --archivo "ruta.xlsx" [--aplicar]`
+  (o `--desde-carga`, para releer la última carga procesada en vez de un archivo — es lo que se
+  usa en producción, donde los datos vienen de un procedimiento y no hay ningún `.xlsx`)
+- Congelar/descongelar la estructura de un dashboard:
+  `python manage.py bloquear_dashboard <dashboard_id> [--desbloquear]` — ver
+  `@.claude/rules/dashboards.md`
 
 Los dos comandos periódicos (`actualizar_fuentes_bd`, `clean_temp_uploads`) se programan con el
 Programador de tareas del sistema operativo, no con un scheduler propio de la app — ver

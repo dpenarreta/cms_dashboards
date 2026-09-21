@@ -211,7 +211,31 @@ def aplicar_alias_columnas(df, aliases):
     return df.rename(columns=mapa)
 
 
-def crear_carga_temporal(dashboard_id, df, nombre_original, subido_por=None):
+def fecha_corte_de_parametros(parametros):
+    """La fecha con la que se leyó la fuente, tomada de su (único) parámetro de fecha.
+
+    Una fuente de base no trae la fecha de corte como columna: es el parámetro con el que se
+    ejecuta la vista o el procedimiento (`FechaCorte` en el caso de cartera, pero el nombre lo
+    elige quien configura la conexión, así que se toma la primera entrada del dict — el mismo
+    criterio que `fuente_bd_scheduler.avanzar_fecha_corte`).
+
+    Sin esto la carga quedaba con `fecha_corte` vacía y todo lo que depende de ella —la antigüedad
+    por tramos, el cumplimiento de metas, el "Corte <mes>" del Dashboard Directorio— se calculaba
+    contra la fecha de HOY, que no es la fecha de los datos. Un valor que no sea una fecha ISO
+    devuelve `None`: la fecha es informativa para el cálculo, no puede romper la lectura.
+    """
+    if not parametros:
+        return None
+    _nombre, valor = next(iter(parametros.items()))
+    if not valor:
+        return None
+    try:
+        return date.fromisoformat(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def crear_carga_temporal(dashboard_id, df, nombre_original, subido_por=None, fecha_corte=None):
     """Escribe `df` a un .xlsx temporal (mismo directorio y mecanismo `archivo_temp_nombre` que un
     archivo subido a mano) y arma la `CargaArchivo` correspondiente — punto compartido entre
     `views.ConectarFuenteBDView` (conexión manual, con un usuario esperando la respuesta) y
@@ -225,6 +249,7 @@ def crear_carga_temporal(dashboard_id, df, nombre_original, subido_por=None):
         dashboard_id=dashboard_id, subido_por=subido_por, nombre_original=nombre_original,
         nombre_hoja=HOJA_TEMPORAL, tamano_bytes=os.path.getsize(ruta_temp),
         estado=CargaArchivo.Estado.VALIDADO, total_filas_excel=len(df), archivo_temp_nombre=nombre_temp,
+        fecha_corte=fecha_corte,
     )
 
 

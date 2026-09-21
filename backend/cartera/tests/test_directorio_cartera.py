@@ -80,6 +80,25 @@ class SeccionDeConsultaTests(TestCase):
         # Sin ninguna elegida el detalle mostraría las 28 del archivo, que no se lee.
         self.assertTrue(self.spec['config']['columnas_detalle'])
 
+    def test_las_columnas_del_detalle_siguen_a_las_elegidas(self):
+        # El origen de producción llama "Saldo Total" a lo que el Excel llamaba "Saldo". Con la
+        # lista de detalle literal, el detalle de un cliente se abría SIN la columna del saldo —el
+        # dato por el que se lo busca—, porque esa columna no existe con ese nombre.
+        spec = next(s for s in directorio_cartera.especificacion(columna_valor='Saldo Total')
+                    if s['component_id'] == 'consulta-deudor')
+        columnas = spec['config']['columnas_detalle']
+        self.assertIn('Saldo Total', columnas)
+        self.assertNotIn('Saldo', columnas)
+        self.assertEqual(len(columnas), len(set(columnas)))
+
+    def test_el_ruc_es_un_parametro_y_puede_no_existir(self):
+        # Una fuente que no trae identificador no es un error: la consulta cae a identificar por
+        # nombre (`consulta_deudor._identidad`). Lo que no puede es quedar con el nombre por
+        # defecto de una columna que no existe.
+        spec = next(s for s in directorio_cartera.especificacion(columna_ruc='')
+                    if s['component_id'] == 'consulta-deudor')
+        self.assertEqual(spec['mapeo']['columna_ruc'], '')
+
     def test_va_al_final_del_dashboard(self):
         # Las secciones de arriba son la réplica del informe impreso y se leen en ese orden; esta
         # es una herramienta de consulta a demanda, así que cierra el dashboard en vez de

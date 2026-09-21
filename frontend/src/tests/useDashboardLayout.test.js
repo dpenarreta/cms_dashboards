@@ -208,7 +208,11 @@ describe('useDashboardLayout', () => {
 
       await act(async () => { await result.current.restablecer() })
 
-      expect(dashboardLayoutService.restablecerLayout).toHaveBeenCalledWith('cartera')
+      // El segundo argumento lleva la confirmación de contraseña cuando el dashboard está
+      // bloqueado; sin bloqueo viaja vacía (ver "useDashboardLayout con el diseño bloqueado").
+      expect(dashboardLayoutService.restablecerLayout).toHaveBeenCalledWith(
+        'cartera', { passwordConfirmacion: undefined },
+      )
       expect(result.current.borrador.map((c) => c.component_id)).toEqual(['a', 'b', 'c', 'd'])
     })
 
@@ -220,5 +224,86 @@ describe('useDashboardLayout', () => {
       act(() => result.current.moverComponente('b', 'abajo'))
       expect(result.current.hayCambiosSinGuardar()).toBe(true)
     })
+  })
+})
+
+describe('useDashboardLayout con el diseño bloqueado', () => {
+  /**
+   * Un dashboard con `estructura_bloqueada` rechaza los cambios de estructura con
+   * `DASHBOARD_BLOQUEADO`. El hook no decide nada por su cuenta: traduce ese rechazo a
+   * `requiereConfirmacion` para que la pantalla abra el cuadro de contraseña, y reenvía la
+   * contraseña al reintento. Lo que se protege acá es que no la guarde ni la reutilice.
+   */
+
+  function rechazoBloqueado(puedeConfirmar = true) {
+    return {
+      response: {
+        status: 400,
+        data: {
+          error: 'DASHBOARD_BLOQUEADO',
+          mensaje: 'El diseño de este dashboard está bloqueado.',
+          detalles: { puede_confirmar: puedeConfirmar },
+        },
+      },
+    }
+  }
+
+  it('pide confirmación en vez de dejar el error como un fallo cualquiera', async () => {
+    dashboardLayoutService.guardarLayout.mockRejectedValue(rechazoBloqueado())
+    const result = await montarYCargar()
+
+    let resultado
+    await act(async () => { resultado = await result.current.guardar() })
+
+    expect(resultado.requiereConfirmacion).toBe(true)
+    // El mensaje lo muestra el cuadro de contraseña, así que no se duplica como error de pantalla.
+    expect(result.current.error).toBeNull()
+  })
+
+  it('a quien no puede confirmar le muestra el error, sin ofrecerle un cuadro inútil', async () => {
+    dashboardLayoutService.guardarLayout.mockRejectedValue(rechazoBloqueado(false))
+    const result = await montarYCargar()
+
+    let resultado
+    await act(async () => { resultado = await result.current.guardar() })
+
+    expect(resultado.requiereConfirmacion).toBeUndefined()
+    await waitFor(() => expect(result.current.error).toBe('El diseño de este dashboard está bloqueado.'))
+  })
+
+  it('reenvía la contraseña al reintentar, y no la manda cuando no hay ninguna', async () => {
+    dashboardLayoutService.guardarLayout.mockResolvedValue(layoutDePrueba(2))
+    const result = await montarYCargar()
+
+    await act(async () => { await result.current.guardar() })
+    expect(dashboardLayoutService.guardarLayout.mock.calls[0][1].passwordConfirmacion).toBeUndefined()
+
+    await act(async () => { await result.current.guardar('mi-clave') })
+    expect(dashboardLayoutService.guardarLayout.mock.calls[1][1].passwordConfirmacion).toBe('mi-clave')
+  })
+
+  it('restablecer el diseño sigue el mismo camino', async () => {
+    dashboardLayoutService.restablecerLayout.mockRejectedValue(rechazoBloqueado())
+    const result = await montarYCargar()
+
+    let resultado
+    await act(async () => { resultado = await result.current.restablecer() })
+    expect(resultado.requiereConfirmacion).toBe(true)
+
+    dashboardLayoutService.restablecerLayout.mockResolvedValue(layoutDePrueba(2))
+    await act(async () => { await result.current.restablecer('mi-clave') })
+    expect(dashboardLayoutService.restablecerLayout).toHaveBeenLastCalledWith(
+      'cartera', { passwordConfirmacion: 'mi-clave' },
+    )
+  })
+
+  it('un conflicto de versión sigue siendo un conflicto, no una confirmación', async () => {
+    dashboardLayoutService.guardarLayout.mockRejectedValue({ response: { status: 409, data: layoutDePrueba(9) } })
+    const result = await montarYCargar()
+
+    let resultado
+    await act(async () => { resultado = await result.current.guardar() })
+    expect(resultado.conflicto).toBe(true)
+    expect(resultado.requiereConfirmacion).toBeUndefined()
   })
 })

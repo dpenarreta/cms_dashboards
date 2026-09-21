@@ -7,21 +7,33 @@ export function obtenerLayout(dashboardId) {
 }
 
 /** El autor del cambio lo resuelve el backend desde el usuario autenticado (nunca se envía
- * desde acá: era falsificable, ver `cartera/dashboard_views.py::_etiqueta_actor`). */
-export function guardarLayout(dashboardId, { version, components }) {
-  return api.put(`/${dashboardId}/layout`, { version, components }).then((r) => r.data)
+ * desde acá: era falsificable, ver `cartera/dashboard_views.py::_etiqueta_actor`).
+ *
+ * `passwordConfirmacion` solo viaja cuando el dashboard tiene el diseño bloqueado y la persona
+ * acaba de escribir su contraseña para autorizar ESTE cambio (`services/desbloqueo.py`). Va en el
+ * cuerpo y no en la URL, y el nombre del campo contiene "password" a propósito: es lo que hace
+ * que el enmascarado de auditoría del backend la reconozca y no la registre. */
+export function guardarLayout(dashboardId, { version, components, passwordConfirmacion }) {
+  return api.put(`/${dashboardId}/layout`, {
+    version, components, ...cuerpoConfirmacion(passwordConfirmacion),
+  }).then((r) => r.data)
 }
 
-export function restablecerLayout(dashboardId) {
-  return api.post(`/${dashboardId}/layout/reset`).then((r) => r.data)
+export function restablecerLayout(dashboardId, { passwordConfirmacion } = {}) {
+  return api.post(`/${dashboardId}/layout/reset`, cuerpoConfirmacion(passwordConfirmacion)).then((r) => r.data)
+}
+
+/** El campo solo aparece en el cuerpo si hay algo que confirmar. */
+function cuerpoConfirmacion(passwordConfirmacion) {
+  return passwordConfirmacion ? { password_confirmacion: passwordConfirmacion } : {}
 }
 
 /** Agrega un componente de solo presentación (título o separador, panel lateral de componentes)
  * — a diferencia del resto de acciones del editor, persiste de inmediato (no pasa por el
  * borrador ni por "Guardar cambios"), igual que `carteraService.agregarComponentePersonal`. */
-export function agregarComponentePresentacional(dashboardId, { tipo, anchoColumnas, zona }) {
+export function agregarComponentePresentacional(dashboardId, { tipo, anchoColumnas, zona, passwordConfirmacion }) {
   return api.post(`/${dashboardId}/componentes-presentacionales`, {
-    tipo, ancho_columnas: anchoColumnas, zona,
+    tipo, ancho_columnas: anchoColumnas, zona, ...cuerpoConfirmacion(passwordConfirmacion),
   }).then((r) => r.data)
 }
 

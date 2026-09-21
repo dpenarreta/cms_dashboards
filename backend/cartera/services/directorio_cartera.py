@@ -97,6 +97,12 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
     bloque viviera ahí, la primera edición desde la interfaz dejaría la sección sin identidad.
     """
     filtro_base = {'columna_filtro': columna_fecha, 'tipo_filtro': 'dias_vencidos'}
+    # Las columnas del detalle siguen a las columnas ELEGIDAS, no a los nombres por defecto: la
+    # vista de producción llama "Saldo Total" a lo que el Excel llamaba "Saldo", y con la lista
+    # literal el detalle de la consulta se abría sin la columna del saldo — justo el dato por el
+    # que se busca a un cliente. Las que no existan en el archivo se ignoran solas más adelante.
+    renombres = {COLUMNA_VALOR: columna_valor, COLUMNA_FECHA: columna_fecha}
+    columnas_detalle = list(dict.fromkeys(renombres.get(c, c) for c in COLUMNAS_DETALLE_DEUDOR))
     kpis = [
         ('cartera-total', 'CARTERA TOTAL (CORTE COBRANZA)', DORADO, 'neutro', None, True),
         ('al-corriente', 'AL CORRIENTE (ANTICIPADA)', VERDE, 'neutro',
@@ -204,7 +210,7 @@ def especificacion(columna_valor=COLUMNA_VALOR, columna_fecha=COLUMNA_FECHA,
         'width': 12, 'height': ALTO_CONSULTA_DEUDOR, 'styles': {},
         'config': {
             'bloque': 'consulta-deudor',
-            'columnas_detalle': list(COLUMNAS_DETALLE_DEUDOR),
+            'columnas_detalle': columnas_detalle,
         },
         # Sin `calculo` y con `disponible: False` a propósito: no hay contenido que calcular ni
         # que reprocesar. El mapeo existe igual porque la consulta SÍ necesita saber qué columnas

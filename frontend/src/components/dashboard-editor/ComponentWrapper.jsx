@@ -13,13 +13,17 @@ import MoveButtons from './MoveButtons'
 export default function ComponentWrapper({
   componente, esPrimero, esUltimo, seleccionado,
   onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, permiteEstilo, permiteEliminar, esSuperusuario,
+  estructuraBloqueada = false,
 }) {
-  // Componentes sembrados como estructura fija de un dashboard puntual (ej. Dashboard Directorio,
-  // `config.bloqueado`, ver `services/dashboard_layout.py::validar_componentes`) no se pueden
-  // mover/redimensionar/ocultar/eliminar salvo que el usuario sea superusuario — la protección
-  // REAL está en el backend (`COMPONENTE_BLOQUEADO`), esto es solo para no invitar a intentar algo
-  // que el servidor va a rechazar.
-  const bloqueado = Boolean(componente.config?.bloqueado) && !esSuperusuario
+  // Dos bloqueos distintos, mismo efecto visual. `config.bloqueado` marca componentes sembrados
+  // como estructura fija de un dashboard puntual; `estructuraBloqueada` congela el dashboard
+  // entero (`Dashboard.estructura_bloqueada`). Un superusuario ve los controles habilitados en
+  // ambos casos: del primero está exento, y del segundo puede salir confirmando su contraseña al
+  // guardar, así que deshabilitárselos acá le escondería una salida que sí tiene.
+  //
+  // La protección REAL está en el backend (`services/dashboard_layout.py::validar_componentes`);
+  // esto es solo para no invitar a intentar algo que el servidor va a rechazar.
+  const bloqueado = (Boolean(componente.config?.bloqueado) || estructuraBloqueada) && !esSuperusuario
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: componente.component_id, disabled: bloqueado,
   })

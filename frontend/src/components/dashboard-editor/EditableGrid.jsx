@@ -31,6 +31,7 @@ function zonaDe(componentId, personalIds) {
 export default function EditableGrid({
   componentes, registro, modoEdicion, vistaPrevia, seleccionado,
   onSeleccionar, onMover, onOcultar, onMostrar, onEliminar, onReordenar, permiteEstilo, permiteEliminar, esSuperusuario,
+  estructuraBloqueada = false,
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -107,6 +108,7 @@ export default function EditableGrid({
         permiteEstilo={permiteEstilo}
         permiteEliminar={permiteEliminar}
         esSuperusuario={esSuperusuario}
+        estructuraBloqueada={estructuraBloqueada}
       />
     )
   })

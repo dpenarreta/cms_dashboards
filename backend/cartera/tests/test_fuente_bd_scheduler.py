@@ -321,6 +321,25 @@ class ActualizarDashboardTests(TestCase):
         dashboard.refresh_from_db()
         return dashboard
 
+    @mock.patch('cartera.services.fuente_bd_scheduler.db_source.leer_fuente')
+    def test_la_carga_guarda_la_fecha_de_corte_con_la_que_se_leyo(self, leer_fuente_mock):
+        """La fecha de corte de una fuente de base es su parámetro, no una columna del resultado.
+
+        Sin grabarla en la carga, todo lo que la usa —antigüedad por tramos, cumplimiento de metas,
+        el "Corte <mes>" del Dashboard Directorio— se calculaba contra la fecha de HOY, que no es la
+        fecha de los datos: una actualización del corte al 7 de agosto mostraba la mora al día de la
+        corrida.
+        """
+        import pandas as pd
+        from cartera.models import CargaArchivo
+        dashboard = self._dashboard_con_mapeo_confirmado()
+        leer_fuente_mock.return_value = pd.DataFrame({'Saldo': [500.0], 'Zona': ['Norte']})
+
+        fuente_bd_scheduler.actualizar_dashboard(dashboard, hoy=date(2026, 8, 16))
+
+        carga = CargaArchivo.objects.filter(dashboard_id=dashboard.dashboard_id).latest('fecha_carga')
+        self.assertEqual(carga.fecha_corte, date(2026, 8, 7))
+
     def test_sin_mapeo_confirmado_previamente_no_hace_nada(self):
         dashboard = crear_dashboard(nombre='Cobranza')
         actualizar_fuente_bd(

@@ -152,6 +152,14 @@ function aplicarTema(tema) {
   Object.entries(VARIABLES_CSS).forEach(([campo, variable]) => {
     if (tema[campo]) raiz.style.setProperty(variable, tema[campo])
   })
+  // Los canales del color primario por separado, para que una hoja de estilos pueda pedirlo con
+  // transparencia (`rgba(var(--color-primary-rgb), .07)`). La alternativa natural en CSS sería
+  // `color-mix(in srgb, var(--color-primary) 7%, transparent)`, pero Chrome computa eso como
+  // `color(srgb …)` y html2canvas —"Imprimir como PDF"— no sabe parsear esa función: la captura
+  // falla entera y el usuario solo ve "No se pudo generar el PDF".
+  if (HEX_RE.test(tema.color_primary || '')) {
+    raiz.style.setProperty('--color-primary-rgb', hexARgb(tema.color_primary))
+  }
   aplicarEstilosBootstrap(tema)
   if (tema.site_name) document.title = tema.site_name
   if (tema.favicon_url) {
