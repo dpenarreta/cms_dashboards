@@ -286,3 +286,81 @@ describe('BuscadorDeudor — sugerencias mientras se escribe', () => {
     expect(screen.getAllByRole('option')).toHaveLength(8)
   })
 })
+
+
+describe('BuscadorDeudor — aviso de identidad dudosa', () => {
+  /**
+   * Dos empresas homónimas con RUC distinto salían en la lista como filas idénticas: mismo
+   * nombre, mismo aspecto, y elegir una era adivinar. Y un RUC con dos razones sociales suma
+   * bien el saldo pero muestra el nombre de la primera fila, así que el mismo cliente puede
+   * aparecer con otro nombre según el archivo. Ninguna de las dos la detecta el resto del
+   * informe, que agrupa por identidad y sigue.
+   */
+
+  const HOMONIMAS = [
+    { identidad: '333', nombre: 'DOBLE IDENTIDAD', saldo: 10, filas: 1, otros_identificadores: ['444'], otros_nombres: [] },
+    { identidad: '444', nombre: 'DOBLE IDENTIDAD', saldo: 20, filas: 1, otros_identificadores: ['333'], otros_nombres: [] },
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('distingue dos clientes homónimos mostrando su identificador', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: HOMONIMAS, total: 2 })
+    pintar()
+    await consultar('doble')
+
+    await waitFor(() => expect(screen.getByText('333')).toBeInTheDocument())
+    expect(screen.getByText('444')).toBeInTheDocument()
+  })
+
+  it('avisa que el nombre está repartido en varios identificadores', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: HOMONIMAS, total: 2 })
+    pintar()
+    await consultar('doble')
+
+    await waitFor(() => expect(
+      screen.getAllByText(/también figura con el identificador 444/),
+    ).not.toHaveLength(0))
+  })
+
+  it('en el detalle avisa que el identificador tiene otros nombres, y acota a qué corresponden las cifras', async () => {
+    buscarDeudores.mockResolvedValue({
+      coincidencias: [{ identidad: '555', nombre: 'MUTANTE S.A.', saldo: 70, filas: 2, otros_identificadores: [], otros_nombres: ['MUTANTE SA'] }],
+      total: 1,
+    })
+    obtenerDetalleDeudor.mockResolvedValue({
+      ...DETALLE, identidad: '555', nombre: 'MUTANTE S.A.',
+      otros_identificadores: [], otros_nombres: ['MUTANTE SA'],
+    })
+    pintar()
+    await consultar('mutante')
+
+    await waitFor(() => expect(screen.getByText(/Revisá la identidad de este cliente/)).toBeInTheDocument())
+    expect(screen.getByText(/también figura con el nombre MUTANTE SA/)).toBeInTheDocument()
+  })
+
+  it('un cliente sin problemas no muestra ninguna advertencia', async () => {
+    buscarDeudores.mockResolvedValue({
+      coincidencias: [{ identidad: '111', nombre: 'TRANSEXPRESS', saldo: 1000, filas: 2, otros_identificadores: [], otros_nombres: [] }],
+      total: 1,
+    })
+    obtenerDetalleDeudor.mockResolvedValue({ ...DETALLE, otros_identificadores: [], otros_nombres: [] })
+    pintar()
+    await consultar()
+
+    await waitFor(() => expect(screen.getByText(/TRANSEXPRESS —/)).toBeInTheDocument())
+    expect(screen.queryByText(/Revisá la identidad/)).not.toBeInTheDocument()
+  })
+
+  it('sin los campos del aviso (una respuesta vieja en caché) no rompe', async () => {
+    buscarDeudores.mockResolvedValue({ coincidencias: [{ identidad: '111', nombre: 'TRANSEXPRESS', saldo: 1000, filas: 2 }], total: 1 })
+    obtenerDetalleDeudor.mockResolvedValue(DETALLE)
+    pintar()
+    await consultar()
+
+    await waitFor(() => expect(screen.getByText(/TRANSEXPRESS —/)).toBeInTheDocument())
+    expect(screen.queryByText(/Revisá la identidad/)).not.toBeInTheDocument()
+  })
+})

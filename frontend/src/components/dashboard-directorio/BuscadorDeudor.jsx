@@ -27,6 +27,28 @@ import { moneda, porcentaje } from './formato'
  * "corporacion" y mostrar sugerencias que no corresponden a lo que se ve en el campo.
  */
 
+/**
+ * El aviso de identidad dudosa, en palabras, o `null` si no hay nada que advertir.
+ *
+ * Son dos señales distintas y conviene no mezclarlas: que el NOMBRE aparezca con varios
+ * identificadores (dos empresas homónimas, o el mismo cliente cargado dos veces) y que el
+ * IDENTIFICADOR aparezca con varios nombres (el saldo se suma bien, pero la razón social que se
+ * muestra depende de qué fila venga primero).
+ */
+function avisoDeIdentidad({ otros_identificadores: identificadores, otros_nombres: nombres }) {
+  const partes = []
+  if (identificadores?.length) {
+    partes.push(`este nombre también figura con ${identificadores.length === 1 ? 'el identificador' : 'los identificadores'} ${identificadores.join(', ')}`)
+  }
+  if (nombres?.length) {
+    partes.push(`este identificador también figura con ${nombres.length === 1 ? 'el nombre' : 'los nombres'} ${nombres.join(', ')}`)
+  }
+  if (!partes.length) return null
+  // Se arma con mayúscula inicial y punto final acá, y no en cada lugar que lo muestra.
+  const texto = partes.join('; ')
+  return `${texto.charAt(0).toUpperCase()}${texto.slice(1)}.`
+}
+
 /** Milisegundos desde la última tecla antes de pedir sugerencias. */
 const ESPERA_SUGERENCIAS = 300
 /** Mínimo de caracteres para sugerir (el backend rechaza menos de dos). */
@@ -184,7 +206,17 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
                   onMouseDown={(e) => { e.preventDefault(); elegirSugerencia(sugerencia) }}
                   onMouseEnter={() => setResaltada(i)}
                 >
-                  <span className="directorio-sugerencia__nombre">{sugerencia.nombre}</span>
+                  <span className="directorio-sugerencia__nombre">
+                    {sugerencia.nombre}
+                    {/* Con el nombre repartido en varios identificadores, mostrarlo es lo único
+                        que distingue una fila de la otra: sin esto son idénticas. */}
+                    {Boolean(sugerencia.otros_identificadores?.length) && (
+                      <span className="directorio-sugerencia__id"> · {sugerencia.identidad}</span>
+                    )}
+                  </span>
+                  {Boolean(avisoDeIdentidad(sugerencia)) && (
+                    <span className="directorio-sugerencia__alerta" title={avisoDeIdentidad(sugerencia)}>⚠</span>
+                  )}
                   <span className="directorio-sugerencia__saldo">{moneda(sugerencia.saldo)}</span>
                 </li>
               ))}
@@ -215,6 +247,9 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
               <span className="directorio-coincidencia__id">{c.identidad}</span>
               <span className="directorio-coincidencia__saldo">{moneda(c.saldo)}</span>
               <span className="directorio-coincidencia__filas">{c.filas} fila{c.filas === 1 ? '' : 's'}</span>
+              {Boolean(avisoDeIdentidad(c)) && (
+                <span className="directorio-coincidencia__alerta">⚠ {avisoDeIdentidad(c)}</span>
+              )}
             </button>
           ))}
         </div>
@@ -233,6 +268,7 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
 function ResultadoDeudor({ detalle, onVolver, hayVarias }) {
   const { tramos, filas, columnas } = detalle
   const total = detalle.total || 0
+  const aviso = avisoDeIdentidad(detalle)
 
   return (
     <div className="directorio-deudor-consulta">
@@ -247,6 +283,13 @@ function ResultadoDeudor({ detalle, onVolver, hayVarias }) {
           </button>
         )}
       </div>
+
+      {Boolean(aviso) && (
+        <div className="directorio-deudor-consulta__alerta">
+          <strong>⚠ Revisá la identidad de este cliente.</strong> {aviso}{' '}
+          Los totales de acá abajo son solo de <em>{detalle.identidad}</em>.
+        </div>
+      )}
 
       <div className="directorio-deudor-consulta__cuerpo">
         <div className="directorio-deudor-consulta__antiguedad">

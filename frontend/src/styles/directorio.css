@@ -264,6 +264,33 @@
   flex-shrink: 0;
 }
 
+.directorio-sugerencia__id {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* El triángulo de aviso va en ámbar y no en rojo: es un dato para revisar, no un error —
+   las cifras que se muestran son correctas para el identificador elegido. */
+.directorio-sugerencia__alerta,
+.directorio-coincidencia__alerta {
+  color: #b26a00;
+  flex-shrink: 0;
+}
+
+.directorio-coincidencia__alerta {
+  flex-basis: 100%;
+  font-size: .76rem;
+}
+
+.directorio-deudor-consulta__alerta {
+  margin-bottom: .9rem;
+  padding: .55rem .8rem;
+  border-left: 3px solid #b26a00;
+  background: rgba(178, 106, 0, 0.08);
+  border-radius: 0 4px 4px 0;
+  font-size: .82rem;
+}
+
 .directorio-sugerencias__resto {
   padding: .4rem .7rem;
   font-size: .76rem;

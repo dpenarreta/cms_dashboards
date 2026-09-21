@@ -149,6 +149,41 @@ def columnas_disponibles(dashboard_id):
     }
 
 
+def _discrepancias_de_identidad(df, columna_nombre, columna_ruc):
+    """Nombres que aparecen con más de un identificador, e identificadores con más de un nombre.
+
+    Las dos son señales de un padrón sucio y ninguna la detecta el resto del informe, que agrupa
+    por identidad y sigue de largo:
+
+    - **Un nombre con varios identificadores**: o son dos empresas que se llaman parecido, o el
+      mismo cliente cargado dos veces. Hasta ahora las dos salían en la lista como filas
+      idénticas —mismo nombre, sin nada que las distinga— y elegir una era adivinar.
+    - **Un identificador con varios nombres**: el saldo se suma bien (la identidad es el RUC),
+      pero el nombre que se muestra es el de la primera fila, así que el mismo cliente puede
+      aparecer con una razón social distinta según el archivo.
+
+    Devuelve `({nombre: [identificadores]}, {identificador: [nombres]})`, solo con los casos que
+    tienen más de uno. Sin columna de identificador no hay nada que comparar —la identidad ES el
+    nombre— y ambos salen vacíos.
+    """
+    if not columna_ruc or columna_ruc not in df.columns:
+        return {}, {}
+
+    nombres = _texto(df[columna_nombre]).str.strip()
+    identidades = _identidad(df, columna_nombre, columna_ruc).astype(str)
+    pares = pd.DataFrame({'nombre': nombres, 'identidad': identidades})
+    # Una fila sin nombre no es una discrepancia, es un dato faltante: mezclarlas haría que todos
+    # los vacíos parecieran el mismo cliente con veinte identificadores.
+    pares = pares[(pares['nombre'] != '') & (pares['identidad'] != '')]
+
+    por_nombre = pares.groupby('nombre')['identidad'].unique()
+    por_identidad = pares.groupby('identidad')['nombre'].unique()
+    return (
+        {n: sorted(map(str, v)) for n, v in por_nombre.items() if len(v) > 1},
+        {i: sorted(map(str, v)) for i, v in por_identidad.items() if len(v) > 1},
+    )
+
+
 def buscar(dashboard_id, texto, columna_nombre, columna_valor, columna_ruc=None):
     """Clientes cuyo nombre o identificador contiene `texto`, con su saldo y cuántas filas tienen.
 
@@ -188,12 +223,27 @@ def buscar(dashboard_id, texto, columna_nombre, columna_valor, columna_ruc=None)
         .sort_values('saldo', ascending=False)
     )
 
+    # Se calculan sobre el archivo ENTERO, no sobre lo encontrado: un nombre repartido en dos
+    # identificadores puede tener solo uno de los dos coincidiendo con lo que se escribió, y aun
+    # así hay que avisar.
+    nombres_repetidos, identidades_repetidas = _discrepancias_de_identidad(df, columna_nombre, columna_ruc)
+
     coincidencias = [
         {
             'identidad': str(fila.identidad),
             'nombre': str(fila.nombre),
             'saldo': round(float(fila.saldo), 2),
             'filas': int(fila.filas),
+            # Qué mirar en cada una: el nombre está repartido en varios identificadores, o este
+            # identificador viene con varios nombres.
+            'otros_identificadores': [
+                i for i in nombres_repetidos.get(str(fila.nombre).strip(), [])
+                if i != str(fila.identidad)
+            ],
+            'otros_nombres': [
+                n for n in identidades_repetidas.get(str(fila.identidad), [])
+                if n != str(fila.nombre).strip()
+            ],
         }
         for fila in agrupado.head(LIMITE_COINCIDENCIAS).itertuples()
     ]
@@ -235,9 +285,17 @@ def detalle(dashboard_id, identidad, columna_nombre, columna_fecha, columna_valo
     # muestra tal cual.
     filas = del_deudor[elegidas].astype(object).where(pd.notna(del_deudor[elegidas]), None)
 
+    nombres_repetidos, identidades_repetidas = _discrepancias_de_identidad(df, columna_nombre, columna_ruc)
+    nombre = str(_texto(del_deudor[columna_nombre]).iloc[0]).strip()
+
     return {
         'identidad': str(identidad),
-        'nombre': str(_texto(del_deudor[columna_nombre]).iloc[0]),
+        'nombre': nombre,
+        # Las mismas dos señales que marca la búsqueda, ya resueltas para este cliente: con qué
+        # otros identificadores aparece su nombre, y con qué otros nombres aparece su
+        # identificador. Vacías cuando no hay nada que advertir.
+        'otros_identificadores': [i for i in nombres_repetidos.get(nombre, []) if i != str(identidad)],
+        'otros_nombres': [n for n in identidades_repetidas.get(str(identidad), []) if n != nombre],
         'total': round(total, 2),
         'cantidad_filas': int(len(del_deudor)),
         'fecha_corte': carga.fecha_corte.isoformat() if carga.fecha_corte else None,

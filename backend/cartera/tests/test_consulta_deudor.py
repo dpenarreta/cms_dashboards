@@ -229,3 +229,92 @@ class CacheDeArchivoTests(TestCase):
             )
             consulta_deudor._df_de(f'dash-{i}')
         self.assertLessEqual(len(consulta_deudor._cache_archivos), consulta_deudor._CACHE_MAXIMO)
+
+
+def _df_con_padron_sucio():
+    """Las dos formas en que un padrón se ensucia, cada una con su caso.
+
+    - "DOBLE IDENTIDAD" figura con dos RUC distintos: o son dos empresas homónimas, o el mismo
+      cliente cargado dos veces.
+    - El RUC 555 figura con dos razones sociales: el saldo se suma bien porque la identidad es el
+      RUC, pero el nombre que se muestra depende de qué fila venga primero.
+    """
+    return pd.DataFrame({
+        'Cliente': ['DOBLE IDENTIDAD', 'DOBLE IDENTIDAD', 'MUTANTE S.A.', 'MUTANTE SA', 'LIMPIO'],
+        'Ruc Cliente': ['333', '444', '555', '555', '666'],
+        'Fecha de Vencimiento': [datetime.date(2026, 6, 15)] * 5,
+        'Saldo': [10.0, 20.0, 30.0, 40.0, 50.0],
+        'Número de Documento': ['A', 'B', 'C', 'D', 'E'],
+    })
+
+
+class DiscrepanciasDeIdentidadTests(TestCase):
+    """Un mismo nombre con varios identificadores, o un identificador con varios nombres.
+
+    Ninguna de las dos la detecta el resto del informe: agrupa por identidad y sigue. En la lista
+    de coincidencias, dos empresas homónimas salían como filas idénticas y elegir una era
+    adivinar.
+    """
+
+    def setUp(self):
+        self.carga = CargaArchivo.objects.create(
+            dashboard_id='directorio-cartera', nombre_original='x.xlsx', nombre_hoja='Hoja1',
+            tamano_bytes=1, estado=CargaArchivo.Estado.PROCESADO, fecha_corte=CORTE,
+        )
+        parche = patch.object(consulta_deudor.carga_archivos, 'leer_archivo_de_carga',
+                              side_effect=lambda carga: ('ruta.xlsx', _df_con_padron_sucio()))
+        parche.start()
+        self.addCleanup(parche.stop)
+        consulta_deudor.limpiar_cache()
+        self.addCleanup(consulta_deudor.limpiar_cache)
+
+    def _buscar(self, texto, columna_ruc='Ruc Cliente'):
+        return consulta_deudor.buscar(
+            'directorio-cartera', texto,
+            columna_nombre='Cliente', columna_valor='Saldo', columna_ruc=columna_ruc,
+        )
+
+    def _detalle(self, identidad, columna_ruc='Ruc Cliente'):
+        return consulta_deudor.detalle(
+            'directorio-cartera', identidad,
+            columna_nombre='Cliente', columna_fecha='Fecha de Vencimiento',
+            columna_valor='Saldo', columna_ruc=columna_ruc,
+        )
+
+    def test_un_nombre_con_dos_identificadores_lo_avisa_en_cada_coincidencia(self):
+        coincidencias = {c['identidad']: c for c in self._buscar('doble')['coincidencias']}
+        self.assertEqual(sorted(coincidencias), ['333', '444'])
+        self.assertEqual(coincidencias['333']['otros_identificadores'], ['444'])
+        self.assertEqual(coincidencias['444']['otros_identificadores'], ['333'])
+
+    def test_un_identificador_con_dos_nombres_lo_avisa(self):
+        coincidencia = self._buscar('mutante')['coincidencias'][0]
+        self.assertEqual(coincidencia['identidad'], '555')
+        self.assertEqual(coincidencia['otros_nombres'], ['MUTANTE SA'])
+
+    def test_un_cliente_sin_problemas_no_arrastra_ningun_aviso(self):
+        coincidencia = self._buscar('limpio')['coincidencias'][0]
+        self.assertEqual(coincidencia['otros_identificadores'], [])
+        self.assertEqual(coincidencia['otros_nombres'], [])
+
+    def test_el_detalle_repite_el_aviso_del_cliente_elegido(self):
+        detalle = self._detalle('333')
+        self.assertEqual(detalle['otros_identificadores'], ['444'])
+        self.assertEqual(detalle['otros_nombres'], [])
+
+        mutante = self._detalle('555')
+        self.assertEqual(mutante['otros_nombres'], ['MUTANTE SA'])
+        self.assertEqual(mutante['otros_identificadores'], [])
+
+    def test_el_aviso_mira_el_archivo_entero_y_no_solo_lo_encontrado(self):
+        # Buscar "444" trae una sola coincidencia, pero el nombre igual está repartido: si se
+        # calculara sobre lo encontrado, ese caso no avisaría nada.
+        coincidencia = self._buscar('444')['coincidencias'][0]
+        self.assertEqual(coincidencia['otros_identificadores'], ['333'])
+
+    def test_sin_columna_de_identificador_no_hay_nada_que_comparar(self):
+        # Es el caso de producción: la vista no trae RUC, así que la identidad ES el nombre y dos
+        # nombres iguales son, por definición, el mismo cliente.
+        coincidencia = self._buscar('doble', columna_ruc='')['coincidencias'][0]
+        self.assertEqual(coincidencia['otros_identificadores'], [])
+        self.assertEqual(coincidencia['otros_nombres'], [])
