@@ -47,6 +47,28 @@ export function agregarComponentePresentacional(dashboardId, { tipo, anchoColumn
   }).then((r) => r.data)
 }
 
+/**
+ * El archivo que alimenta el dashboard, con todas sus filas y columnas.
+ *
+ * Devuelve el blob y el nombre que propuso el backend (va en `Content-Disposition`): el nombre lo
+ * arma el servidor porque incluye la fecha de corte de la carga, que acá no se conoce.
+ */
+export function descargarDatos(dashboardId) {
+  return api.get(`/${dashboardId}/descargar-datos`, { responseType: 'blob' }).then((r) => ({
+    blob: r.data,
+    nombre: nombreDeLaDescarga(r.headers['content-disposition']) || `${dashboardId}.xlsx`,
+  }))
+}
+
+/** El `filename` de un `Content-Disposition`, prefiriendo la forma `filename*` con acentos. */
+function nombreDeLaDescarga(cabecera) {
+  if (!cabecera) return ''
+  const conAcentos = cabecera.match(/filename\*=UTF-8''([^;]+)/i)
+  if (conAcentos) return decodeURIComponent(conAcentos[1])
+  const simple = cabecera.match(/filename="([^"]+)"/i)
+  return simple ? simple[1] : ''
+}
+
 export function obtenerVersiones(dashboardId) {
   return api.get(`/${dashboardId}/versions`).then((r) => r.data)
 }

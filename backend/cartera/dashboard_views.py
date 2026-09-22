@@ -1,3 +1,6 @@
+from urllib.parse import quote
+
+from django.http import HttpResponse
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
@@ -7,7 +10,7 @@ from apps.permissions.permissions import IsSuperuser, require_permission
 
 from . import dashboard_registry, permisos
 from .exceptions import CarteraError
-from .services import consulta_deudor, dashboard_interpretation, desbloqueo
+from .services import consulta_deudor, dashboard_interpretation, desbloqueo, descarga_datos
 from .services import dashboard_layout as dl
 from .services import dashboards as dashboards_service
 
@@ -388,6 +391,34 @@ class DashboardVersionsView(APIView):
             }
             for e in entradas
         ])
+
+
+class DashboardDescargarDatosView(APIView):
+    """`GET /api/dashboards/<dashboard_id>/descargar-datos` — el archivo que alimenta el
+    dashboard, con todas sus filas y columnas, en .xlsx.
+
+    Pide `dashboard.view` y no un permiso propio: es el mismo conjunto de datos que el dashboard
+    ya muestra —agregado en sus secciones y fila por fila en la consulta por cliente—, así que no
+    expone nada que quien puede abrirlo no pueda ver ya. Mismo criterio que `ExportarView` del
+    dashboard legado.
+    """
+
+    def get(self, request, dashboard_id):
+        if not permisos.tiene_acceso_dashboard(request, dashboard_id, permiso_global=permisos.DASHBOARD_VIEW):
+            return _denegado(request, dashboard_id, permisos.DASHBOARD_VIEW, 'No tiene permiso para ver este dashboard.')
+
+        buffer, nombre = descarga_datos.excel_de_la_carga_vigente(dashboard_id)
+        respuesta = HttpResponse(
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        # El nombre lleva espacios y puede llevar acentos: va entre comillas y además como
+        # `filename*` (RFC 5987), que es lo que hace que el navegador conserve los acentos en vez
+        # de guardarlo con caracteres rotos.
+        respuesta['Content-Disposition'] = (
+            f'attachment; filename="{nombre}"; filename*=UTF-8''{quote(nombre)}'
+        )
+        return respuesta
 
 
 class DashboardConsultaDeudorView(APIView):

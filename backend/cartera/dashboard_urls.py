@@ -17,5 +17,6 @@ urlpatterns = [
     path('<slug:dashboard_id>/interpretacion', dashboard_views.DashboardInterpretacionView.as_view(), name='dashboard-interpretacion'),
     path('<slug:dashboard_id>/hallazgos-ia', dashboard_views.DashboardHallazgosIAView.as_view(), name='dashboard-hallazgos-ia'),
     path('<slug:dashboard_id>/deudor', dashboard_views.DashboardConsultaDeudorView.as_view(), name='dashboard-consulta-deudor'),
+    path('<slug:dashboard_id>/descargar-datos', dashboard_views.DashboardDescargarDatosView.as_view(), name='dashboard-descargar-datos'),
     path('<slug:dashboard_id>/', dashboard_views.DashboardDetailView.as_view(), name='dashboard-detail'),
 ]

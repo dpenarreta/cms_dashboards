@@ -1046,3 +1046,99 @@ describe('DashboardAreaPage', () => {
     })
   })
 })
+
+
+describe('DashboardAreaPage — descargar el archivo completo', () => {
+  /**
+   * El Dashboard Directorio replica un informe impreso y no usa el histórico de cargas; ahí ese
+   * botón cede el lugar a la descarga del archivo que alimenta el dashboard, con todas sus filas
+   * y columnas. En los demás dashboards el histórico sigue como estaba.
+   */
+
+  const COMPONENTE_DIRECTORIO = {
+    ...KPI_COMPONENTE,
+    component_id: 'cartera-total',
+    config: { render: 'directorio', bloque: 'kpi' },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Este bloque es hermano del principal, así que no hereda su `beforeEach`: se repiten los
+    // mocks mínimos que la página pide siempre al montarse.
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad' },
+    ])
+    dashboardLayoutService.obtenerPestanas.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', orden: 1 },
+    ])
+    dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({ configurada: false })
+    historicoService.listarCargasHistoricas.mockResolvedValue({
+      cargas: [], columnas_disponibles: [], columnas_historicas_configuradas: [],
+    })
+    carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+    useAuth.mockReturnValue({ user: { permissions: [] } })
+  })
+
+  function pintarDirectorio(overrides = {}) {
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase({
+      borrador: [COMPONENTE_DIRECTORIO],
+      layoutGuardado: { version: 1, components: [COMPONENTE_DIRECTORIO] },
+      ...overrides,
+    }))
+    renderPagina()
+  }
+
+  it('en el informe, el botón de histórico deja su lugar a la descarga', async () => {
+    pintarDirectorio()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    expect(screen.getByRole('button', { name: 'Descargar Excel' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Ver histórico' })).not.toBeInTheDocument()
+  })
+
+  it('en un dashboard cualquiera el histórico sigue estando', async () => {
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase({ borrador: [KPI_COMPONENTE] }))
+    renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    // `Button as={Link}` renderiza un <a role="button">: el rol accesible es "button".
+    expect(screen.getByRole('button', { name: 'Ver histórico' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Descargar Excel' })).not.toBeInTheDocument()
+  })
+
+  it('descarga el archivo con el nombre que propone el backend', async () => {
+    const blob = new Blob(['datos'])
+    dashboardLayoutService.descargarDatos.mockResolvedValue({
+      blob, nombre: 'Dashboard Directorio - datos 2026-09-20.xlsx',
+    })
+    // `createObjectURL` no existe en jsdom: el enlace de descarga se arma con él.
+    const crear = vi.fn(() => 'blob:x')
+    const revocar = vi.fn()
+    URL.createObjectURL = crear
+    URL.revokeObjectURL = revocar
+    const clic = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    pintarDirectorio()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+    await userEvent.click(screen.getByRole('button', { name: 'Descargar Excel' }))
+
+    await waitFor(() => expect(dashboardLayoutService.descargarDatos).toHaveBeenCalledWith('finanzas'))
+    expect(crear).toHaveBeenCalledWith(blob)
+    expect(clic).toHaveBeenCalled()
+    // El objeto URL se libera: sin esto, cada descarga deja el blob retenido en memoria.
+    expect(revocar).toHaveBeenCalledWith('blob:x')
+    clic.mockRestore()
+  })
+
+  it('un dashboard sin datos lo dice, en vez de descargar un archivo vacío', async () => {
+    dashboardLayoutService.descargarDatos.mockRejectedValue({ response: { status: 400 } })
+    pintarDirectorio()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Descargar Excel' }))
+
+    expect(await screen.findByText(/todavía no tiene datos cargados/)).toBeInTheDocument()
+  })
+})

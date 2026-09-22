@@ -365,6 +365,38 @@ export default function DashboardAreaPage() {
   )
 
   const estructuraBloqueada = Boolean(layout.layoutGuardado?.estructura_bloqueada)
+  // El mismo criterio con el que se eligen los renderers propios (`config.render`): así el
+  // encabezado no necesita saber el id del dashboard ni mantener una lista aparte.
+  const esInformeDirectorio = (layout.borrador || []).some((c) => c.config?.render === 'directorio')
+
+  // Descarga del archivo que alimenta el dashboard, con todas sus filas y columnas. Lo que se
+  // baja es la carga VIGENTE —lo mismo que la pantalla está mostrando—, no una ejecución nueva
+  // del origen: ver `services/descarga_datos.py`.
+  const [descargando, setDescargando] = useState(false)
+  const [errorDescarga, setErrorDescarga] = useState('')
+  const descargarDatos = async () => {
+    setDescargando(true)
+    setErrorDescarga('')
+    try {
+      const { blob, nombre } = await dashboardLayoutService.descargarDatos(dashboardId)
+      const url = URL.createObjectURL(blob)
+      const enlace = document.createElement('a')
+      enlace.href = url
+      enlace.download = nombre
+      document.body.appendChild(enlace)
+      enlace.click()
+      enlace.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      // El cuerpo del error viaja como blob (la petición pide `responseType: 'blob'`), así que
+      // el mensaje del backend no se puede leer directo: se muestra uno propio.
+      setErrorDescarga(e.response?.status === 400
+        ? 'Este dashboard todavía no tiene datos cargados para descargar.'
+        : 'No se pudo descargar el archivo.')
+    } finally {
+      setDescargando(false)
+    }
+  }
 
   // "Borrar datos" también se lleva los componentes de la Zona Personal, así que en un dashboard
   // bloqueado pasa por la misma puerta que el resto. Va después de `conConfirmacion` porque lo usa.
@@ -491,9 +523,18 @@ export default function DashboardAreaPage() {
           <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConectarFuenteBD(true)}>
             Conectar vista de base de datos
           </Button>
-          <Button as={Link} to={`/app/dashboards/${dashboardId}/historico`} variant="outline-secondary" size="sm">
-            Ver histórico
-          </Button>
+          {/* El Dashboard Directorio replica un informe impreso y no usa el histórico de cargas:
+              ahí ese botón cede el lugar a la descarga del archivo completo. En los demás
+              dashboards el histórico sigue como estaba. */}
+          {esInformeDirectorio ? (
+            <Button variant="outline-secondary" size="sm" onClick={descargarDatos} disabled={descargando}>
+              {descargando ? 'Preparando…' : 'Descargar Excel'}
+            </Button>
+          ) : (
+            <Button as={Link} to={`/app/dashboards/${dashboardId}/historico`} variant="outline-secondary" size="sm">
+              Ver histórico
+            </Button>
+          )}
           {!mostrarConstructor && (
             <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConstructor(true)}>Cargar otro archivo</Button>
           )}
@@ -541,6 +582,11 @@ export default function DashboardAreaPage() {
       {errorActualizarAhora && (
         <Alert variant="warning" dismissible onClose={() => setErrorActualizarAhora('')} className="py-2 d-print-none" style={{ fontSize: '0.85rem' }}>
           {errorActualizarAhora}
+        </Alert>
+      )}
+      {errorDescarga && (
+        <Alert variant="warning" dismissible onClose={() => setErrorDescarga('')} className="py-2 d-print-none" style={{ fontSize: '0.85rem' }}>
+          {errorDescarga}
         </Alert>
       )}
 
