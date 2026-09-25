@@ -406,3 +406,31 @@ body {
     max-width: 100%;
   }
 }
+
+/* --- Barra de acciones del encabezado -------------------------------------------------------
+ *
+ * Los botones pasan a la fila siguiente en vez de encogerse. La diferencia está en el
+ * `flex-shrink: 0`: un contenedor flex, antes de envolver, reparte la falta de espacio
+ * achicando a sus hijos, y con etiquetas largas ("Conectar vista de base de datos") eso termina
+ * en botones angostos con el texto partido en cuatro renglones — a 700px la barra llegaba a
+ * medir 94px de alto. Conservando su ancho natural, los que no entran bajan a una segunda fila
+ * y todos quedan de una sola línea.
+ */
+.acciones-dashboard {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.acciones-dashboard > .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Por debajo de esto, un botón solo ya puede ser más ancho que la pantalla: ahí sí conviene
+   que el texto se parta, que es preferible a que se salga. */
+@media (max-width: 400px) {
+  .acciones-dashboard > .btn {
+    white-space: normal;
+  }
+}

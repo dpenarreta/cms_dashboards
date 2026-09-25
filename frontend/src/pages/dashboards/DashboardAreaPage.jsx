@@ -514,7 +514,10 @@ export default function DashboardAreaPage() {
           <h3 className="mb-1">{dashboardInfo?.name || dashboardId}</h3>
           {dashboardInfo?.area && <p className="chart-panel__subtitle mb-0">Área: {dashboardInfo.area}</p>}
         </div>
-        <div className="d-flex gap-2 d-print-none">
+        {/* `acciones-dashboard` deja que los botones pasen a la fila siguiente en vez de
+            encogerse: sin eso, a 700px la barra medía 94px de alto porque cada botón se
+            comprimía hasta partir su texto en cuatro renglones. */}
+        <div className="acciones-dashboard d-print-none">
           {puedeInterpretar && (
             <Button variant="outline-secondary" size="sm" onClick={() => setMostrarInterpretacion(true)}>
               Interpretación completa

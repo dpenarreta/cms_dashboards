@@ -1142,3 +1142,53 @@ describe('DashboardAreaPage — descargar el archivo completo', () => {
     expect(await screen.findByText(/todavía no tiene datos cargados/)).toBeInTheDocument()
   })
 })
+
+
+describe('DashboardAreaPage — la barra de acciones se reparte en varias filas', () => {
+  /**
+   * Los botones del encabezado tienen etiquetas largas ("Conectar vista de base de datos"). Un
+   * contenedor flex, antes de envolver, reparte la falta de espacio ACHICANDO a sus hijos: a
+   * 700px eso dejaba botones de 63px con el texto partido en cuatro renglones y una barra de
+   * 94px de alto. Con la clase correcta conservan su ancho y bajan a la fila siguiente.
+   *
+   * El alto real no se puede medir acá (jsdom no calcula layout), así que lo que se fija es el
+   * contrato: el contenedor es el que sabe envolver, y no el `d-flex gap-2` que se comprimía.
+   */
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    dashboardLayoutService.obtenerDashboardsAutorizados.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', area: 'Finanzas y Contabilidad' },
+    ])
+    dashboardLayoutService.obtenerPestanas.mockResolvedValue([
+      { dashboard_id: 'finanzas', name: 'Finanzas', orden: 1 },
+    ])
+    dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({ configurada: false })
+    historicoService.listarCargasHistoricas.mockResolvedValue({
+      cargas: [], columnas_disponibles: [], columnas_historicas_configuradas: [],
+    })
+    carteraService.obtenerArchivoActualDashboard.mockResolvedValue({ disponible: false })
+    useAuth.mockReturnValue({ user: { permissions: [] } })
+    useGenericDashboardBuilder.mockReturnValue(builderBase())
+    useDashboardLayout.mockReturnValue(layoutBase())
+  })
+
+  it('los botones viven en un contenedor que los deja pasar a otra fila', async () => {
+    const { container } = renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    const barra = container.querySelector('.acciones-dashboard')
+    expect(barra).not.toBeNull()
+    // Todos los botones del encabezado están adentro, que es lo que hace que se repartan juntos.
+    expect(barra.querySelector('button')).not.toBeNull()
+  })
+
+  it('el botón de imprimir sigue dentro de la barra', async () => {
+    const { container } = renderPagina()
+    await screen.findByRole('heading', { name: 'Finanzas' })
+
+    const barra = container.querySelector('.acciones-dashboard')
+    const textos = [...barra.querySelectorAll('button, a')].map((b) => b.textContent.trim())
+    expect(textos).toContain('Imprimir como PDF')
+  })
+})
