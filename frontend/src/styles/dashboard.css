@@ -383,7 +383,22 @@ body {
   box-sizing: border-box;
 }
 
-@media (max-width: 1199.98px) {
+/* El grid se mide A SÍ MISMO, no a la ventana.
+ *
+ * Con media queries los cortes miraban el ancho de la VENTANA, y entre la ventana y el grid hay
+ * un menú lateral (que además se pliega) más los rellenos del contenido: a 1100px de ventana el
+ * grid medía 917 y seguía en el escalón de "pantalla chica", así que los cuatro KPI se acomodaban
+ * de a dos y cada tarjeta quedaba de 459px para mostrar un número de seis cifras. Al revés
+ * también fallaba: plegar el menú ensancha el grid 180px y ningún corte se enteraba.
+ *
+ * `container-type: inline-size` hace que los cortes de abajo midan el grid. Los umbrales están en
+ * el ancho que necesita una tarjeta para leerse (~200px), no en tamaños de dispositivo.
+ */
+.dashboard-grid {
+  container-type: inline-size;
+}
+
+@container (max-width: 799.98px) {
   /* Los paneles anchos (media página o más) pasan a ocupar la fila entera. */
   .dashboard-grid__celda {
     flex-basis: 100%;
@@ -400,7 +415,8 @@ body {
   }
 }
 
-@media (max-width: 767.98px) {
+@container (max-width: 439.98px) {
+  /* Dos tarjetas de menos de 220px ya no muestran un importe completo: recién acá se apilan. */
   .dashboard-grid__celda[data-ancho] {
     flex-basis: 100%;
     max-width: 100%;

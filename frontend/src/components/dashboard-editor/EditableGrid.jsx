@@ -58,7 +58,7 @@ export default function EditableGrid({
 
   if (!modoEdicion || vistaPrevia) {
     return (
-      <div className="d-flex flex-wrap">
+      <div className="dashboard-grid d-flex flex-wrap">
         {visibles.map((c) => {
           const definicion = registro[c.component_id]
           if (!definicion) return null
@@ -136,7 +136,7 @@ export default function EditableGrid({
               pueda soltar uno en la zona vecina. */}
           <SortableContext items={zona.items.map((c) => c.component_id)} strategy={rectSortingStrategy}>
             <div
-              className="border-secondary d-flex flex-wrap"
+              className="dashboard-grid border-secondary d-flex flex-wrap"
               style={{ border: '2px dashed', borderRadius: 10, padding: 8 }}
               role="list"
               aria-label={zona.etiqueta}
@@ -149,7 +149,7 @@ export default function EditableGrid({
 
       {sinZona.length > 0 && (
         <SortableContext items={sinZona.map((c) => c.component_id)} strategy={rectSortingStrategy}>
-          <div className="d-flex flex-wrap" role="list" aria-label="Otros componentes">
+          <div className="dashboard-grid d-flex flex-wrap" role="list" aria-label="Otros componentes">
             {renderGrupo(sinZona)}
           </div>
         </SortableContext>

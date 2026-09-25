@@ -124,4 +124,18 @@ describe('EditableGrid — el ancho de cada panel es adaptable', () => {
     expect(celda.dataset.ancho).toBe('6')
     expect(celda.style.flex).toBe('')
   })
+
+  /**
+   * Los cortes de `dashboard.css` son `@container`, así que miden el grid y no la ventana. Eso
+   * solo funciona si el contenedor lleva la clase que declara `container-type`: sin ella las
+   * reglas no aplican nunca y todos los paneles se quedan en el ancho de escritorio.
+   */
+  it('el contenedor se declara como contenedor de consulta', () => {
+    for (const modoEdicion of [false, true]) {
+      const { container } = renderGrid([componente('kpi-1', { width: 3 })], { modoEdicion })
+      const celda = celdas(container)[0]
+
+      expect(celda.closest('.dashboard-grid'), `modoEdicion=${modoEdicion}`).not.toBeNull()
+    }
+  })
 })

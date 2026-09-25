@@ -120,3 +120,31 @@ describe('tablas del informe en pantallas angostas', () => {
     expect(css()).not.toMatch(/word-break:\s*break-all/)
   })
 })
+
+describe('cortes de ancho del grid de paneles', () => {
+  /**
+   * Miden el GRID, no la ventana. Entre una y otro hay un menú lateral —que además se pliega— más
+   * los rellenos del contenido: a 1100px de ventana el grid mide 917, y con `@media` seguía en el
+   * escalón de "pantalla chica", así que los cuatro KPI se acomodaban de a dos y cada tarjeta
+   * quedaba de 459px para mostrar un número de seis cifras.
+   *
+   * Verificado con la ventana fija en 1400px, angostando solo el grid: 1217 → 4 por fila,
+   * 700 → 2×2, 420 → apilados.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'dashboard.css'), 'utf8'))
+
+  it('el grid se declara como contenedor de consulta', () => {
+    expect(css()).toMatch(/\.dashboard-grid\s*\{[^}]*container-type:\s*inline-size/)
+  })
+
+  it('los escalones de la celda son @container y no @media', () => {
+    // Una regla de celda dentro de un @media volvería a medir la ventana.
+    for (const bloque of css().matchAll(/@media[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
+      expect(bloque[1], 'un corte de .dashboard-grid__celda quedó en @media').not.toMatch(
+        /\.dashboard-grid__celda/,
+      )
+    }
+    expect(css()).toMatch(/@container[^{]*\{[\s\S]*?\.dashboard-grid__celda/)
+  })
+})
