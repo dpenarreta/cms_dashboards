@@ -24,6 +24,8 @@ columna que no forma parte del gráfico en sí.
 import hashlib
 import json
 import logging
+import re
+import time
 
 import requests
 from django.conf import settings
@@ -42,6 +44,18 @@ _TTL_CACHE_HALLAZGOS_SEGUNDOS = 12 * 60 * 60
 
 _GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
 _TIMEOUT_SEGUNDOS = 45
+
+# El servicio responde 503 UNAVAILABLE ("high demand… try again later") de forma intermitente, y
+# no de manera pareja: midiendo seis modelos en el mismo minuto, tres respondieron 200 y tres 503.
+# Sin reintento, un pico de dos segundos del lado de Google dejaba al dashboard sin hallazgos
+# hasta que alguien recargara la pantalla.
+_ESTADOS_REINTENTABLES = frozenset({429, 500, 502, 503, 504})
+# Un modelo que no existe (404) no mejora esperando, pero el siguiente de la lista puede andar.
+_ESTADO_MODELO_AUSENTE = 404
+_ESPERA_ENTRE_INTENTOS_SEGUNDOS = 1.5
+# Por debajo de los 60s que espera el frontend (`dashboardLayoutService.js::_TIMEOUT_IA_MS`), para
+# que el backend alcance a responder su propio error antes de que el navegador aborte la petición.
+_PRESUPUESTO_TOTAL_SEGUNDOS = 50
 _MAXIMO_ITEMS_POR_COMPONENTE = 20
 
 
@@ -88,6 +102,94 @@ def _describir_dispersion(content):
     return f'Gráfico de dispersión "{content.get("titulo") or "(sin título)"}" — puntos (x, y): {detalle}{truncado}.'
 
 
+_MESES = (
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+)
+# Cuántos deudores describir en la sección de mayores deudores. Cada uno aporta su propia
+# mini-tabla de tramos, así que cuentan mucho más que un item de una lista plana.
+_MAXIMO_DEUDORES = 5
+
+
+def _describir_deudores(content):
+    """La sección de los mayores deudores: una mini-tabla de antigüedad POR deudor.
+
+    Su `content` no tiene `categorias`, `series`, `puntos` ni `columnas`/`filas` — tiene
+    `deudores`, y cada deudor trae las suyas. Sin esta rama el despachador devolvía `None` y la
+    sección entera quedaba FUERA del prompt: la IA no escribía su hallazgo y tampoco la tenía en
+    cuenta al interpretar el dashboard completo, sin ningún aviso de que faltaba.
+    """
+    deudores = content.get('deudores') or []
+    partes = []
+    for deudor in deudores[:_MAXIMO_DEUDORES]:
+        tramos = ', '.join(
+            f'{fila[0]}: {_formatear_numero(fila[1])} ({_formatear_numero(fila[2])}% de su saldo)'
+            for fila in (deudor.get('filas') or []) if len(fila) >= 3
+        )
+        partes.append(
+            f'"{deudor.get("nombre")}" (saldo {_formatear_numero(deudor.get("total"))}, '
+            f'{_formatear_numero(deudor.get("porcentaje_cartera"))}% de la cartera total; '
+            f'tramo con mayor saldo: {deudor.get("tramo_mayor")}) — {tramos}'
+        )
+    truncado = f' (truncado a los {_MAXIMO_DEUDORES} primeros deudores)' if len(deudores) > _MAXIMO_DEUDORES else ''
+    titulo = content.get('titulo') or '(sin título)'
+    return f'Antigüedad por deudor "{titulo}" — ' + '; '.join(partes) + f'{truncado}.'
+
+
+def _mes_y_anio(fecha_iso):
+    """'2026-08-31' -> 'AGOSTO 2026'. Con un mapa propio y no con `strftime('%B')`, que depende
+    del locale del sistema operativo y en el servidor devolvería el mes en inglés."""
+    try:
+        anio, mes, _dia = str(fecha_iso).split('-')
+        return f'{_MESES[int(mes) - 1]} {anio}'.upper()
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def _con_titulo_resuelto(componente, content, corte):
+    """Resuelve los marcadores `{n}` y `{corte}` del título antes de mandarlo a la IA.
+
+    El título se guarda con marcadores a propósito (si el número quedara escrito, seguiría
+    diciendo "TOP 16" después de cambiarlo a 5, y "AGOSTO 2026" con el corte siguiente ya cargado),
+    y el frontend los resuelve al dibujar. El prompt se arma del `content` crudo, así que la IA
+    venía leyendo "ANTIGÜEDAD DE CARTERA — {corte}" y "TOP {n} CLIENTES": perdía la fecha del
+    corte y el tamaño del top, y podía repetir el marcador en el texto del hallazgo.
+    """
+    titulo = str(content.get('titulo') or '')
+    if '{' not in titulo:
+        return content
+
+    if '{n}' in titulo:
+        mapeo = componente.get('mapeo') or {}
+        cuantos = (
+            mapeo.get('top_n') or mapeo.get('cuantos')
+            or len(content.get('deudores') or content.get('filas') or []) or None
+        )
+        titulo = titulo.replace('{n}', str(cuantos)) if cuantos else titulo.replace('{n}', '')
+
+    if '{corte}' in titulo:
+        # Sin corte conocido se quita el marcador CON su puntuación, igual que en el frontend
+        # (`formato.js::conCorte`): el informe lo usa como "— {corte}" y como "({corte})", y
+        # dejarlo suelto daría un "— " o un "()" colgando.
+        mes = _mes_y_anio(corte) if corte else None
+        if mes:
+            titulo = titulo.replace('{corte}', mes)
+        else:
+            titulo = re.sub(r'\s*—\s*\{corte\}', '', titulo)
+            titulo = re.sub(r'\s*\(\{corte\}\)', '', titulo).replace('{corte}', '')
+
+    return {**content, 'titulo': titulo.strip()}
+
+
+def _corte_del_layout(componentes):
+    """La fecha de corte vive en el componente marcado como base de porcentaje, igual que en el
+    frontend (`formato.js::corteDe`) — no hay un campo del dashboard que la tenga."""
+    for componente in componentes:
+        if (componente.get('config') or {}).get('es_base_porcentaje'):
+            return (componente.get('content') or {}).get('fecha_corte')
+    return None
+
+
 def _describir_tabla(content):
     columnas = content.get('columnas') or []
     filas = (content.get('filas') or [])[:_MAXIMO_ITEMS_POR_COMPONENTE]
@@ -126,14 +228,16 @@ def _bloque_instruccion_ia(componente):
     return ' ' + ' '.join(partes)
 
 
-def _describir_componente(componente):
-    content = componente.get('content') or {}
+def _describir_componente(componente, corte=None):
+    content = _con_titulo_resuelto(componente, componente.get('content') or {}, corte)
     if componente['type'] == 'kpi':
         return _describir_kpi(content) + _bloque_instruccion_ia(componente)
     if componente['type'] != 'chart':
         return None
     if 'puntos' in content:
         base = _describir_dispersion(content)
+    elif 'deudores' in content:
+        base = _describir_deudores(content)
     elif 'columnas' in content and 'filas' in content:
         base = _describir_tabla(content)
     elif 'series' in content:
@@ -210,7 +314,8 @@ def _dashboard_y_componentes_visibles(dashboard_id, mensaje_sin_datos):
 
     layout = dl.obtener_o_crear_layout(dashboard_id)
     visibles = [c for c in dl.serializar_layout(layout)['components'] if c['is_visible']]
-    items = [(c['component_id'], _describir_componente(c)) for c in visibles]
+    corte = _corte_del_layout(visibles)
+    items = [(c['component_id'], _describir_componente(c, corte)) for c in visibles]
     items = [(component_id, texto) for component_id, texto in items if texto]
 
     if not items:
@@ -219,37 +324,16 @@ def _dashboard_y_componentes_visibles(dashboard_id, mensaje_sin_datos):
     return dashboard, items
 
 
-def _llamar_gemini(payload):
-    url = _GEMINI_URL.format(model=settings.GEMINI_MODEL)
-    try:
-        # La credencial va en el encabezado `x-goog-api-key`, NUNCA como parámetro de URL: en la
-        # cadena de consulta la capturaba todo lo que registra URLs (logs de proxy, trazas de
-        # excepción de `requests`, monitoreo). Un encabezado no aparece en un registro de acceso.
-        respuesta = requests.post(
-            url,
-            headers={'x-goog-api-key': settings.GEMINI_API_KEY},
-            json=payload,
-            timeout=_TIMEOUT_SEGUNDOS,
-        )
-    except requests.RequestException:
-        # El detalle real del fallo de red queda en el log del servidor: la respuesta al frontend
-        # es deliberadamente genérica, pero sin esto no había forma de diagnosticar nada.
-        logger.exception('Falló la llamada al servicio de IA (modelo=%s)', settings.GEMINI_MODEL)
-        raise CarteraError(
-            'No se pudo contactar al servicio de interpretación con IA. Intente nuevamente.', codigo='IA_ERROR',
-        )
+def _modelos_a_probar():
+    """El modelo configurado primero, después los de respaldo, sin repetir."""
+    modelos = [settings.GEMINI_MODEL]
+    for modelo in settings.GEMINI_MODELOS_RESPALDO:
+        if modelo and modelo not in modelos:
+            modelos.append(modelo)
+    return modelos
 
-    if respuesta.status_code != 200:
-        logger.error(
-            'El servicio de IA respondió %s: %s', respuesta.status_code, respuesta.text[:500],
-        )
-        raise CarteraError(
-            'El servicio de interpretación con IA respondió con un error. Intente nuevamente.',
-            codigo='IA_ERROR',
-            detalles={'status_code': respuesta.status_code},
-        )
 
-    cuerpo = respuesta.json()
+def _texto_de_la_respuesta(cuerpo):
     try:
         return cuerpo['candidates'][0]['content']['parts'][0]['text']
     except (KeyError, IndexError):
@@ -257,6 +341,73 @@ def _llamar_gemini(payload):
         raise CarteraError(
             'El servicio de interpretación con IA no devolvió una respuesta utilizable.', codigo='IA_ERROR',
         )
+
+
+def _llamar_gemini(payload):
+    """Un intento por modelo, hasta que uno responda o se acabe el presupuesto de tiempo.
+
+    Los 503 son por MODELO y no por cuenta: pasar al siguiente de la lista suele resolver en el
+    acto, así que cada intento cambia de modelo en vez de repetir el mismo. Un 4xx que no sea 429
+    ni 404 corta enseguida — es un problema del pedido, y repetirlo contra otro modelo solo gasta
+    el tiempo que el usuario está esperando.
+    """
+    comenzo = time.monotonic()
+    modelos = _modelos_a_probar()
+    ultimo_estado = None
+
+    for indice, modelo in enumerate(modelos):
+        restante = _PRESUPUESTO_TOTAL_SEGUNDOS - (time.monotonic() - comenzo)
+        if restante <= 1:
+            break
+        if indice:
+            time.sleep(_ESPERA_ENTRE_INTENTOS_SEGUNDOS)
+
+        try:
+            # La credencial va en el encabezado `x-goog-api-key`, NUNCA como parámetro de URL: en
+            # la cadena de consulta la capturaba todo lo que registra URLs (logs de proxy, trazas
+            # de excepción de `requests`, monitoreo). Un encabezado no aparece en un registro de
+            # acceso.
+            respuesta = requests.post(
+                _GEMINI_URL.format(model=modelo),
+                headers={'x-goog-api-key': settings.GEMINI_API_KEY},
+                json=payload,
+                timeout=min(_TIMEOUT_SEGUNDOS, restante),
+            )
+        except requests.RequestException:
+            # El detalle real del fallo de red queda en el log del servidor: la respuesta al
+            # frontend es deliberadamente genérica, pero sin esto no había forma de diagnosticar.
+            logger.warning('Falló la llamada al servicio de IA (modelo=%s)', modelo, exc_info=True)
+            ultimo_estado = None
+            continue
+
+        if respuesta.status_code == 200:
+            if indice:
+                logger.info('El servicio de IA respondió con el modelo de respaldo "%s".', modelo)
+            return _texto_de_la_respuesta(respuesta.json())
+
+        ultimo_estado = respuesta.status_code
+        reintentable = respuesta.status_code in _ESTADOS_REINTENTABLES
+        ausente = respuesta.status_code == _ESTADO_MODELO_AUSENTE
+        logger.warning(
+            'El servicio de IA respondió %s con el modelo "%s": %s',
+            respuesta.status_code, modelo, respuesta.text[:300],
+        )
+        if not reintentable and not ausente:
+            break
+
+    logger.error(
+        'Ningún modelo de IA respondió (probados: %s; último estado: %s).',
+        ', '.join(modelos), ultimo_estado,
+    )
+    if ultimo_estado is None:
+        raise CarteraError(
+            'No se pudo contactar al servicio de interpretación con IA. Intente nuevamente.', codigo='IA_ERROR',
+        )
+    raise CarteraError(
+        'El servicio de interpretación con IA respondió con un error. Intente nuevamente.',
+        codigo='IA_ERROR',
+        detalles={'status_code': ultimo_estado},
+    )
 
 
 def generar_interpretacion(dashboard_id):

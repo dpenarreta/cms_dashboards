@@ -395,3 +395,165 @@ class DashboardHallazgosIAViewTests(TestCase):
         resp = cliente.post('/api/dashboards/finanzas/hallazgos-ia')
 
         self.assertEqual(resp.status_code, 200)
+
+
+class DescripcionDeComponentesParaLaIATests(TestCase):
+    """Qué le llega a la IA de cada componente.
+
+    Un componente que `_describir_componente` no sabe describir se descarta en silencio: no
+    aparece en el prompt, la IA no escribe su hallazgo y tampoco lo tiene en cuenta al interpretar
+    el dashboard completo, sin ningún aviso. Pasó con la sección de mayores deudores del Dashboard
+    Directorio, que quedaba entera afuera.
+    """
+
+    def _componente(self, content, tipo='chart', mapeo=None, config=None):
+        return {
+            'component_id': 'x', 'type': tipo, 'content': content,
+            'mapeo': mapeo or {}, 'config': config or {},
+        }
+
+    def _deudores(self):
+        return {
+            'titulo': 'ANTIGÜEDAD — {n} MAYORES DEUDORES ({corte})',
+            'deudores': [{
+                'nombre': 'TRANSEXPRESS', 'total': 468241.5, 'porcentaje_cartera': 15.33,
+                'columnas': ['Tramo', 'Saldo', '%'],
+                'filas': [['30 días', 65411.61, 13.97], ['+120 días', 275445.46, 58.83]],
+                'tramo_mayor': '+120 días',
+            }],
+        }
+
+    def test_la_seccion_de_mayores_deudores_llega_a_la_ia(self):
+        texto = di._describir_componente(self._componente(self._deudores()))
+
+        self.assertIsNotNone(texto, 'la sección quedaría fuera del prompt')
+        self.assertIn('TRANSEXPRESS', texto)
+        # El saldo del deudor, su peso sobre la cartera y el desglose por tramo.
+        self.assertIn('468,241.50', texto)
+        self.assertIn('15.33', texto)
+        self.assertIn('+120 días', texto)
+        self.assertIn('275,445.46', texto)
+
+    def test_resuelve_el_marcador_del_top_y_el_del_corte(self):
+        componente = self._componente(self._deudores(), mapeo={'cuantos': 2})
+
+        texto = di._describir_componente(componente, corte='2026-08-31')
+
+        self.assertIn('2 MAYORES DEUDORES (AGOSTO 2026)', texto)
+        self.assertNotIn('{n}', texto)
+        self.assertNotIn('{corte}', texto)
+
+    def test_sin_corte_conocido_el_marcador_se_va_con_su_puntuacion(self):
+        # Dejarlo suelto daría un "()" colgando en el título que lee la IA, y el hallazgo puede
+        # terminar repitiéndolo.
+        texto = di._describir_componente(self._componente(self._deudores(), mapeo={'cuantos': 2}))
+
+        self.assertNotIn('{corte}', texto)
+        self.assertNotIn('()', texto)
+
+    def test_el_marcador_del_top_sale_del_mapeo_y_no_de_la_cantidad_de_filas(self):
+        # En concentración las filas son el top MÁS la fila del resto: contarlas diría "17".
+        content = {
+            'titulo': 'TOP {n} CLIENTES',
+            'columnas': ['Cliente', 'Saldo'],
+            'filas': [['A', 1.0], ['B', 2.0], ['Resto (900)', 3.0]],
+        }
+
+        texto = di._describir_componente(self._componente(content, mapeo={'top_n': 2}))
+
+        self.assertIn('TOP 2 CLIENTES', texto)
+
+    def test_un_titulo_sin_marcadores_no_se_toca(self):
+        content = {'titulo': 'ANTIGÜEDAD DE CARTERA', 'categorias': ['A'], 'valores': [1.0]}
+
+        self.assertIn('"ANTIGÜEDAD DE CARTERA"', di._describir_componente(self._componente(content)))
+
+    def test_el_mes_del_corte_sale_en_espanol(self):
+        # `strftime('%B')` lo daría en el idioma del sistema operativo del servidor.
+        self.assertEqual(di._mes_y_anio('2026-08-31'), 'AGOSTO 2026')
+        self.assertEqual(di._mes_y_anio('2026-01-01'), 'ENERO 2026')
+        self.assertIsNone(di._mes_y_anio('no es una fecha'))
+
+
+def _respuesta_de_error(status, texto):
+    return mock.Mock(status_code=status, text=texto)
+
+
+@override_settings(
+    GEMINI_API_KEY='clave', GEMINI_MODEL='principal',
+    GEMINI_MODELOS_RESPALDO=['respaldo-1', 'respaldo-2'],
+)
+@mock.patch('cartera.services.dashboard_interpretation.time.sleep', lambda _s: None)
+class ReintentoEntreModelosTests(TestCase):
+    """El 503 ("high demand") es POR MODELO, no por cuenta.
+
+    Midiendo seis modelos en el mismo minuto, tres respondieron 200 y tres 503. Sin esto, un pico
+    de dos segundos del lado del proveedor dejaba al dashboard sin hallazgos hasta que alguien
+    recargara la pantalla — y como la llamada se dispara sola al abrir, nadie se entera de por qué.
+    """
+
+    def _modelos_llamados(self, post_mock):
+        return [llamada.args[0].split('/models/')[1].split(':')[0] for llamada in post_mock.call_args_list]
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_un_503_pasa_al_modelo_de_respaldo(self, post_mock):
+        post_mock.side_effect = [
+            _respuesta_de_error(503, 'high demand'),
+            _respuesta_gemini('el texto'),
+        ]
+
+        self.assertEqual(di._llamar_gemini({}), 'el texto')
+        self.assertEqual(self._modelos_llamados(post_mock), ['principal', 'respaldo-1'])
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_un_modelo_que_ya_no_existe_se_saltea(self, post_mock):
+        # Una lista de respaldo desactualizada no tiene que romper nada.
+        post_mock.side_effect = [
+            _respuesta_de_error(404, 'not found'),
+            _respuesta_de_error(404, 'not found'),
+            _respuesta_gemini('el texto'),
+        ]
+
+        self.assertEqual(di._llamar_gemini({}), 'el texto')
+        self.assertEqual(len(post_mock.call_args_list), 3)
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_un_error_del_pedido_corta_sin_probar_los_demas(self, post_mock):
+        # Un 400 es culpa nuestra: repetirlo contra otro modelo solo gasta el tiempo que el
+        # usuario está esperando del otro lado.
+        post_mock.side_effect = [_respuesta_de_error(400, 'pedido inválido')]
+
+        with self.assertRaises(CarteraError) as ctx:
+            di._llamar_gemini({})
+
+        self.assertEqual(ctx.exception.codigo, 'IA_ERROR')
+        self.assertEqual(len(post_mock.call_args_list), 1)
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_un_corte_de_red_tambien_pasa_al_siguiente(self, post_mock):
+        post_mock.side_effect = [
+            di.requests.RequestException('sin conexión'),
+            _respuesta_gemini('el texto'),
+        ]
+
+        self.assertEqual(di._llamar_gemini({}), 'el texto')
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_si_ninguno_responde_se_informa_el_ultimo_estado(self, post_mock):
+        post_mock.side_effect = [_respuesta_de_error(503, 'x') for _ in range(3)]
+
+        with self.assertRaises(CarteraError) as ctx:
+            di._llamar_gemini({})
+
+        self.assertEqual(ctx.exception.codigo, 'IA_ERROR')
+        self.assertEqual(ctx.exception.detalles, {'status_code': 503})
+        self.assertEqual(len(post_mock.call_args_list), 3)
+
+    @mock.patch('cartera.services.dashboard_interpretation.requests.post')
+    def test_no_repite_un_modelo_de_respaldo_igual_al_principal(self, post_mock):
+        post_mock.side_effect = [_respuesta_de_error(503, 'x'), _respuesta_gemini('t')]
+
+        with override_settings(GEMINI_MODELOS_RESPALDO=['principal', 'respaldo-1']):
+            di._llamar_gemini({})
+
+        self.assertEqual(self._modelos_llamados(post_mock), ['principal', 'respaldo-1'])
