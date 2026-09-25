@@ -148,3 +148,31 @@ describe('cortes de ancho del grid de paneles', () => {
     expect(css()).toMatch(/@container[^{]*\{[\s\S]*?\.dashboard-grid__celda/)
   })
 })
+
+describe('tarjetas resumen de la concentración de cartera', () => {
+  /**
+   * Mismo problema que el grid de paneles, un nivel más adentro: los cortes miraban la ventana y
+   * el que manda es el ancho del PANEL, que ocupa media rejilla o la rejilla entera según cómo
+   * esté armado el dashboard. A 700px de ventana el panel medía 471 y las dos tarjetas se
+   * apilaban, cada una de 471px para un importe de siete cifras; a 1100 la tarjeta tenía 423px de
+   * sobra y la letra se achicaba igual.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+
+  it('la tarjeta se declara como contenedor de consulta', () => {
+    const regla = css().match(/\.directorio-kpi--interno\s*\{([^}]*)\}/)
+
+    expect(regla).not.toBeNull()
+    expect(regla[1]).toMatch(/container:\s*tarjeta-resumen\s*\/\s*inline-size/)
+  })
+
+  it('el tamaño del importe depende de la tarjeta y no de la ventana', () => {
+    expect(css()).toMatch(/@container tarjeta-resumen[^{]*\{[\s\S]*?\.directorio-kpi__valor/)
+    for (const bloque of css().matchAll(/@media[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
+      expect(bloque[1], 'el corte del importe volvió a un @media').not.toMatch(
+        /\.directorio-kpi--interno/,
+      )
+    }
+  })
+})
