@@ -8,6 +8,30 @@ import * as usersService from '../../../services/usersService'
 
 const CAMPOS_INICIALES = { username: '', email: '', first_name: '', last_name: '', password: '', must_change_password: true }
 
+// Cuántos permisos se nombran antes de resumir el resto. El catálogo entero son 29: listarlos
+// todos bajo cada rol convierte la pantalla en un muro de texto y se deja de leer.
+const PERMISOS_A_NOMBRAR = 5
+
+/** `{ 'usuarios.ver': 'Ver usuarios', … }` a partir del catálogo agrupado por módulo. */
+function nombresPorCodename(modulos) {
+  return Object.values(modulos).flat().reduce((mapa, p) => ({ ...mapa, [p.codename]: p.name }), {})
+}
+
+/**
+ * Qué habilita un rol, en una línea. Es el dato que faltaba para elegir: la lista de roles solo
+ * mostraba nombres ("LECTOR", "OPERADOR"), y saber qué significaba cada uno obligaba a abrir la
+ * pantalla de roles en otra pestaña.
+ */
+function resumenDeRol(rol, nombres) {
+  const codenames = rol.permission_codenames || []
+  if (codenames.length === 0) return 'No otorga ningún permiso todavía.'
+  const legibles = codenames.map((c) => nombres[c] || c)
+  const visibles = legibles.slice(0, PERMISOS_A_NOMBRAR).join(', ')
+  const restantes = legibles.length - PERMISOS_A_NOMBRAR
+  const permisos = codenames.length === 1 ? '1 permiso' : `${codenames.length} permisos`
+  return restantes > 0 ? `Otorga ${permisos}: ${visibles} y ${restantes} más.` : `Otorga ${permisos}: ${visibles}.`
+}
+
 export default function UserFormPage() {
   const { id } = useParams()
   const esEdicion = Boolean(id)
@@ -56,6 +80,8 @@ export default function UserFormPage() {
     }
   }, [id, esEdicion])
 
+  const nombresDePermisos = nombresPorCodename(catalogoModulos)
+
   const alternarRol = (roleId) => {
     setRolesSeleccionados((prev) => (prev.includes(roleId) ? prev.filter((r) => r !== roleId) : [...prev, roleId]))
   }
@@ -77,9 +103,13 @@ export default function UserFormPage() {
         if (puedeAsignarSuperusuario) await usersService.setSuperuser(id, esSuperusuario)
         setExito('Cambios guardados.')
       } else {
+        // Los roles viajan en la misma petición que crea la cuenta y no en una segunda: si
+        // fueran dos, un fallo en la segunda dejaría el usuario creado y sin rol, que es
+        // justamente lo que se venía haciendo a mano.
         await usersService.create({
           username: campos.username, email: campos.email, first_name: campos.first_name,
           last_name: campos.last_name, password: campos.password, must_change_password: campos.must_change_password,
+          role_ids: rolesSeleccionados,
         })
         navigate('/admin/users')
       }
@@ -153,23 +183,28 @@ export default function UserFormPage() {
           </Card>
         )}
 
+        <Card className="chart-panel mb-3">
+          <h6>Roles</h6>
+          <div className="chart-panel__subtitle">
+            Bajo cada rol se indica qué habilita. Un usuario puede tener más de uno: se suman.
+          </div>
+          {rolesDisponibles.length === 0 && <div className="chart-panel__subtitle">No hay roles creados todavía.</div>}
+          {rolesDisponibles.map((rol) => (
+            <div key={rol.id} className="mb-2">
+              <Form.Check
+                type="checkbox"
+                id={`rol-${rol.id}`}
+                label={rol.name}
+                checked={rolesSeleccionados.includes(rol.id)}
+                onChange={() => alternarRol(rol.id)}
+              />
+              <div className="chart-panel__subtitle ms-4 mt-0">{resumenDeRol(rol, nombresDePermisos)}</div>
+            </div>
+          ))}
+        </Card>
+
         {esEdicion && (
           <>
-            <Card className="chart-panel mb-3">
-              <h6>Roles</h6>
-              {rolesDisponibles.length === 0 && <div className="chart-panel__subtitle">No hay roles creados todavía.</div>}
-              {rolesDisponibles.map((rol) => (
-                <Form.Check
-                  key={rol.id}
-                  type="checkbox"
-                  id={`rol-${rol.id}`}
-                  label={rol.name}
-                  checked={rolesSeleccionados.includes(rol.id)}
-                  onChange={() => alternarRol(rol.id)}
-                />
-              ))}
-            </Card>
-
             <Card className="chart-panel mb-3">
               <h6>Permisos directos (además de los que otorgan sus roles)</h6>
               {Object.entries(catalogoModulos).map(([modulo, permisos]) => (

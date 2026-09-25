@@ -14,7 +14,23 @@ vi.mock('../services/permissionsService')
 vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
 
 const CATALOGO = { modules: { usuarios: [{ codename: 'usuarios.ver', name: 'Ver usuarios' }] } }
+const CATALOGO_COMPLETO = {
+  modules: {
+    usuarios: [
+      { codename: 'usuarios.ver', name: 'Ver usuarios' },
+      { codename: 'usuarios.crear', name: 'Crear usuarios' },
+    ],
+    dashboard: [{ codename: 'dashboard.view', name: 'Ver dashboards' }],
+  },
+}
 const ROLES = { results: [{ id: 1, name: 'Cobranzas', permission_codenames: [] }], count: 1, next: null, previous: null }
+const ROLES_CON_PERMISOS = {
+  results: [
+    { id: 1, name: 'Cobranzas', permission_codenames: ['usuarios.ver', 'dashboard.view'] },
+    { id: 2, name: 'Sin nada', permission_codenames: [] },
+  ],
+  count: 2, next: null, previous: null,
+}
 
 function renderCrear() {
   return render(
@@ -54,12 +70,81 @@ describe('UserFormPage — creación', () => {
     })))
   })
 
-  it('no muestra roles ni permisos en modo creación (se asignan tras crear)', async () => {
-    permissionsService.catalog.mockResolvedValue(CATALOGO)
-    rolesService.list.mockResolvedValue(ROLES)
+  /**
+   * Antes el rol se asignaba recién al editar: había que guardar el usuario y volver a entrar,
+   * y entre una cosa y la otra la cuenta existía sin ningún rol.
+   */
+  it('el rol se elige en el alta y viaja en la misma petición', async () => {
+    permissionsService.catalog.mockResolvedValue(CATALOGO_COMPLETO)
+    rolesService.list.mockResolvedValue(ROLES_CON_PERMISOS)
+    usersService.create.mockResolvedValue({})
     renderCrear()
-    await waitFor(() => expect(screen.getByLabelText('Nombre de usuario')).toBeInTheDocument())
-    expect(screen.queryByText('Cobranzas')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByLabelText('Cobranzas')).toBeInTheDocument())
+
+    await userEvent.type(screen.getByLabelText('Nombre de usuario'), 'nuevo')
+    await userEvent.type(screen.getByLabelText('Correo'), 'nuevo@example.com')
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'Clave-Segura-123')
+    await userEvent.click(screen.getByLabelText('Cobranzas'))
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(usersService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ role_ids: [1] }),
+    ))
+    // Una sola operación: sin una segunda llamada que pueda fallar dejando la cuenta sin rol.
+    expect(usersService.assignRoles).not.toHaveBeenCalled()
+  })
+
+  it('sin rol elegido no se manda ninguno', async () => {
+    permissionsService.catalog.mockResolvedValue(CATALOGO_COMPLETO)
+    rolesService.list.mockResolvedValue(ROLES_CON_PERMISOS)
+    usersService.create.mockResolvedValue({})
+    renderCrear()
+    await waitFor(() => expect(screen.getByLabelText('Cobranzas')).toBeInTheDocument())
+
+    await userEvent.type(screen.getByLabelText('Nombre de usuario'), 'nuevo')
+    await userEvent.type(screen.getByLabelText('Correo'), 'nuevo@example.com')
+    await userEvent.type(screen.getByLabelText('Contraseña'), 'Clave-Segura-123')
+    await userEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    await waitFor(() => expect(usersService.create).toHaveBeenCalledWith(
+      expect.objectContaining({ role_ids: [] }),
+    ))
+  })
+
+  /**
+   * La lista solo mostraba nombres ("Cobranzas"), y saber qué significaba cada uno obligaba a
+   * abrir la pantalla de roles en otra pestaña. Los nombres salen del catálogo, no del codename.
+   */
+  it('cada rol dice qué permisos otorga, con el nombre legible de cada uno', async () => {
+    permissionsService.catalog.mockResolvedValue(CATALOGO_COMPLETO)
+    rolesService.list.mockResolvedValue(ROLES_CON_PERMISOS)
+    renderCrear()
+
+    await waitFor(() => expect(screen.getByLabelText('Cobranzas')).toBeInTheDocument())
+    expect(screen.getByText(/Otorga 2 permisos: Ver usuarios, Ver dashboards/)).toBeInTheDocument()
+  })
+
+  it('un rol sin permisos lo dice en vez de quedar en blanco', async () => {
+    permissionsService.catalog.mockResolvedValue(CATALOGO_COMPLETO)
+    rolesService.list.mockResolvedValue(ROLES_CON_PERMISOS)
+    renderCrear()
+
+    await waitFor(() => expect(screen.getByLabelText('Sin nada')).toBeInTheDocument())
+    expect(screen.getByText('No otorga ningún permiso todavía.')).toBeInTheDocument()
+  })
+
+  it('con muchos permisos nombra unos pocos y resume el resto', async () => {
+    // El catálogo entero son 29: listarlos todos bajo cada rol es un muro de texto.
+    const codenames = ['a.1', 'a.2', 'a.3', 'a.4', 'a.5', 'a.6', 'a.7']
+    permissionsService.catalog.mockResolvedValue(CATALOGO_COMPLETO)
+    rolesService.list.mockResolvedValue({
+      results: [{ id: 1, name: 'Todopoderoso', permission_codenames: codenames }],
+      count: 1, next: null, previous: null,
+    })
+    renderCrear()
+
+    await waitFor(() => expect(screen.getByLabelText('Todopoderoso')).toBeInTheDocument())
+    expect(screen.getByText(/Otorga 7 permisos: a\.1, a\.2, a\.3, a\.4, a\.5 y 2 más\./)).toBeInTheDocument()
   })
 })
 

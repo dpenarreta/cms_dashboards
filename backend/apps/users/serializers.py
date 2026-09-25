@@ -43,10 +43,22 @@ class UserAdminDetailSerializer(UserAdminListSerializer):
 
 class UserAdminCreateSerializer(serializers.ModelSerializer):
     password = campo_password(write_only=True)
+    # Los roles se eligen en el mismo formulario que crea la cuenta: sin esto había que guardar
+    # primero y volver a entrar a editar, y entre una cosa y la otra la cuenta quedaba existiendo
+    # sin ningún rol. Va en la MISMA petición y no en una segunda a `POST /users/<id>/roles/`
+    # para que sea una sola operación: si la asignación falla, no queda un usuario a medio armar.
+    # OJO: exige `usuarios.editar` además de `usuarios.crear` (`views.perform_create`) — crear y
+    # asignar roles son permisos distintos y este camino no los puede fusionar.
+    role_ids = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Group.objects.all(), required=False, default=list, write_only=True,
+    )
 
     class Meta:
         model = User
-        fields = ('username', 'email', 'first_name', 'last_name', 'password', 'must_change_password')
+        fields = (
+            'username', 'email', 'first_name', 'last_name', 'password', 'must_change_password',
+            'role_ids',
+        )
 
     def validate(self, data):
         # El usuario todavía no existe, así que se arma una instancia sin guardar solo para que
