@@ -125,6 +125,7 @@ function TablaCumplimiento({ componente, hallazgoIA }) {
   return (
     <div className="chart-panel directorio-seccion">
       <TituloSeccion>{content?.titulo}</TituloSeccion>
+      <div className="directorio-tabla-ancho">
       <table className="directorio-tabla">
         <thead>
           <tr>
@@ -151,6 +152,7 @@ function TablaCumplimiento({ componente, hallazgoIA }) {
           })}
         </tbody>
       </table>
+      </div>
       <Nota texto={hallazgoIA || content?.descripcion} />
     </div>
   )
@@ -188,6 +190,7 @@ function SeccionConcentracion({ componente, hallazgoIA }) {
           </div>
         )}
       </div>
+      <div className="directorio-tabla-ancho">
       <table className="directorio-tabla">
         <thead>
           <tr>
@@ -220,6 +223,7 @@ function SeccionConcentracion({ componente, hallazgoIA }) {
           )}
         </tbody>
       </table>
+      </div>
       <HallazgosClave texto={hallazgoIA || content?.descripcion} />
     </div>
   )
@@ -241,6 +245,7 @@ function SeccionDeudores({ componente, componentes, hallazgoIA }) {
             <div className="directorio-deudor__titulo">
               {deudor.nombre} — {moneda(deudor.total)} ({porcentaje(deudor.porcentaje_cartera, 2)} de la cartera total)
             </div>
+            <div className="directorio-tabla-ancho">
             <table className="directorio-tabla directorio-tabla--compacta">
               <thead>
                 <tr>
@@ -264,6 +269,7 @@ function SeccionDeudores({ componente, componentes, hallazgoIA }) {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         ))}
       </div>

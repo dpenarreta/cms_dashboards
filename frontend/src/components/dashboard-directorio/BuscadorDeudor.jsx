@@ -300,6 +300,7 @@ function ResultadoDeudor({ detalle, onVolver, hayVarias }) {
 
       <div className="directorio-deudor-consulta__cuerpo">
         <div className="directorio-deudor-consulta__antiguedad">
+          <div className="directorio-tabla-ancho">
           <table className="directorio-tabla directorio-tabla--compacta">
             <thead>
               <tr>
@@ -322,6 +323,7 @@ function ResultadoDeudor({ detalle, onVolver, hayVarias }) {
               })}
             </tbody>
           </table>
+          </div>
         </div>
 
         <div className="directorio-deudor-consulta__detalle">

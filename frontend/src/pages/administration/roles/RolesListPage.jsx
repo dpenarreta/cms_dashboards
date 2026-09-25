@@ -52,7 +52,7 @@ export default function RolesListPage() {
 
       {!cargando && (
         <div className="table-scroll">
-          <Table size="sm" striped bordered hover>
+          <Table responsive size="sm" striped bordered hover>
             <thead>
               <tr>
                 <th>Nombre</th>

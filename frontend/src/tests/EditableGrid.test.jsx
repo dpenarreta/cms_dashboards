@@ -81,3 +81,47 @@ describe('EditableGrid — Zona Personal', () => {
     expect(screen.getByText('mi-kpi')).toBeInTheDocument()
   })
 })
+
+
+describe('EditableGrid — el ancho de cada panel es adaptable', () => {
+  /**
+   * El ancho en doceavos viaja como variable CSS y no como `flex`/`max-width` inline. La
+   * diferencia no es de estilo: un estilo inline le gana a cualquier media query, y era lo que
+   * impedía apilar los paneles en pantallas angostas. En un monitor de 1024, dos paneles de media
+   * página quedaban en 326px cada uno y la tabla de cumplimiento de metas (470px) se salía de su
+   * tarjeta.
+   */
+
+  function celdas(contenedor) {
+    return [...contenedor.querySelectorAll('.dashboard-grid__celda')]
+  }
+
+  it('declara el ancho como variable CSS, no como flex inline', () => {
+    const { container } = renderGrid([componente('kpi-1', { width: 3 })], { modoEdicion: false })
+    const celda = celdas(container)[0]
+
+    expect(celda.style.getPropertyValue('--ancho-panel')).toBe('25%')
+    // Si volviera a fijarse acá, la media query no podría cambiarlo.
+    expect(celda.style.flex).toBe('')
+    expect(celda.style.maxWidth).toBe('')
+  })
+
+  it('expone el ancho en doceavos para que el CSS decida cuántos entran por fila', () => {
+    const { container } = renderGrid([
+      componente('kpi-1', { width: 3 }),
+      componente('grafico-1', { width: 6, order: 2 }),
+      componente('tabla-1', { width: 12, order: 3 }),
+    ], { modoEdicion: false })
+
+    expect(celdas(container).map((c) => c.dataset.ancho)).toEqual(['3', '6', '12'])
+  })
+
+  it('en modo edición vale lo mismo', () => {
+    const { container } = renderGrid([componente('kpi-1', { width: 6 })])
+    const celda = celdas(container)[0]
+
+    expect(celda.style.getPropertyValue('--ancho-panel')).toBe('50%')
+    expect(celda.dataset.ancho).toBe('6')
+    expect(celda.style.flex).toBe('')
+  })
+})

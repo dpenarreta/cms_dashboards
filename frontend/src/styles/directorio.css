@@ -357,6 +357,19 @@
 /* `minmax(0, 1fr)` arriba y `overflow-x` acá: sin el `minmax(0, …)`, la columna del detalle se
    estira con la tabla en vez de acotarla, y el scroll horizontal nunca aparece — la tabla
    desborda la tarjeta y empuja el ancho de toda la página. */
+/* Cada tabla se desplaza dentro de su tarjeta en vez de desbordarla.
+ *
+ * Sin esto, en un monitor de 1024 la tabla de cumplimiento de metas (470px) se salía 95px de su
+ * panel (326px): la columna "RESULTADO" quedaba fuera de la tarjeta y para verla había que mover
+ * la página entera de lado. Con el desplazamiento propio, lo que se mueve es la tabla y el resto
+ * del informe se queda quieto.
+ *
+ * Es el complemento de que los paneles se apilen en pantallas angostas (`.dashboard-grid__celda`
+ * en dashboard.css): apilar da el espacio, esto evita que falte cuando aun así no alcanza. */
+.directorio-tabla-ancho {
+  overflow-x: auto;
+}
+
 .directorio-tabla-scroll {
   overflow-x: auto;
   max-height: 420px;

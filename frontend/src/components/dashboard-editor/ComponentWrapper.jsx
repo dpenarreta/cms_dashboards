@@ -38,7 +38,14 @@ export default function ComponentWrapper({
   const anchoPorcentaje = `${(componente.width / 12) * 100}%`
 
   return (
-    <div style={{ ...style, flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, minWidth: 0, padding: 8, boxSizing: 'border-box' }} ref={setNodeRef}>
+    // Mismo criterio que `EditableGrid`: el ancho va como variable CSS para que las media
+    // queries puedan apilarlo en pantallas angostas.
+    <div
+      className="dashboard-grid__celda"
+      data-ancho={componente.width}
+      style={{ ...style, '--ancho-panel': anchoPorcentaje }}
+      ref={setNodeRef}
+    >
       <div
         className={`h-100 ${seleccionado ? 'border-primary' : 'border-secondary'}`}
         style={{ border: '2px dashed', borderRadius: 10, padding: 6 }}

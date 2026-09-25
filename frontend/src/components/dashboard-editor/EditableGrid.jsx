@@ -64,7 +64,15 @@ export default function EditableGrid({
           if (!definicion) return null
           const anchoPorcentaje = `${(c.width / 12) * 100}%`
           return (
-            <div key={c.component_id} style={{ flex: `0 0 ${anchoPorcentaje}`, maxWidth: anchoPorcentaje, minWidth: 0, padding: 8, boxSizing: 'border-box' }}>
+            // El ancho viaja como variable CSS y no como `flex`/`max-width` inline: un estilo
+            // inline le gana a cualquier media query, y es lo que impedía que los paneles se
+            // apilaran en pantallas angostas (ver `.dashboard-grid__celda` en dashboard.css).
+            <div
+              key={c.component_id}
+              className="dashboard-grid__celda"
+              data-ancho={c.width}
+              style={{ '--ancho-panel': anchoPorcentaje }}
+            >
               {definicion.render(c)}
             </div>
           )

@@ -363,3 +363,46 @@ body {
     order: -1;
   }
 }
+
+/* --- Rejilla de paneles: cuántos entran por fila según el ancho de pantalla ----------------
+ *
+ * Cada celda declara su ancho en doceavos (`--ancho-panel`, lo pone el componente) y esta clase
+ * lo traduce a `flex`. La separación importa: un `flex` inline le gana a cualquier media query,
+ * y era lo que dejaba dos paneles de media página conviviendo en 326px cada uno en un monitor
+ * de 1024 — ahí no entra ni una tabla de cuatro columnas.
+ *
+ * Los cortes no son redondos por gusto: con la barra lateral (230px) y los márgenes, un panel de
+ * media página recién alcanza los ~470px que necesita la tabla de cumplimiento de metas cuando
+ * la ventana pasa de ~1260px. Por debajo de eso conviene apilar antes que encoger.
+ */
+.dashboard-grid__celda {
+  flex: 0 0 var(--ancho-panel, 100%);
+  max-width: var(--ancho-panel, 100%);
+  min-width: 0;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1199.98px) {
+  /* Los paneles anchos (media página o más) pasan a ocupar la fila entera. */
+  .dashboard-grid__celda {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+
+  /* Los KPI y demás piezas angostas se acomodan de a dos: apilarlos de a uno obligaría a
+     recorrer cuatro pantallazos para leer cuatro números. */
+  .dashboard-grid__celda[data-ancho="2"],
+  .dashboard-grid__celda[data-ancho="3"],
+  .dashboard-grid__celda[data-ancho="4"] {
+    flex-basis: 50%;
+    max-width: 50%;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .dashboard-grid__celda[data-ancho] {
+    flex-basis: 100%;
+    max-width: 100%;
+  }
+}

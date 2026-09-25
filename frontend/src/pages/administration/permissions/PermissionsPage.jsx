@@ -26,7 +26,7 @@ export default function PermissionsPage() {
         <div key={modulo} className="mb-4">
           <h6 className="text-capitalize">{modulo}</h6>
           <div className="table-scroll">
-            <Table size="sm" striped bordered>
+            <Table responsive size="sm" striped bordered>
               <thead>
                 <tr><th>Código</th><th>Descripción</th></tr>
               </thead>
