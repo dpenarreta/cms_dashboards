@@ -175,4 +175,17 @@ describe('tarjetas resumen de la concentración de cartera', () => {
       )
     }
   })
+
+  /**
+   * Apretar el relleno de la tarjeta cambia el ancho que su propia consulta mide, y una regla que
+   * se realimenta así oscila entre dos estados. Por eso el relleno cuelga del PANEL.
+   */
+  it('el relleno no se aprieta desde la consulta de la propia tarjeta', () => {
+    const porTarjeta = css().matchAll(/@container tarjeta-resumen[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)
+    for (const bloque of porTarjeta) {
+      expect(bloque[1], 'el relleno de la tarjeta se decide dentro de su propia consulta')
+        .not.toMatch(/padding/)
+    }
+    expect(css()).toMatch(/@container panel-resumen[^{]*\{[\s\S]*?padding/)
+  })
 })

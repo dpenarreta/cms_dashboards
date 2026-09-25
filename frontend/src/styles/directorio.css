@@ -62,6 +62,7 @@
 
 /* Las dos tarjetas resumen que van DENTRO de la sección de concentración. */
 .directorio-resumen {
+  container: panel-resumen / inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
@@ -71,8 +72,10 @@
 .directorio-kpi--interno {
   /* La base baja de 260px: con 260 las dos tarjetas necesitaban 534px de panel para convivir, y
      un panel de 471 —el que queda con una ventana de 700— las apilaba dejando cada una de 471px
-     para un importe de siete cifras. Con 210 entran de a dos desde 434px de panel. */
-  flex: 1 1 210px;
+     para un importe de siete cifras. Con 180 entran de a dos desde 374px de panel, que es el que
+     queda con una ventana de 620. Por debajo de eso se apilan: dos tarjetas de menos de 180px no
+     muestran el importe ni con la letra del escalón más chico. */
+  flex: 1 1 180px;
   /* Contenedor de consulta: el tamaño de la letra de abajo depende de lo que mide LA TARJETA. */
   container: tarjeta-resumen / inline-size;
   /* `height: auto` pisa el `height: 100%` de `.directorio-kpi`, que acá hace daño: cuando las
@@ -85,16 +88,42 @@
   height: auto;
 }
 
-/* El importe es lo más ancho de la tarjeta: cuando no entra se parte en dos renglones y duplica
-   el alto del bloque. Achicarlo un punto lo evita sin perder jerarquía.
+/* Cuánto mide el importe, que es lo más ancho de la tarjeta: si no entra se parte en dos
+ * renglones y duplica el alto del bloque. Los cortes miran la TARJETA y no la ventana, que es lo
+ * que hacían antes (`@media (max-width: 1199.98px)`): el panel de esta sección ocupa media
+ * rejilla o la rejilla entera según cómo esté armado el dashboard, así que a 1100px de ventana la
+ * tarjeta tenía 423px de sobra y la letra se achicaba igual.
  *
- * Mide la TARJETA y no la ventana, que es lo que hacía antes (`@media (max-width: 1199.98px)`):
- * el panel de esta sección ocupa media rejilla o la rejilla entera según cómo esté armado el
- * dashboard, así que a 1100px de ventana la tarjeta tenía 423px de sobra y la letra se achicaba
- * igual. A 28px el importe de siete cifras pide unos 200px con su relleno. */
-@container tarjeta-resumen (max-width: 239.98px) {
+ * IMPORTANT: `container-type: inline-size` consulta el ANCHO DE CONTENIDO, no el de la tarjeta
+ * entera — entre uno y otro hay 41px de relleno y bordes (29px en el panel angosto). Los
+ * umbrales son anchos de contenido, y salen de medir el importe más largo que puede aparecer
+ * —ocho cifras, "$10,555,218"— en cada tamaño: 160px a 1.75rem, 128px a 1.4rem y 114px a
+ * 1.25rem. Cada umbral deja unos 10px de aire sobre esa medida.
+ */
+@container tarjeta-resumen (max-width: 169.98px) {
+  /* 1.4rem y no 1.45: es el mismo tamaño al que `dashboard.css` ya baja todos los KPI en
+     pantallas chicas, así que este escalón nunca AGRANDA el importe respecto de sus vecinos —
+     que es lo que pasaba con 1.45rem, una tarjeta angosta con la letra más grande que las de
+     arriba. */
   .directorio-kpi--interno .directorio-kpi__valor {
-    font-size: 1.45rem;
+    font-size: 1.4rem;
+  }
+}
+
+@container tarjeta-resumen (max-width: 142.98px) {
+  .directorio-kpi--interno .directorio-kpi__valor {
+    font-size: 1.25rem;
+  }
+}
+
+/* En el panel más angosto que todavía muestra las dos tarjetas lado a lado, los 18px de relleno
+   por lado son la quinta parte de cada tarjeta: vale más el número que el aire a los costados.
+   Cuelga del PANEL y no de la tarjeta a propósito — apretar el relleno cambia el ancho que la
+   consulta de la tarjeta mide, y una regla que se realimenta así oscila. */
+@container panel-resumen (max-width: 439.98px) {
+  .directorio-kpi--interno {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 
