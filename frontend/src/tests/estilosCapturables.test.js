@@ -74,3 +74,24 @@ describe('tarjetas de resumen dentro de una sección', () => {
     expect(regla[1]).toMatch(/height:\s*auto/)
   })
 })
+
+
+describe('encabezados de las tablas del informe', () => {
+  /**
+   * Un encabezado que no se puede partir le impone a su columna el ancho del título entero.
+   * "% ACUMULADO (CALCULADO)" reservaba 188px y empujaba la tabla de concentración a 501px: en
+   * una ventana de 620 no entraba y aparecía desplazamiento lateral por culpa de un título, no
+   * de los datos. Partiéndolo, la misma tabla mide 391px y entra completa.
+   *
+   * No hace falta media query: con espacio, el navegador lo deja en una línea (verificado de
+   * 1024 a 1440px); lo parte solo cuando el ancho aprieta.
+   */
+
+  it('se pueden partir en dos renglones', () => {
+    const css = sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+    const regla = css.match(/\.directorio-tabla th\s*\{([^}]*)\}/)
+
+    expect(regla, 'debería existir la regla .directorio-tabla th').not.toBeNull()
+    expect(regla[1]).not.toMatch(/white-space:\s*nowrap/)
+  })
+})

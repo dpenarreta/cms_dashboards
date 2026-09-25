@@ -105,7 +105,15 @@
   color: var(--text-secondary);
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;
+  /* El encabezado se parte en dos renglones cuando hace falta, en vez de imponerle a su columna
+     el ancho del título entero. Con `nowrap`, "% ACUMULADO (CALCULADO)" reservaba 188px y
+     empujaba la tabla a 501px: en una ventana de 620 no entraba y aparecía un desplazamiento
+     lateral por culpa de un título, no de los datos. Partiéndolo, la misma tabla mide 391px y
+     entra completa.
+     No hace falta ninguna media query: mientras haya espacio el navegador lo deja en una línea
+     (verificado de 1024 a 1440px) y solo lo parte cuando el ancho aprieta, que es justo el
+     momento en que conviene. */
+  white-space: normal;
 }
 
 .directorio-tabla td {
