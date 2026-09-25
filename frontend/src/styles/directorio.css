@@ -370,9 +370,6 @@
   align-items: start;
 }
 
-/* `minmax(0, 1fr)` arriba y `overflow-x` acá: sin el `minmax(0, …)`, la columna del detalle se
-   estira con la tabla en vez de acotarla, y el scroll horizontal nunca aparece — la tabla
-   desborda la tarjeta y empuja el ancho de toda la página. */
 /* Cada tabla se desplaza dentro de su tarjeta en vez de desbordarla.
  *
  * Sin esto, en un monitor de 1024 la tabla de cumplimiento de metas (470px) se salía 95px de su
@@ -386,6 +383,9 @@
   overflow-x: auto;
 }
 
+/* `minmax(0, 1fr)` en la rejilla y `overflow-x` acá: sin el `minmax(0, …)`, la columna del
+   detalle se estira con la tabla en vez de acotarla, y el desplazamiento nunca aparece — la
+   tabla desborda la tarjeta y empuja el ancho de toda la página. */
 .directorio-tabla-scroll {
   overflow-x: auto;
   max-height: 420px;
@@ -400,5 +400,10 @@
 }
 
 @media (max-width: 991px) {
-  .directorio-deudor-consulta__cuerpo { grid-template-columns: 1fr; }
+  /* `minmax(0, 1fr)` y no `1fr` a secas: un `1fr` tiene `min-width: auto`, así que la columna
+     crece hasta el ancho mínimo de la tabla en vez de acotarla, y el desplazamiento horizontal
+     nunca aparece. Era el mismo problema que la regla de arriba ya resolvía para pantallas
+     grandes, reintroducido acá: en una ventana de 760px la tabla del detalle se salía 239px de
+     su tarjeta, con las últimas columnas cortadas y sin forma de llegar a ellas. */
+  .directorio-deudor-consulta__cuerpo { grid-template-columns: minmax(0, 1fr); }
 }
