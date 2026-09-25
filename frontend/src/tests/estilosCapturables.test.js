@@ -52,3 +52,25 @@ describe('hojas de estilo propias', () => {
     expect(hojasDeEstilo().length).toBeGreaterThan(0)
   })
 })
+
+
+describe('tarjetas de resumen dentro de una sección', () => {
+  /**
+   * `.directorio-kpi` declara `height: 100%` para que las tarjetas de la fila superior llenen su
+   * celda de la rejilla. Dentro de `.directorio-resumen` esa misma regla causaba una
+   * superposición: cuando las dos tarjetas no entran lado a lado y la segunda pasa al renglón
+   * siguiente, el 100% se resuelve contra el contenedor (una línea de alto) en vez de contra su
+   * renglón, el contenedor no crece y la segunda tarjeta se dibuja encima de la tabla.
+   *
+   * Se vio en producción: los importes del bloque "RESTO (N clientes)" montados sobre las filas
+   * del top de clientes, ilegibles.
+   */
+
+  it('las tarjetas internas no heredan la altura completa', () => {
+    const css = sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+    const regla = css.match(/\.directorio-kpi--interno\s*\{([^}]*)\}/)
+
+    expect(regla, 'debería existir la regla .directorio-kpi--interno').not.toBeNull()
+    expect(regla[1]).toMatch(/height:\s*auto/)
+  })
+})

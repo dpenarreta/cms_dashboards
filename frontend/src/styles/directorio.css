@@ -70,6 +70,22 @@
 
 .directorio-kpi--interno {
   flex: 1 1 260px;
+  /* `height: auto` pisa el `height: 100%` de `.directorio-kpi`, que acá hace daño: cuando las
+     dos tarjetas no entran lado a lado y la segunda pasa al renglón siguiente, ese 100% se
+     resuelve contra el CONTENEDOR (una línea de alto) y no contra su propio renglón. El
+     contenedor no crece para las dos líneas y la segunda tarjeta se dibuja encima de la tabla,
+     con los importes montados sobre las filas.
+     El 100% sí hace falta en las tarjetas de la fila superior, que tienen que llenar su celda
+     de la rejilla; acá el alto lo iguala `align-items: stretch`, renglón por renglón. */
+  height: auto;
+}
+
+/* El importe es lo más ancho de la tarjeta: en un panel angosto se parte en dos renglones y
+   duplica el alto del bloque. Achicarlo un punto evita el corte sin perder jerarquía. */
+@media (max-width: 1199.98px) {
+  .directorio-kpi--interno .directorio-kpi__valor {
+    font-size: 1.45rem;
+  }
 }
 
 /* --- Tablas ---------------------------------------------------------------- */
