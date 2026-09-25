@@ -407,6 +407,34 @@
   z-index: 1;
 }
 
+/* En pantallas muy angostas la tabla se aprieta para entrar entera en vez de desplazarse.
+ *
+ * El relleno de las celdas es lo primero que se recorta (10px → 3px por lado son 56px menos en
+ * una tabla de cuatro columnas), pero no alcanza solo: a 520px de ventana faltaban 86px. El
+ * resto lo aporta bajar un punto la letra, que encoge las cuatro columnas a la vez.
+ *
+ * Todo esto vale solo para este tamaño: de 768px para arriba la tabla se ve como siempre.
+ */
+@media (max-width: 767.98px) {
+  .directorio-tabla th,
+  .directorio-tabla td {
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  /* La letra baja un punto en vez de partir los nombres por la mitad. Probé lo segundo
+     (`overflow-wrap: anywhere`) y la tabla entraba, pero la columna quedaba en 46px y
+     "TRANSEXPRESS" se leía "TRA / NSE / XPR / ESS": entra y no se entiende, que es peor que
+     desplazarla. Con la letra más chica los nombres siguen partiéndose solo entre palabras. */
+  .directorio-tabla {
+    font-size: 0.75rem;
+  }
+
+  .directorio-tabla th {
+    font-size: 0.6rem;
+  }
+}
+
 @media (max-width: 991px) {
   /* `minmax(0, 1fr)` y no `1fr` a secas: un `1fr` tiene `min-width: auto`, así que la columna
      crece hasta el ancho mínimo de la tabla en vez de acotarla, y el desplazamiento horizontal

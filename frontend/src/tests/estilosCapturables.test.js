@@ -95,3 +95,28 @@ describe('encabezados de las tablas del informe', () => {
     expect(regla[1]).not.toMatch(/white-space:\s*nowrap/)
   })
 })
+
+describe('tablas del informe en pantallas angostas', () => {
+  /**
+   * A 520px de ventana la tabla de concentración medía 377px contra 291px disponibles y aparecía
+   * desplazamiento lateral. Se cierra apretando la tabla (menos relleno y un punto menos de letra),
+   * NO partiendo los nombres: con `overflow-wrap: anywhere` en la primera columna la tabla entraba
+   * exacta, pero la columna quedaba en 46px y "TRANSEXPRESS" se leía "TRA / NSE / XPR / ESS".
+   *
+   * Entrar en pantalla no sirve de nada si el contenido deja de leerse — de ahí esta guarda.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+
+  it('aprietan el relleno de sus celdas', () => {
+    const angosto = css().match(/@media \(max-width: 767\.98px\)\s*\{([\s\S]*?)\n\}/)
+
+    expect(angosto, 'debería existir el bloque para pantallas angostas').not.toBeNull()
+    expect(angosto[1]).toMatch(/padding-left:\s*[0-4]px/)
+  })
+
+  it('no parten los nombres por la mitad para lograrlo', () => {
+    expect(css()).not.toMatch(/overflow-wrap:\s*(anywhere|break-word)/)
+    expect(css()).not.toMatch(/word-break:\s*break-all/)
+  })
+})
