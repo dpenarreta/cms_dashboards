@@ -26,10 +26,16 @@ export function HallazgosClave({ texto }) {
   )
 }
 
-/** Las notas al pie en cursiva que el informe pone bajo varias secciones. */
+/** Las notas al pie en cursiva que el informe pone bajo varias secciones.
+ *
+ * Interpreta las negritas por el mismo motivo que `HallazgosClave`: bajo dos de las secciones, lo
+ * que se muestra acá es el hallazgo redactado por la IA, y el prompt le pide expresamente que
+ * resalte los números y nombres entre `**dobles asteriscos**`. Sin esto, en pantalla se leía
+ * "El **cumplimiento de metas** evidencia…" con los asteriscos crudos. Un texto sin marcas —la
+ * descripción calculada, que es el otro origen posible— pasa igual. */
 export function Nota({ texto }) {
   if (!texto) return null
-  return <p className="directorio-nota">{texto}</p>
+  return <p className="directorio-nota">{conNegritas(texto)}</p>
 }
 
 export function TituloSeccion({ children }) {
