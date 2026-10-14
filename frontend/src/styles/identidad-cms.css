@@ -815,9 +815,10 @@ pre.mz-code-block {
   font-weight: 700;
 }
 
-/* Con la paleta abierta, el dashboard le deja su ancho libre (no la tapa ni ella a él). */
+/* Con la paleta abierta, el dashboard le deja su ancho libre (no la tapa ni ella a él). Lleva
+   `.mz-view` delante para ganarle a `.mz-view .cartera-app { padding: 0 }`. */
 @media (min-width: 881px) {
-  .cartera-app--con-panel {
+  .mz-view .cartera-app--con-panel {
     padding-right: 280px;
   }
 }
