@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Accordion, Alert, Button, Form, Offcanvas } from 'react-bootstrap'
+import { Accordion, Button, Form, Offcanvas } from 'react-bootstrap'
 import WidthHeightControls from './WidthHeightControls'
 import FilterFieldReorderList from './FilterFieldReorderList'
 import ComponentDataSection from './ComponentDataSection'
@@ -197,14 +197,14 @@ export default function ComponentPropertiesPanel({
   const mostrarSeccionDatos = !modoPlantillaBase || tipoIntercambiablePlantillaBase
 
   return (
-    <Offcanvas show={Boolean(componente)} onHide={onCerrar} placement="end" style={{ width: 380 }}>
+    <Offcanvas show={Boolean(componente)} onHide={onCerrar} placement="end" className="mz-propiedades">
       <Offcanvas.Header closeButton>
         <Offcanvas.Title>Configurar componente</Offcanvas.Title>
       </Offcanvas.Header>
       <Offcanvas.Body>
-        <Alert variant="secondary" className="py-2" style={{ fontSize: '0.8rem' }}>
-          {componente.component_id}
-        </Alert>
+        <p className="mz-desc mt-0 mb-3">
+          <code className="mz-code">{componente.component_id}</code>
+        </p>
 
         <Accordion defaultActiveKey={['general', 'datos', 'personalizacion']} alwaysOpen className="mb-3">
           <Accordion.Item eventKey="general">

@@ -24,13 +24,13 @@ function TarjetaComponente({ tipo, etiqueta, descripcion, icono, onElegirTipo })
       {...listeners}
       {...attributes}
       onClick={() => onElegirTipo(tipo)}
-      className="d-flex align-items-center gap-2 w-100 text-start mb-2 p-2 border rounded bg-body"
-      style={{ cursor: 'grab', opacity: isDragging ? 0.4 : 1 }}
+      className="mz-paleta-item"
+      style={{ opacity: isDragging ? 0.4 : 1 }}
     >
-      <i className={`bi ${icono}`} aria-hidden="true" style={{ fontSize: '1.1rem', width: 24, textAlign: 'center' }}></i>
-      <span>
-        <div className="fw-semibold" style={{ fontSize: '0.9rem' }}>{etiqueta}</div>
-        <div className="chart-panel__subtitle mb-0" style={{ fontSize: '0.75rem' }}>{descripcion}</div>
+      <span className="mz-row-ic"><i className={`bi ${icono}`} aria-hidden="true"></i></span>
+      <span className="mz-row-info">
+        <strong>{etiqueta}</strong>
+        <span>{descripcion}</span>
       </span>
     </button>
   )
@@ -45,12 +45,14 @@ function TarjetaComponente({ tipo, etiqueta, descripcion, icono, onElegirTipo })
  */
 export default function ComponentPaletteSidebar({ show, onHide, onElegirTipo }) {
   return (
-    <Offcanvas show={show} onHide={onHide} placement="end" backdrop={false} scroll style={{ width: 260, top: 'auto' }}>
+    // Panel lateral de la Matriz (`mz-drawer`): alto completo, a la derecha. La página le deja su
+    // ancho libre (`.cartera-app--con-panel`) para que no tape la barra de "Guardar cambios".
+    <Offcanvas show={show} onHide={onHide} placement="end" backdrop={false} scroll className="mz-paleta">
       <Offcanvas.Header closeButton>
-        <Offcanvas.Title style={{ fontSize: '1rem' }}>Componentes</Offcanvas.Title>
+        <Offcanvas.Title>Componentes</Offcanvas.Title>
       </Offcanvas.Header>
       <Offcanvas.Body>
-        <p className="chart-panel__subtitle" style={{ fontSize: '0.8rem' }}>
+        <p className="mz-desc mt-0 mb-3">
           Arrastrá un componente hasta la Zona Personal, o hacé clic para elegirlo.
         </p>
         {TARJETAS.map((t) => <TarjetaComponente key={t.tipo} {...t} onElegirTipo={onElegirTipo} />)}

@@ -125,22 +125,12 @@ export default function EditableGrid({
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       {gruposFinal.map((zona) => (
         <div key={zona.id} className="mb-3">
-          <div
-            className="fw-semibold text-uppercase text-secondary mb-2"
-            style={{ fontSize: '0.75rem', letterSpacing: '0.04em' }}
-          >
-            {zona.etiqueta}
-          </div>
+          <div className="mz-edit-zone__label">{zona.etiqueta}</div>
           {/* SortableContext por zona (no uno global): así el reacomodo animado durante el
               arrastre solo involucra a los componentes de la misma zona, nunca sugiere que se
               pueda soltar uno en la zona vecina. */}
           <SortableContext items={zona.items.map((c) => c.component_id)} strategy={rectSortingStrategy}>
-            <div
-              className="dashboard-grid border-secondary d-flex flex-wrap"
-              style={{ border: '2px dashed', borderRadius: 10, padding: 8 }}
-              role="list"
-              aria-label={zona.etiqueta}
-            >
+            <div className="dashboard-grid mz-edit-zone d-flex flex-wrap" role="list" aria-label={zona.etiqueta}>
               {renderGrupo(zona.items)}
             </div>
           </SortableContext>

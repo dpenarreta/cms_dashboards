@@ -1,48 +1,30 @@
-import { Button, ButtonGroup } from 'react-bootstrap'
-
 /**
  * Alternativa accesible al arrastre (sección 21/22): siempre disponible, funciona con teclado y
  * en pantallas táctiles donde el drag and drop es incómodo.
  */
+const BOTONES = [
+  { direccion: 'inicio', etiqueta: 'Mover al inicio', icono: 'bi-chevron-double-left', haciaAtras: true },
+  { direccion: 'arriba', etiqueta: 'Mover arriba', icono: 'bi-chevron-left', haciaAtras: true },
+  { direccion: 'abajo', etiqueta: 'Mover abajo', icono: 'bi-chevron-right', haciaAtras: false },
+  { direccion: 'fin', etiqueta: 'Mover al final', icono: 'bi-chevron-double-right', haciaAtras: false },
+]
+
 export default function MoveButtons({ onMover, deshabilitarArriba, deshabilitarAbajo }) {
   return (
-    <ButtonGroup size="sm" aria-label="Mover componente">
-      <Button
-        variant="outline-secondary"
-        onClick={() => onMover('inicio')}
-        disabled={deshabilitarArriba}
-        aria-label="Mover al inicio"
-        title="Mover al inicio"
-      >
-        «
-      </Button>
-      <Button
-        variant="outline-secondary"
-        onClick={() => onMover('arriba')}
-        disabled={deshabilitarArriba}
-        aria-label="Mover arriba"
-        title="Mover arriba"
-      >
-        ‹
-      </Button>
-      <Button
-        variant="outline-secondary"
-        onClick={() => onMover('abajo')}
-        disabled={deshabilitarAbajo}
-        aria-label="Mover abajo"
-        title="Mover abajo"
-      >
-        ›
-      </Button>
-      <Button
-        variant="outline-secondary"
-        onClick={() => onMover('fin')}
-        disabled={deshabilitarAbajo}
-        aria-label="Mover al final"
-        title="Mover al final"
-      >
-        »
-      </Button>
-    </ButtonGroup>
+    <div className="mz-edit-mover" role="group" aria-label="Mover componente">
+      {BOTONES.map(({ direccion, etiqueta, icono, haciaAtras }) => (
+        <button
+          key={direccion}
+          type="button"
+          className="mz-icon-btn"
+          onClick={() => onMover(direccion)}
+          disabled={haciaAtras ? deshabilitarArriba : deshabilitarAbajo}
+          aria-label={etiqueta}
+          title={etiqueta}
+        >
+          <i className={`bi ${icono}`} aria-hidden="true"></i>
+        </button>
+      ))}
+    </div>
   )
 }

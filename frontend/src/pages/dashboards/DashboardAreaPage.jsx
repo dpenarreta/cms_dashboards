@@ -74,16 +74,9 @@ function fechaLocalISO(fecha) {
 function ZonaPersonalDropTarget() {
   const { isOver, setNodeRef } = useDroppable({ id: 'zona-personal-drop' })
   return (
-    <div
-      ref={setNodeRef}
-      className="text-center text-secondary py-3 mb-3"
-      style={{
-        border: '2px dashed', borderRadius: 10,
-        borderColor: isOver ? 'var(--bs-primary)' : undefined,
-        background: isOver ? 'var(--bs-primary-bg-subtle)' : undefined,
-      }}
-    >
-      Soltá aquí un componente para agregarlo a la Zona Personal
+    <div ref={setNodeRef} className={`mz-drop mb-3 ${isOver ? 'is-drag' : ''}`}>
+      <i className="bi bi-plus-square-dotted" aria-hidden="true"></i>
+      <div>Soltá aquí un componente para agregarlo a la Zona Personal</div>
     </div>
   )
 }
@@ -527,7 +520,13 @@ export default function DashboardAreaPage() {
   ]))
 
   return (
-    <div className="cartera-app" ref={dashboardRef}>
+    // Con la paleta de componentes abierta (a la derecha, alto completo y sin fondo que bloquee),
+    // el dashboard le deja su ancho libre para que no tape la barra de "Guardar cambios". El panel
+    // de propiedades no lo necesita: es modal, con fondo, y se cierra para seguir editando.
+    <div
+      className={`cartera-app ${layout.modoEdicion && mostrarPaletaEfectivo ? 'cartera-app--con-panel' : ''}`}
+      ref={dashboardRef}
+    >
       <div className="mz-view-head">
         <div>
           <h2>{dashboardInfo?.name || dashboardId}</h2>

@@ -47,21 +47,21 @@ export default function ComponentWrapper({
       ref={setNodeRef}
     >
       <div
-        className={`h-100 ${seleccionado ? 'border-primary' : 'border-secondary'}`}
-        style={{ border: '2px dashed', borderRadius: 10, padding: 6 }}
+        className={`mz-edit-item h-100 ${seleccionado ? 'is-selected' : ''}`}
         role="group"
         aria-label={`Componente ${componente.component_id}, editable`}
       >
-        <div className="d-flex justify-content-between align-items-center mb-1 flex-wrap gap-1">
+        {/* Barra de acciones de la Matriz: botones de solo ícono (`mz-icon-btn`), con el nombre en
+            `aria-label` y `title` para lectores de pantalla y al pasar el cursor. */}
+        <div className="mz-edit-bar">
           <button
             type="button"
-            className="btn btn-sm btn-outline-secondary"
+            className="mz-icon-btn mz-edit-grip"
             aria-label={`Arrastrar para reordenar ${componente.component_id}`}
             title={bloqueado ? 'Componente bloqueado: no se puede reordenar' : 'Arrastrar para reordenar'}
             disabled={bloqueado}
             {...attributes}
             {...listeners}
-            style={{ cursor: bloqueado ? 'not-allowed' : 'grab' }}
           >
             <i className="bi bi-grip-vertical" aria-hidden="true"></i>
           </button>
@@ -70,38 +70,42 @@ export default function ComponentWrapper({
             deshabilitarArriba={esPrimero || bloqueado}
             deshabilitarAbajo={esUltimo || bloqueado}
           />
-          <div className="d-flex gap-1">
+          <div className="mz-edit-bar__acciones">
             {permiteEstilo && (
-              <Button
-                size="sm"
-                variant={seleccionado ? 'primary' : 'outline-secondary'}
+              <button
+                type="button"
+                className={`mz-icon-btn ${seleccionado ? 'is-active' : ''}`}
                 onClick={() => onSeleccionar(componente.component_id)}
                 aria-label={`Configurar ${componente.component_id}`}
                 title="Configurar (título, descripción, colores)"
               >
                 <i className="bi bi-gear" aria-hidden="true"></i>
-              </Button>
+              </button>
             )}
             {!bloqueado && (componente.is_visible ? (
-              <Button size="sm" variant="outline-secondary" onClick={() => onOcultar(componente.component_id)} title="Ocultar">
-                Ocultar
-              </Button>
+              <button type="button" className="mz-icon-btn" onClick={() => onOcultar(componente.component_id)} aria-label="Ocultar" title="Ocultar">
+                <i className="bi bi-eye-slash" aria-hidden="true"></i>
+              </button>
             ) : (
-              <Button size="sm" variant="outline-primary" onClick={() => onMostrar(componente.component_id)} title="Mostrar">
-                Mostrar
-              </Button>
+              <button type="button" className="mz-icon-btn is-active" onClick={() => onMostrar(componente.component_id)} aria-label="Mostrar" title="Mostrar">
+                <i className="bi bi-eye" aria-hidden="true"></i>
+              </button>
             ))}
             {permiteEliminar && !bloqueado && (
               confirmandoEliminar ? (
-                <div className="d-flex gap-1 align-items-center">
-                  <span className="text-danger" style={{ fontSize: '0.8rem' }}>¿Eliminar?</span>
+                <div className="mz-edit-confirmar">
+                  <span>¿Eliminar?</span>
                   <Button size="sm" variant="danger" onClick={() => onEliminar(componente.component_id)}>Sí</Button>
                   <Button size="sm" variant="outline-secondary" onClick={() => setConfirmandoEliminar(false)}>No</Button>
                 </div>
               ) : (
-                <Button size="sm" variant="outline-danger" onClick={() => setConfirmandoEliminar(true)} title="Eliminar (no se puede deshacer)">
-                  Eliminar
-                </Button>
+                <button
+                  type="button" className="mz-icon-btn mz-icon-btn--peligro"
+                  onClick={() => setConfirmandoEliminar(true)}
+                  aria-label="Eliminar" title="Eliminar (no se puede deshacer)"
+                >
+                  <i className="bi bi-trash" aria-hidden="true"></i>
+                </button>
               )
             )}
           </div>
@@ -114,7 +118,7 @@ export default function ComponentWrapper({
           // vuelve a ser interactivo con normalidad.
           <div style={{ pointerEvents: 'none' }}>{componente.render()}</div>
         ) : (
-          <div className="text-center text-secondary py-4">Componente oculto</div>
+          <div className="mz-edit-oculto"><i className="bi bi-eye-slash" aria-hidden="true"></i> Componente oculto</div>
         )}
       </div>
     </div>

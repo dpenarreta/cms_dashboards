@@ -644,3 +644,180 @@ pre.mz-code-block {
 .hallazgos-clave__titulo .bi {
   margin-right: 4px;
 }
+
+/* ---------- Editor de dashboards (modo "Editar dashboard") ---------- */
+/* Zonas del diseño: el recuadro punteado sigue (dice "acá se agrupa"), pero con los tokens de la
+   Matriz, el radio de las tarjetas y un fondo hundido que separa la zona de la página. */
+.mz-edit-zone__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mz-ink-faint);
+  margin-bottom: 8px;
+}
+
+.mz-edit-zone {
+  border: 1.5px dashed var(--mz-border-strong);
+  border-radius: 16px;
+  background: var(--mz-sunken);
+  padding: 6px;
+}
+
+/* Cada componente en edición: marco liso de tarjeta; el seleccionado, con el color de acción. */
+.mz-edit-item {
+  border: 1px solid var(--mz-border);
+  border-radius: 16px;
+  background: var(--mz-bg);
+  padding: 6px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mz-edit-item:hover {
+  border-color: var(--mz-border-strong);
+}
+
+.mz-edit-item.is-selected {
+  border-color: var(--mz-action);
+  box-shadow: 0 0 0 3px rgba(var(--mz-action-rgb), 0.18);
+}
+
+/* Barra de acciones sobre el componente: manija y mover a la izquierda, el resto a la derecha. */
+.mz-edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.mz-edit-bar__acciones,
+.mz-edit-mover {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mz-edit-bar .mz-icon-btn {
+  padding: 4px 7px;
+  font-size: 13px;
+  line-height: 1;
+  background: var(--mz-raised);
+  align-items: center;
+}
+
+.mz-edit-bar .mz-icon-btn:hover:not(:disabled) {
+  background: var(--mz-sunken);
+  color: var(--mz-ink);
+}
+
+.mz-edit-bar .mz-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mz-edit-bar .mz-icon-btn.is-active {
+  background: var(--mz-info-bg);
+  border-color: var(--mz-blue-400);
+  color: var(--mz-info-fg);
+}
+
+.mz-edit-grip {
+  cursor: grab;
+}
+
+.mz-icon-btn--peligro {
+  color: var(--mz-bad-fg);
+}
+
+.mz-edit-bar .mz-icon-btn--peligro:hover:not(:disabled) {
+  background: var(--mz-bad-bg);
+  border-color: var(--mz-bad-line);
+  color: var(--mz-bad-fg);
+}
+
+.mz-edit-confirmar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mz-bad-fg);
+}
+
+.mz-edit-oculto {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 28px 12px;
+  border-radius: 10px;
+  background: var(--mz-raised);
+  color: var(--mz-ink-faint);
+  font-size: 12.5px;
+}
+
+/* Paleta de componentes y panel de propiedades como `mz-drawer`: alto completo, a la derecha. */
+.offcanvas.mz-paleta {
+  --bs-offcanvas-width: 280px;
+  border-left: 1px solid var(--mz-border);
+}
+
+.offcanvas.mz-propiedades {
+  --bs-offcanvas-width: 400px;
+  border-left: 1px solid var(--mz-border);
+}
+
+.mz-paleta .offcanvas-header,
+.mz-propiedades .offcanvas-header {
+  border-bottom: 1px solid var(--mz-border);
+}
+
+.mz-paleta-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  text-align: left;
+  background: var(--mz-raised);
+  border: 1px solid var(--mz-border);
+  border-radius: 10px;
+  box-shadow: var(--mz-shadow-1);
+  color: var(--mz-ink);
+  cursor: grab;
+}
+
+.mz-paleta-item:hover {
+  border-color: var(--mz-blue-400);
+  background: var(--mz-info-bg);
+}
+
+/* Secciones del panel de propiedades (Accordion) con el aspecto de las tarjetas de la Matriz. */
+.mz-propiedades .accordion {
+  --bs-accordion-bg: var(--mz-raised);
+  --bs-accordion-color: var(--mz-ink);
+  --bs-accordion-border-color: var(--mz-border);
+  --bs-accordion-border-radius: 10px;
+  --bs-accordion-inner-border-radius: 9px;
+  --bs-accordion-btn-color: var(--mz-ink);
+  --bs-accordion-btn-bg: var(--mz-sunken);
+  --bs-accordion-active-bg: var(--mz-info-bg);
+  --bs-accordion-active-color: var(--mz-info-fg);
+  --bs-accordion-btn-focus-box-shadow: 0 0 0 0.2rem rgba(var(--mz-action-rgb), 0.2);
+}
+
+.mz-propiedades .accordion-button {
+  font-family: var(--mz-font-display);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Con la paleta abierta, el dashboard le deja su ancho libre (no la tapa ni ella a él). */
+@media (min-width: 881px) {
+  .cartera-app--con-panel {
+    padding-right: 280px;
+  }
+}
