@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import AdminLayout from '../components/admin/AdminLayout'
 
@@ -47,5 +48,36 @@ describe('AdminLayout', () => {
   it('el título de la barra superior nombra la sección', () => {
     renderEnRuta('/admin/users')
     expect(screen.getByRole('heading', { level: 1, name: 'Usuarios y roles' })).toBeInTheDocument()
+  })
+
+  describe('tema claro/oscuro (ícono en la barra superior, como en la Matriz)', () => {
+    beforeEach(() => {
+      localStorage.clear()
+      document.documentElement.removeAttribute('data-theme')
+      document.documentElement.removeAttribute('data-bs-theme')
+    })
+
+    it('es un botón de solo ícono en la barra superior', () => {
+      renderEnRuta('/app/dashboards')
+      const boton = screen.getByRole('button', { name: 'Tema oscuro' })
+      expect(boton.closest('.mz-topbar')).not.toBeNull()
+      expect(boton).toHaveTextContent('')
+    })
+
+    it('clic en el botón activa el tema oscuro para toda la página (data-theme/data-bs-theme) y lo persiste', async () => {
+      renderEnRuta('/app/dashboards')
+      await userEvent.click(screen.getByRole('button', { name: 'Tema oscuro' }))
+
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
+      expect(document.documentElement.getAttribute('data-bs-theme')).toBe('dark')
+      expect(localStorage.getItem('tema-color-modo')).toBe('1')
+      expect(screen.getByRole('button', { name: 'Tema claro' })).toBeInTheDocument()
+    })
+
+    it('con el tema oscuro ya guardado, arranca mostrando el botón para volver al claro', () => {
+      localStorage.setItem('tema-color-modo', '1')
+      renderEnRuta('/app/dashboards')
+      expect(screen.getByRole('button', { name: 'Tema claro' })).toBeInTheDocument()
+    })
   })
 })

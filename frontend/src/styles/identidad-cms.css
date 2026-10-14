@@ -140,15 +140,6 @@ a {
   min-width: 0;
 }
 
-/* Botón de tema al pie del menú, con la forma de un ítem del menú: ocupa el ancho y queda encima
-   del rol y del usuario. */
-.mz-theme-toggle {
-  width: 100%;
-  background: none;
-  text-align: left;
-  margin-bottom: 10px;
-}
-
 /* El fondo que cierra el menú en pantallas chicas es un botón (accesible con teclado); sin
    estos ajustes Bootstrap le pondría borde y relleno. */
 button.mz-sidebar-backdrop {

@@ -107,36 +107,8 @@ describe('AdminSidebar', () => {
     expect(onCerrar).toHaveBeenCalledTimes(2)
   })
 
-  describe('tema claro/oscuro (al pie del menú, encima del usuario)', () => {
-    beforeEach(() => {
-      localStorage.clear()
-      document.documentElement.removeAttribute('data-theme')
-      document.documentElement.removeAttribute('data-bs-theme')
-    })
-
-    it('está al pie del menú y antes del bloque de usuario y de "Cerrar sesión"', () => {
-      renderSidebar()
-      const boton = screen.getByRole('button', { name: 'Tema oscuro' })
-      const pie = boton.closest('.mz-sidebar-foot')
-      expect(pie).not.toBeNull()
-      const usuario = pie.querySelector('.mz-user')
-      expect(boton.compareDocumentPosition(usuario) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    })
-
-    it('clic en el botón activa el tema oscuro para toda la página (data-theme/data-bs-theme) y lo persiste', async () => {
-      renderSidebar()
-      await userEvent.click(screen.getByRole('button', { name: 'Tema oscuro' }))
-
-      expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
-      expect(document.documentElement.getAttribute('data-bs-theme')).toBe('dark')
-      expect(localStorage.getItem('tema-color-modo')).toBe('1')
-      expect(screen.getByRole('button', { name: 'Tema claro' })).toBeInTheDocument()
-    })
-
-    it('con el tema oscuro ya guardado, arranca mostrando el botón para volver al claro', () => {
-      localStorage.setItem('tema-color-modo', '1')
-      renderSidebar()
-      expect(screen.getByRole('button', { name: 'Tema claro' })).toBeInTheDocument()
-    })
+  it('el menú lateral no lleva el botón de tema: está en la barra superior', () => {
+    renderSidebar()
+    expect(screen.queryByRole('button', { name: /Tema (oscuro|claro)/ })).not.toBeInTheDocument()
   })
 })

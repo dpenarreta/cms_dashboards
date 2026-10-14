@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Button } from 'react-bootstrap'
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import AdminSidebar from './AdminSidebar'
+import { useColorMode } from '../../hooks/useColorMode'
 
 const RUTA_LISTADO_DASHBOARDS = '/app/dashboards'
 
@@ -27,12 +28,13 @@ function tituloDeRuta(pathname) {
  * lateral debe verse siempre, en cualquier interfaz, no solo en /admin — por eso este layout es
  * dueño de toda la pantalla y no hay una barra superior compartida por encima.
  *
- * La barra superior lleva el título de la sección y "Volver a Dashboards"; el botón de tema
- * claro/oscuro va al pie del menú lateral. En pantallas de 880px o menos suma el botón que abre
- * el menú.
+ * La barra superior lleva el título de la sección, el botón de tema claro/oscuro (solo el
+ * ícono, como en la Matriz) y "Volver a Dashboards". En pantallas de 880px o menos suma el botón
+ * que abre el menú.
  */
 export default function AdminLayout() {
   const { pathname } = useLocation()
+  const { oscuro, alternar: alternarTema } = useColorMode()
   const [menuAbierto, setMenuAbierto] = useState(false)
   // "Volver a Dashboards" no tiene destino útil estando ya en el listado, así que ahí se oculta.
   const mostrarVolver = pathname !== RUTA_LISTADO_DASHBOARDS
@@ -50,6 +52,14 @@ export default function AdminLayout() {
           </button>
           <h1>{tituloDeRuta(pathname)}</h1>
           <div className="mz-spacer" />
+          <button
+            type="button" className="mz-icon-btn"
+            aria-label={oscuro ? 'Tema claro' : 'Tema oscuro'}
+            title={oscuro ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+            onClick={alternarTema}
+          >
+            <i className={`bi ${oscuro ? 'bi-sun' : 'bi-moon-stars'}`} aria-hidden="true"></i>
+          </button>
           {mostrarVolver && (
             <Button as={Link} to={RUTA_LISTADO_DASHBOARDS} size="sm" variant="outline-secondary">
               Volver a Dashboards
