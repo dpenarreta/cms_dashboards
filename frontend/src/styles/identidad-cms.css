@@ -127,10 +127,19 @@ a {
   flex: none;
 }
 
+/* Alto fijo de la barra superior: la paleta de componentes del editor arranca justo debajo
+   (`.mz-paleta`), y para eso necesita saber dónde termina la barra. Entra con holgura su
+   contenido (título de 18px y botones `sm`). */
+:root {
+  --mz-topbar-h: 60px;
+}
+
 .mz-topbar {
   position: sticky;
   top: 0;
   z-index: 30;
+  height: var(--mz-topbar-h);
+  box-sizing: border-box;
 }
 
 .mz-topbar h1 {
@@ -758,10 +767,15 @@ pre.mz-code-block {
   font-size: 12.5px;
 }
 
-/* Paleta de componentes y panel de propiedades como `mz-drawer`: alto completo, a la derecha. */
+/* Paleta de componentes y panel de propiedades como `mz-drawer`, a la derecha. La paleta empieza
+   debajo de la barra superior para no tapar el botón de tema ni "Volver a Dashboards" (no tiene
+   fondo modal: se edita con ella abierta). El panel de propiedades sí es modal y va a alto
+   completo. */
 .offcanvas.mz-paleta {
   --bs-offcanvas-width: 280px;
+  top: var(--mz-topbar-h);
   border-left: 1px solid var(--mz-border);
+  border-top: 1px solid var(--mz-border);
 }
 
 .offcanvas.mz-propiedades {
