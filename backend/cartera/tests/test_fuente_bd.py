@@ -844,3 +844,46 @@ class ActualizarFuenteBDAhoraViewTests(TestCase):
         client.force_authenticate(user=usuario)
         resp = client.post('/api/cartera/actualizar-fuente-bd-ahora', {'dashboard_id': dashboard.dashboard_id}, format='json')
         self.assertEqual(resp.status_code, 403)
+
+    @mock.patch('cartera.views.fuente_bd_scheduler.db_source.leer_fuente')
+    def test_con_fecha_corte_ejecuta_el_procedimiento_con_esa_fecha_y_la_guarda(self, leer_fuente_mock):
+        """Sin frecuencia no hay período que avanzar: reenviar la fecha guardada traía exactamente los
+        mismos datos que la vez anterior. La fecha elegida al pulsar es la que viaja al procedimiento
+        y queda guardada para la próxima."""
+        import pandas as pd
+        from cartera.services import plantilla
+
+        dashboard = crear_dashboard(nombre='Cobranza')
+        actualizar_fuente_bd(
+            dashboard.dashboard_id, tipo='procedimiento', nombre='dbo.sp_cartera',
+            parametros={'FechaCorte': '2026-09-30'},
+        )
+        mapeo = {'kpi-1': {'disponible': True, 'columna_valor': 'Saldo'}}
+        plantilla.aplicar_mapeo(dashboard.dashboard_id, pd.DataFrame({'Saldo': [1.0]}), mapeo)
+        Dashboard.objects.filter(dashboard_id=dashboard.dashboard_id).update(fuente_bd_ultimo_mapeo=mapeo)
+        leer_fuente_mock.return_value = pd.DataFrame({'Saldo': [500.0]})
+
+        resp = self.client.post(
+            '/api/cartera/actualizar-fuente-bd-ahora',
+            {'dashboard_id': dashboard.dashboard_id, 'fecha_corte': '2026-10-13'}, format='json',
+        )
+
+        self.assertTrue(resp.json()['ok'], resp.json()['mensaje'])
+        self.assertEqual(leer_fuente_mock.call_args.args[2], {'FechaCorte': '2026-10-13'})
+        dashboard.refresh_from_db()
+        self.assertEqual(dashboard.fuente_bd_parametros, {'FechaCorte': '2026-10-13'})
+        carga = CargaArchivo.objects.filter(dashboard_id=dashboard.dashboard_id).order_by('-fecha_carga').first()
+        self.assertEqual(carga.fecha_corte.isoformat(), '2026-10-13')
+
+    def test_fecha_corte_invalida_devuelve_400(self):
+        dashboard = crear_dashboard(nombre='Cobranza')
+        actualizar_fuente_bd(
+            dashboard.dashboard_id, tipo='procedimiento', nombre='dbo.sp_cartera',
+            parametros={'FechaCorte': '2026-09-30'},
+        )
+        resp = self.client.post(
+            '/api/cartera/actualizar-fuente-bd-ahora',
+            {'dashboard_id': dashboard.dashboard_id, 'fecha_corte': '13/10/2026'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()['error'], 'FECHA_CORTE_INVALIDA')

@@ -21,9 +21,13 @@ export function conectarFuenteBD(dashboardId) {
 /** Ícono "Actualizar ahora" (solo dashboards con fuente configurada y sin frecuencia automática,
  * ver `DashboardAreaPage.jsx`) — corre la MISMA actualización sin asistente que la programada
  * (reaplica el último mapeo/aliases confirmados), en vez de pasar por `conectarFuenteBD` + todo el
- * asistente de columnas. Nunca rechaza por un mapeo faltante: revisa `data.ok` en la respuesta. */
-export function actualizarFuenteBDAhora(dashboardId) {
-  return api.post('/actualizar-fuente-bd-ahora', { dashboard_id: dashboardId }).then((r) => r.data)
+ * asistente de columnas. Nunca rechaza por un mapeo faltante: revisa `data.ok` en la respuesta.
+ * `fechaCorte` (AAAA-MM-DD, opcional) reemplaza el parámetro de fecha del procedimiento: sin
+ * frecuencia no hay período que avanzar, y sin ella volvía a traer los mismos datos. */
+export function actualizarFuenteBDAhora(dashboardId, fechaCorte) {
+  const cuerpo = { dashboard_id: dashboardId }
+  if (fechaCorte) cuerpo.fecha_corte = fechaCorte
+  return api.post('/actualizar-fuente-bd-ahora', cuerpo).then((r) => r.data)
 }
 
 export function sugerirMapeoPlantilla(cargaId, aliases, valoresBlancos) {

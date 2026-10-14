@@ -188,11 +188,28 @@ def avanzar_fecha_corte(parametros, frecuencia, periodos=1):
     return {**parametros, nombre_parametro: nueva_fecha.isoformat()}
 
 
-def actualizar_dashboard(dashboard, hoy=None):
+def fijar_fecha_corte(parametros, fecha):
+    """Copia de `parametros` con su (único) parámetro de fecha de corte reemplazado por `fecha`.
+
+    Es la contraparte manual de `avanzar_fecha_corte`: "Actualizar ahora" solo se ofrece en
+    dashboards SIN frecuencia, y sin frecuencia no hay período que avanzar — el procedimiento se
+    volvía a ejecutar con la misma fecha de la vez anterior y devolvía los mismos datos, así que la
+    fecha la elige quien pulsa el botón. Sin parámetros (una vista) no hay nada que reemplazar.
+    """
+    if not parametros:
+        return dict(parametros or {})
+    nombre_parametro = next(iter(parametros))
+    return {**parametros, nombre_parametro: fecha.isoformat()}
+
+
+def actualizar_dashboard(dashboard, hoy=None, fecha_corte=None):
     """Ejecuta UNA actualización automática para `dashboard` — asume que ya se determinó que
     corresponde hoy (`debe_actualizarse_hoy`), no lo vuelve a chequear. Nunca lanza: siempre
     devuelve `{'ok': bool, 'mensaje': str}` para que `manage.py actualizar_fuentes_bd` pueda seguir
-    con el resto de los dashboards aunque este falle."""
+    con el resto de los dashboards aunque este falle.
+
+    `fecha_corte` (una `date`) la pasa "Actualizar ahora": reemplaza el parámetro de fecha en vez
+    de avanzarlo por frecuencia (ver `fijar_fecha_corte`)."""
     hoy = hoy or date.today()
 
     if not dashboard.fuente_bd_ultimo_mapeo:
@@ -204,10 +221,13 @@ def actualizar_dashboard(dashboard, hoy=None):
 
     # Avanza tantos períodos como se perdieron: una corrida de recuperación tiene que traer los
     # datos del período actual, no los del que quedó pendiente hace semanas.
-    parametros_nuevos = avanzar_fecha_corte(
-        dashboard.fuente_bd_parametros, dashboard.fuente_bd_frecuencia_actualizacion,
-        periodos=max(1, periodos_pendientes(dashboard, hoy)),
-    )
+    if fecha_corte is not None:
+        parametros_nuevos = fijar_fecha_corte(dashboard.fuente_bd_parametros, fecha_corte)
+    else:
+        parametros_nuevos = avanzar_fecha_corte(
+            dashboard.fuente_bd_parametros, dashboard.fuente_bd_frecuencia_actualizacion,
+            periodos=max(1, periodos_pendientes(dashboard, hoy)),
+        )
 
     try:
         df = db_source.leer_fuente(

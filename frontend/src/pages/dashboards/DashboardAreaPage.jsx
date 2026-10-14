@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Spinner } from 'react-bootstrap'
+import { Alert, Button, Form, Spinner } from 'react-bootstrap'
 import { Link, useParams } from 'react-router-dom'
 import { DndContext, PointerSensor, useDroppable, useSensor, useSensors } from '@dnd-kit/core'
 import { useGenericDashboardBuilder } from '../../hooks/useGenericDashboardBuilder'
@@ -56,6 +56,14 @@ function diasDesdeISO(iso) {
   const hoy = new Date()
   const hoyMedianoche = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())
   return Math.round((hoyMedianoche - fecha) / (1000 * 60 * 60 * 24))
+}
+
+// 'YYYY-MM-DD' de `fecha` en hora LOCAL — `toISOString()` la pasa a UTC y, de noche en Ecuador
+// (UTC-5), sugeriría la fecha de mañana.
+function fechaLocalISO(fecha) {
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0')
+  const dia = String(fecha.getDate()).padStart(2, '0')
+  return `${fecha.getFullYear()}-${mes}-${dia}`
 }
 
 /** Único destino de suelta de la paleta de componentes (`ComponentPaletteSidebar`) — vive en un
@@ -134,11 +142,22 @@ export default function DashboardAreaPage() {
   }
   useEffect(cargarEstadoFuenteBD, [dashboardId])
 
-  const actualizarAhora = async () => {
+  // Con un procedimiento que recibe fecha, "Actualizar ahora" pregunta primero con qué fecha
+  // ejecutarlo (sugiere hoy): sin frecuencia no hay período que avanzar y reenviar la fecha
+  // guardada traía exactamente los mismos datos. Una vista (sin parámetros) actualiza directo.
+  const [fechaActualizarAhora, setFechaActualizarAhora] = useState(null)
+  const parametroFechaFuente = Object.keys(estadoFuenteBD?.parametros || {})[0] || ''
+  const pulsarActualizarAhora = () => {
+    if (parametroFechaFuente) setFechaActualizarAhora(fechaLocalISO(new Date()))
+    else actualizarAhora()
+  }
+
+  const actualizarAhora = async (fechaCorte) => {
+    setFechaActualizarAhora(null)
     setActualizandoAhora(true)
     setErrorActualizarAhora('')
     try {
-      const resultado = await carteraService.actualizarFuenteBDAhora(dashboardId)
+      const resultado = await carteraService.actualizarFuenteBDAhora(dashboardId, fechaCorte)
       if (resultado.ok) {
         await layout.recargar()
       } else {
@@ -573,7 +592,7 @@ export default function DashboardAreaPage() {
           ) : (
             <Button
               variant="link" size="sm" className="p-0 d-print-none"
-              onClick={estadoFuenteBD.nombre ? actualizarAhora : () => setMostrarConectarFuenteBD(true)}
+              onClick={estadoFuenteBD.nombre ? pulsarActualizarAhora : () => setMostrarConectarFuenteBD(true)}
               disabled={actualizandoAhora}
             >
               {actualizandoAhora ? <Spinner size="sm" animation="border" className="me-1" /> : null}
@@ -789,6 +808,30 @@ export default function DashboardAreaPage() {
         onHide={() => setMostrarInterpretacion(false)}
         dashboardId={dashboardId}
       />
+
+      <ConfirmModal
+        show={fechaActualizarAhora !== null}
+        title="Actualizar ahora"
+        confirmLabel="Actualizar"
+        confirmVariant="primary"
+        onConfirm={() => fechaActualizarAhora && actualizarAhora(fechaActualizarAhora)}
+        onCancel={() => setFechaActualizarAhora(null)}
+      >
+        <Form.Group controlId="fecha-actualizar-ahora">
+          <Form.Label>Fecha de corte ({parametroFechaFuente})</Form.Label>
+          <Form.Control
+            type="date"
+            value={fechaActualizarAhora || ''}
+            onChange={(e) => setFechaActualizarAhora(e.target.value)}
+          />
+          <Form.Text muted>
+            Con esta fecha se ejecuta {estadoFuenteBD?.nombre} y queda guardada en la conexión.
+            {estadoFuenteBD?.parametros?.[parametroFechaFuente]
+              ? ` Última usada: ${formatearFechaISO(estadoFuenteBD.parametros[parametroFechaFuente])}.`
+              : ''}
+          </Form.Text>
+        </Form.Group>
+      </ConfirmModal>
 
       <ConectarFuenteBDModal
         show={mostrarConectarFuenteBD}
