@@ -14,33 +14,37 @@ export default function PermissionsPage() {
 
   return (
     <div>
-      <h1 className="h4 mb-3">Catálogo de permisos</h1>
-      <p className="chart-panel__subtitle">
-        Solo lectura: los permisos están definidos en el código del sistema, no se editan aquí.
-      </p>
+      <div className="mz-view-head">
+        <div>
+          <h2>Catálogo de permisos</h2>
+          <p className="mz-desc">
+            Solo lectura: los permisos están definidos en el código del sistema, no se editan aquí.
+          </p>
+        </div>
+      </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
       {!modulos && !error && <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>}
 
       {modulos && Object.entries(modulos).map(([modulo, permisos]) => (
-        <div key={modulo} className="mb-4">
-          <h6 className="text-capitalize">{modulo}</h6>
-          <div className="table-scroll">
-            <Table responsive size="sm" striped bordered>
+        <section key={modulo} className="mz-card mb-3">
+          <div className="mz-card-head"><h3 className="text-capitalize">{modulo}</h3></div>
+          <div>
+            <Table responsive size="sm" className="mb-0">
               <thead>
                 <tr><th>Código</th><th>Descripción</th></tr>
               </thead>
               <tbody>
                 {permisos.map((p) => (
                   <tr key={p.codename}>
-                    <td><code>{p.codename}</code></td>
+                    <td className="mz-code">{p.codename}</td>
                     <td>{p.name}</td>
                   </tr>
                 ))}
               </tbody>
             </Table>
           </div>
-        </div>
+        </section>
       ))}
     </div>
   )

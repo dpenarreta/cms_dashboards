@@ -15,12 +15,14 @@ function conNegritas(texto) {
   ))
 }
 
-/** El bloque "HALLAZGOS CLAVE" del informe: barra lateral, título y párrafo. */
+/** El bloque "HALLAZGOS CLAVE": aviso informativo con la forma de `mz-alert--info` de la Matriz. */
 export function HallazgosClave({ texto }) {
   if (!texto) return null
   return (
     <div className="directorio-hallazgos">
-      <div className="directorio-hallazgos__titulo">📊 HALLAZGOS CLAVE</div>
+      <div className="directorio-hallazgos__titulo">
+        <i className="bi bi-lightbulb" aria-hidden="true"></i> HALLAZGOS CLAVE
+      </div>
       <p className="directorio-hallazgos__texto">{conNegritas(texto)}</p>
     </div>
   )

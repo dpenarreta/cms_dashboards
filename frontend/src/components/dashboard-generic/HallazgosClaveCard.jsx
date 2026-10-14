@@ -47,8 +47,8 @@ export default function HallazgosClaveCard({ variante, datos, datosMultiserie, t
         aria-expanded={expandido}
         aria-controls={idContenido}
       >
-        <span>💡 Hallazgos clave</span>
-        <span aria-hidden="true">{expandido ? '▲' : '▼'}</span>
+        <span><i className="bi bi-lightbulb" aria-hidden="true"></i> Hallazgos clave</span>
+        <i className={`bi ${expandido ? 'bi-chevron-up' : 'bi-chevron-down'}`} aria-hidden="true"></i>
       </button>
       <Collapse in={expandido}>
         <div id={idContenido}>

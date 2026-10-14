@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Accordion, Alert, Button, Card, Form, Modal, Spinner } from 'react-bootstrap'
+import { Accordion, Alert, Button, Form, Modal, Spinner } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import * as dashboardLayoutService from '../../services/dashboardLayoutService'
@@ -374,10 +374,15 @@ export default function DashboardsListPage() {
 
   return (
     <div className="cartera-app">
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="mb-0">Mis dashboards</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>Mis dashboards</h2>
+          <p className="mz-desc">Los dashboards que tiene autorizados. Pase el cursor sobre uno para entrar o administrarlo.</p>
+        </div>
         {puedeCrear && (
-          <Button size="sm" onClick={() => setMostrarModalCrear(true)}>Crear dashboard</Button>
+          <div className="mz-view-actions">
+            <Button size="sm" onClick={() => setMostrarModalCrear(true)}><i className="bi bi-plus-lg" aria-hidden="true"></i> Crear dashboard</Button>
+          </div>
         )}
       </div>
 
@@ -386,18 +391,24 @@ export default function DashboardsListPage() {
         <div className="text-center" role="status" aria-live="polite"><Spinner animation="border" /></div>
       )}
       {dashboards && dashboards.length === 0 && (
-        <Alert variant="secondary">No tiene ningún dashboard autorizado. Contacte a un administrador.</Alert>
+        <div className="mz-card mz-empty">
+          <i className="bi bi-bar-chart-line d-block mb-2" aria-hidden="true"></i>
+          No tiene ningún dashboard autorizado. Contacte a un administrador.
+        </div>
       )}
 
-      <div className="d-flex flex-wrap gap-3">
+      <div className="dashboards-grid">
         {dashboards?.map((d) => (
           <div key={d.dashboard_id} className="dashboard-card" data-testid={`dashboard-card-${d.dashboard_id}`}>
-            <Card style={{ width: 260 }} className="chart-panel h-100">
-              <Card.Body>
-                <Card.Title className="mb-0">{d.name}</Card.Title>
-                {d.area && <Card.Subtitle className="chart-panel__subtitle mt-1">{d.area}</Card.Subtitle>}
-              </Card.Body>
-            </Card>
+            <div className="mz-card h-100">
+              <div className="mz-row dashboard-card__fila">
+                <span className="mz-row-ic"><i className="bi bi-bar-chart-line" aria-hidden="true"></i></span>
+                <span className="mz-row-info">
+                  <strong>{d.name}</strong>
+                  {d.area && <span>{d.area}</span>}
+                </span>
+              </div>
+            </div>
 
             {/* Los botones de acción solo se revelan al pasar el cursor (o con foco de teclado,
                 ver :focus-within en dashboard.css) — siempre están en el DOM para que sean

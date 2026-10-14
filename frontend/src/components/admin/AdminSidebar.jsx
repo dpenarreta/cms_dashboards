@@ -1,90 +1,94 @@
-import { useEffect, useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useAdminMenu } from '../../hooks/useAdminMenu'
 import { useAuth } from '../../context/AuthContext'
+import { useMarca } from '../../hooks/useMarca'
 import { useColorMode } from '../../hooks/useColorMode'
-import '../../styles/admin-sidebar.css'
+import { NOMBRE_SITIO_POR_DEFECTO, inicialesDeMarca } from '../../utils/marca'
 
-const CLAVE_COLAPSADO = 'admin-sidebar-colapsado'
+/** Rol que se muestra en la píldora del pie: solo informativo (el acceso real lo deciden los
+ * permisos, nunca el nombre de un rol). */
+function rolVisible(user) {
+  if (user?.is_superuser) return 'Superusuario'
+  return user?.roles?.[0] || null
+}
 
-export default function AdminSidebar() {
+/**
+ * Menú lateral con la estructura de la Matriz (`mz-sidebar`): logotipo, ítems con ícono y, al
+ * pie, el botón de tema claro/oscuro, el rol y el usuario con su botón de cerrar sesión. Siempre azul institucional, en los dos
+ * modos. En pantallas de 880px o menos se oculta y lo abre el botón de menú de la barra superior
+ * (`AdminLayout`), que es quien guarda si está abierto.
+ */
+export default function AdminSidebar({ abierto = false, onCerrar = () => {} }) {
   const items = useAdminMenu()
   const { user, logout } = useAuth()
+  const theme = useMarca()
   const { oscuro, alternar: alternarTema } = useColorMode()
-  const [colapsado, setColapsado] = useState(() => localStorage.getItem(CLAVE_COLAPSADO) === '1')
-
-  useEffect(() => {
-    localStorage.setItem(CLAVE_COLAPSADO, colapsado ? '1' : '0')
-  }, [colapsado])
 
   const inicial = (user?.username || '?').charAt(0).toUpperCase()
   // Refleja de inmediato un nombre editado desde /admin/profile (`ProfilePage.jsx` llama
   // `refreshUser()` al guardar, que actualiza este mismo `user` global) — sin nombre/apellido
   // cargados, cae al username de siempre.
   const nombreMostrado = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username
+  const rol = rolVisible(user)
+  const claseItem = ({ isActive }) => `mz-nav-item ${isActive ? 'is-active' : ''}`
 
   return (
-    <aside className={`admin-sidebar d-print-none ${colapsado ? 'admin-sidebar--colapsado' : ''}`}>
-      <button
-        type="button"
-        className="admin-sidebar__toggle"
-        onClick={() => setColapsado((v) => !v)}
-        aria-label={colapsado ? 'Expandir menú' : 'Ocultar menú'}
-        title={colapsado ? 'Expandir menú' : 'Ocultar menú'}
-      >
-        {colapsado ? '»' : '«'}
-      </button>
-
-      <Link to="/admin/profile" className="admin-sidebar__perfil" title="Ver mi perfil">
-        <div className="admin-sidebar__avatar" aria-hidden="true">
-          {user?.avatar_url ? (
-            <img src={user.avatar_url} alt="" className="admin-sidebar__avatar-img" />
-          ) : inicial}
+    <>
+      <nav className={`mz-sidebar d-print-none ${abierto ? 'mz-sidebar--open' : ''}`} aria-label="Menú principal">
+        <div className="mz-brand">
+          {theme?.logo_url
+            ? <img src={theme.logo_url} alt="" className="mz-brand-logo" />
+            : <span className="mz-glyph" aria-hidden="true">{inicialesDeMarca(theme)}</span>}
+          <span>{theme?.site_name || NOMBRE_SITIO_POR_DEFECTO}</span>
         </div>
-        <div className="admin-sidebar__nombre">{nombreMostrado}</div>
-      </Link>
 
-      <nav className="admin-sidebar__nav" aria-label="Menú administrativo">
-        <NavLink
-          to="/app/dashboards"
-          className={({ isActive }) => `admin-sidebar__link ${isActive ? 'admin-sidebar__link--activo' : ''}`}
-          title="Dashboards"
-        >
-          <span className="admin-sidebar__icono" aria-hidden="true">📊</span>
-          <span className="admin-sidebar__texto">Dashboards</span>
-        </NavLink>
+        <ul className="mz-nav">
+          <li>
+            <NavLink to="/app/dashboards" className={claseItem} onClick={onCerrar}>
+              <i className="bi bi-bar-chart-line" aria-hidden="true"></i>
+              <span>Dashboards</span>
+            </NavLink>
+          </li>
+          {items.map((item) => (
+            <li key={item.id}>
+              <NavLink to={item.path} className={claseItem} onClick={onCerrar}>
+                <i className={`bi ${item.icon}`} aria-hidden="true"></i>
+                <span>{item.label}</span>
+              </NavLink>
+            </li>
+          ))}
+        </ul>
 
-        {items.map((item) => (
-          <NavLink
-            key={item.id}
-            to={item.path}
-            className={({ isActive }) => `admin-sidebar__link ${isActive ? 'admin-sidebar__link--activo' : ''}`}
-            title={item.label}
+        {/* Siempre al pie del menú (la lista de arriba ocupa el espacio libre, así que queda abajo
+            aunque haya pocos ítems), nunca en la barra superior: tema, rol, usuario y cerrar sesión. */}
+        <div className="mz-sidebar-foot">
+          <button
+            type="button" className="mz-nav-item mz-theme-toggle"
+            aria-label={oscuro ? 'Tema claro' : 'Tema oscuro'}
+            title={oscuro ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
+            onClick={alternarTema}
           >
-            <span className="admin-sidebar__icono" aria-hidden="true">{item.icon}</span>
-            <span className="admin-sidebar__texto">{item.label}</span>
-          </NavLink>
-        ))}
+            <i className={`bi ${oscuro ? 'bi-sun' : 'bi-moon-stars'}`} aria-hidden="true"></i>
+            <span>{oscuro ? 'Tema claro' : 'Tema oscuro'}</span>
+          </button>
+          {rol && <span className="mz-role-pill"><i className="bi bi-shield-lock" aria-hidden="true"></i> {rol}</span>}
+          <div className="mz-user">
+            <Link to="/admin/profile" className="mz-user-link" title="Ver mi perfil" onClick={onCerrar}>
+              <div className="mz-avatar" aria-hidden="true">
+                {user?.avatar_url ? <img src={user.avatar_url} alt="" /> : inicial}
+              </div>
+              <div>
+                <strong>{nombreMostrado}</strong>
+                {user?.email && <span>{user.email}</span>}
+              </div>
+            </Link>
+            <button type="button" className="mz-logout" aria-label="Cerrar sesión" title="Cerrar sesión" onClick={logout}>
+              <i className="bi bi-box-arrow-right" aria-hidden="true"></i>
+            </button>
+          </div>
+        </div>
       </nav>
-
-      {/* Siempre en la parte inferior de la barra lateral (`nav` ocupa el espacio flexible de
-          arriba, esto queda pegado al fondo) — nunca en la barra superior. El tema claro/oscuro
-          afecta a toda la aplicación (`useColorMode`, `dashboard.css`), no solo a este menú. */}
-      <div className="admin-sidebar__footer">
-        <button
-          type="button"
-          className="admin-sidebar__link"
-          title={oscuro ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'}
-          onClick={alternarTema}
-        >
-          <span className="admin-sidebar__icono" aria-hidden="true">{oscuro ? '☀️' : '🌙'}</span>
-          <span className="admin-sidebar__texto">{oscuro ? 'Tema claro' : 'Tema oscuro'}</span>
-        </button>
-        <button type="button" className="admin-sidebar__link" title="Cerrar sesión" onClick={logout}>
-          <span className="admin-sidebar__icono" aria-hidden="true">⏻</span>
-          <span className="admin-sidebar__texto">Cerrar sesión</span>
-        </button>
-      </div>
-    </aside>
+      {abierto && <button type="button" className="mz-sidebar-backdrop" aria-label="Cerrar menú" onClick={onCerrar} />}
+    </>
   )
 }

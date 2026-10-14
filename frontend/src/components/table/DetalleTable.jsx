@@ -83,7 +83,7 @@ export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenVali
               aria-label="Contraer buscador"
               title="Contraer buscador"
             >
-              ✕
+              <i className="bi bi-x-lg" aria-hidden="true"></i>
             </Button>
           </>
         ) : (
@@ -94,7 +94,7 @@ export default function DetalleTable({ cargaId, filtros, fechaCorte, resumenVali
             aria-label="Mostrar buscador"
             title="Buscar"
           >
-            🔍 Buscar
+            <i className="bi bi-search" aria-hidden="true"></i> Buscar
           </Button>
         )}
       </div>

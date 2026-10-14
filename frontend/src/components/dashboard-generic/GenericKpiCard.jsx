@@ -58,14 +58,12 @@ export default function GenericKpiCard({ data, override, config, hallazgoIA }) {
   return (
     <div className="kpi-card" style={colorPrincipal ? { borderLeft: `4px solid ${colorPrincipal}` } : undefined}>
       {icono ? (
-        <div className="d-flex align-items-center gap-2 mb-2">
-          <div
-            className="d-flex align-items-center justify-content-center rounded-circle"
-            style={{ width: 34, height: 34, background: `${colorIcono}22`, color: colorIcono, flexShrink: 0 }}
-          >
+        // Como `mz-kpi-top` de la Matriz: etiqueta a la izquierda e ícono en un cuadro a la derecha.
+        <div className="mz-kpi-top align-items-start gap-2">
+          <div className="kpi-card__label mb-0">{titulo}</div>
+          <div className="mz-kpi-icon" style={{ background: `${colorIcono}22`, color: colorIcono, flexShrink: 0 }}>
             <IconoKpi tipo={icono} />
           </div>
-          <div className="kpi-card__label mb-0">{titulo}</div>
         </div>
       ) : (
         <div className="kpi-card__label">{titulo}</div>

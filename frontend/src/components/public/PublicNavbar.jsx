@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTheme } from '../../context/ThemeContext'
 import { seccionesVisiblesOrdenadas } from '../../config/landingContent'
+import { NOMBRE_SITIO_POR_DEFECTO, inicialesDeMarca } from '../../utils/marca'
 
 const SECCIONES = seccionesVisiblesOrdenadas()
 
 export default function PublicNavbar() {
   const { theme } = useTheme()
+  const nombre = theme?.short_name || theme?.site_name || NOMBRE_SITIO_POR_DEFECTO
   const [abierto, setAbierto] = useState(false)
   const [seccionActiva, setSeccionActiva] = useState(SECCIONES[0]?.id)
   const observadorRef = useRef(null)
@@ -38,8 +40,10 @@ export default function PublicNavbar() {
     <nav className="landing-navbar" aria-label="Menú principal">
       <div className="landing-navbar__inner">
         <a href="#inicio" className="landing-navbar__brand" onClick={irASeccion('inicio')}>
-          {theme?.logo_url && <img src={theme.logo_url} alt="" height={28} />}
-          <span>{theme?.short_name || theme?.site_name || 'Dashboard de Cartera'}</span>
+          {theme?.logo_url
+            ? <img src={theme.logo_url} alt="" height={28} />
+            : <span className="landing-glyph" aria-hidden="true">{inicialesDeMarca(theme, nombre)}</span>}
+          <span>{nombre}</span>
         </a>
 
         <button
@@ -49,9 +53,7 @@ export default function PublicNavbar() {
           aria-expanded={abierto}
           onClick={() => setAbierto((v) => !v)}
         >
-          <span />
-          <span />
-          <span />
+          <i className={`bi ${abierto ? 'bi-x-lg' : 'bi-list'}`} aria-hidden="true" />
         </button>
 
         <div className={`landing-navbar__links ${abierto ? 'landing-navbar__links--abierto' : ''}`}>

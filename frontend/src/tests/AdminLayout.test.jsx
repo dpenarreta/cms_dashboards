@@ -43,4 +43,9 @@ describe('AdminLayout', () => {
     renderEnRuta('/admin/users')
     expect(screen.getByRole('button', { name: 'Volver a Dashboards' })).toHaveAttribute('href', '/app/dashboards')
   })
+
+  it('el título de la barra superior nombra la sección', () => {
+    renderEnRuta('/admin/users')
+    expect(screen.getByRole('heading', { level: 1, name: 'Usuarios y roles' })).toBeInTheDocument()
+  })
 })

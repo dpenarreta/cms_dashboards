@@ -528,10 +528,10 @@ export default function DashboardAreaPage() {
 
   return (
     <div className="cartera-app" ref={dashboardRef}>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+      <div className="mz-view-head">
         <div>
-          <h3 className="mb-1">{dashboardInfo?.name || dashboardId}</h3>
-          {dashboardInfo?.area && <p className="chart-panel__subtitle mb-0">Área: {dashboardInfo.area}</p>}
+          <h2>{dashboardInfo?.name || dashboardId}</h2>
+          {dashboardInfo?.area && <p className="mz-desc">Área: {dashboardInfo.area}</p>}
         </div>
         {/* `acciones-dashboard` deja que los botones pasen a la fila siguiente en vez de
             encogerse: sin eso, a 700px la barra medía 94px de alto porque cada botón se
@@ -539,30 +539,30 @@ export default function DashboardAreaPage() {
         <div className="acciones-dashboard d-print-none">
           {puedeInterpretar && (
             <Button variant="outline-secondary" size="sm" onClick={() => setMostrarInterpretacion(true)}>
-              Interpretación completa
+              <i className="bi bi-stars" aria-hidden="true"></i> Interpretación completa
             </Button>
           )}
           <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConectarFuenteBD(true)}>
-            Conectar vista de base de datos
+            <i className="bi bi-database" aria-hidden="true"></i> Conectar vista de base de datos
           </Button>
           {/* El Dashboard Directorio replica un informe impreso y no usa el histórico de cargas:
               ahí ese botón cede el lugar a la descarga del archivo completo. En los demás
               dashboards el histórico sigue como estaba. */}
           {esInformeDirectorio ? (
             <Button variant="outline-secondary" size="sm" onClick={descargarDatos} disabled={descargando}>
-              {descargando ? 'Preparando…' : 'Descargar Excel'}
+              <i className="bi bi-download" aria-hidden="true"></i> {descargando ? 'Preparando…' : 'Descargar Excel'}
             </Button>
           ) : (
             <Button as={Link} to={`/app/dashboards/${dashboardId}/historico`} variant="outline-secondary" size="sm">
-              Ver histórico
+              <i className="bi bi-clock-history" aria-hidden="true"></i> Ver histórico
             </Button>
           )}
           {!mostrarConstructor && (
-            <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConstructor(true)}>Cargar otro archivo</Button>
+            <Button variant="outline-secondary" size="sm" onClick={() => setMostrarConstructor(true)}><i className="bi bi-upload" aria-hidden="true"></i> Cargar otro archivo</Button>
           )}
           <Button variant="outline-secondary" size="sm" onClick={imprimirComoPDF} disabled={generandoPDF}>
-            {generandoPDF ? <Spinner size="sm" animation="border" className="me-1" /> : null}
-            Imprimir como PDF
+            {generandoPDF ? <Spinner size="sm" animation="border" className="me-1" /> : <i className="bi bi-printer" aria-hidden="true"></i>}
+            {' '}Imprimir como PDF
           </Button>
         </div>
       </div>
@@ -596,7 +596,7 @@ export default function DashboardAreaPage() {
               disabled={actualizandoAhora}
             >
               {actualizandoAhora ? <Spinner size="sm" animation="border" className="me-1" /> : null}
-              🔄 Actualizar ahora
+              {actualizandoAhora ? null : <i className="bi bi-arrow-clockwise" aria-hidden="true"></i>} Actualizar ahora
             </Button>
           )}
         </div>
@@ -707,7 +707,7 @@ export default function DashboardAreaPage() {
 
           {estructuraBloqueada && layout.modoEdicion && (
             <Alert variant="secondary" className="py-2">
-              🔒 El diseño de este dashboard está bloqueado: no se puede agregar, eliminar,
+              <i className="bi bi-lock-fill" aria-hidden="true"></i> El diseño de este dashboard está bloqueado: no se puede agregar, eliminar,
               reordenar, redimensionar ni ocultar componentes.{' '}
               {user?.is_superuser
                 ? 'Al guardar se te va a pedir tu contraseña para autorizar el cambio.'

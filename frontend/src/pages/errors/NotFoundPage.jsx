@@ -1,11 +1,18 @@
 import { Link } from 'react-router-dom'
 
+/** 404 con la pantalla de acceso de la Matriz: el usuario puede no tener sesión, así que no va
+ * dentro del layout autenticado. */
 export default function NotFoundPage() {
   return (
-    <div className="d-flex flex-column align-items-center justify-content-center text-center" style={{ minHeight: '100vh' }}>
-      <h1>404</h1>
-      <p className="chart-panel__subtitle">La página que buscas no existe.</p>
-      <Link to="/">Volver al inicio</Link>
+    <div className="login-screen">
+      <div className="login-main">
+        <div className="login-card mz-empty">
+          <i className="bi bi-signpost-split" aria-hidden="true"></i>
+          <h1 className="login-codigo">404</h1>
+          <p className="login-sub">La página que buscas no existe.</p>
+          <Link to="/">Volver al inicio</Link>
+        </div>
+      </div>
     </div>
   )
 }

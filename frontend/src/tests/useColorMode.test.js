@@ -53,32 +53,12 @@ describe('useColorMode', () => {
     expect(localStorage.getItem('tema-color-modo')).toBe('0')
   })
 
-  it('en modo oscuro, sobreescribe --color-background en línea (gana sobre la identidad institucional)', () => {
+  it('no escribe colores en línea: cada modo lo resuelven las hojas de estilo por data-theme', () => {
+    // La identidad institucional ya no pisa fondos ni textos en línea, así que tampoco hace falta
+    // que el modo oscuro le gane en línea (antes forzaba `--color-background`).
     const { result } = renderHook(() => useColorMode())
     act(() => result.current.alternar())
-    expect(document.documentElement.style.getPropertyValue('--color-background')).toBe('#10141b')
-  })
-
-  it('volver a modo claro quita el override en línea de --color-background', () => {
-    const { result } = renderHook(() => useColorMode())
-    act(() => result.current.alternar())
-    act(() => result.current.alternar())
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
     expect(document.documentElement.style.getPropertyValue('--color-background')).toBe('')
-  })
-
-  it('cuando la identidad institucional (re)carga, reaplica el modo oscuro sobre --color-background', () => {
-    let theme = null
-    useTheme.mockImplementation(() => ({ theme }))
-    const { result, rerender } = renderHook(() => useColorMode())
-    act(() => result.current.alternar())
-    expect(document.documentElement.style.getPropertyValue('--color-background')).toBe('#10141b')
-
-    // Simula lo que hace `ThemeContext.jsx::aplicarTema` al terminar de cargar: sobreescribe
-    // `--color-background` en línea con el color institucional (claro).
-    document.documentElement.style.setProperty('--color-background', '#eeeeee')
-    theme = { color_background: '#eeeeee' }
-    rerender()
-
-    expect(document.documentElement.style.getPropertyValue('--color-background')).toBe('#10141b')
   })
 })

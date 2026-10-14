@@ -1,33 +1,24 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { useCallback, useContext, useEffect, useState } from 'react'
+import { ThemeContext } from './themeContextObject'
 import * as brandingService from '../services/brandingService'
 
-const ThemeContext = createContext(null)
 
+// Solo los acentos de marca. Fondos, superficies, textos, tipografía, radios y colores de estado
+// los fija la identidad base de la Matriz (`styles/matriz.css` + `identidad-cms.css`), con sus
+// valores de modo claro y oscuro: si la identidad institucional también los escribiera —en línea,
+// sobre `<html>`— le ganaría a cualquier hoja de estilos y rompería el modo oscuro. El resto de
+// campos de `apps.branding` se sigue guardando, pero ya no se aplica.
 const VARIABLES_CSS = {
   color_primary: '--color-primary',
-  color_secondary: '--color-secondary',
-  color_background: '--color-background',
-  color_headings: '--color-headings',
-  color_text: '--color-text',
   color_links: '--color-links',
   color_buttons: '--color-buttons',
-  color_menu: '--color-menu',
-  font_primary_css: '--font-primary',
-  font_secondary_css: '--font-secondary',
-  font_size_base: '--font-size-base',
-  border_radius_css: '--border-radius',
 }
 
-// Colores semánticos que la app realmente usa vía `variant`/`bg` de react-bootstrap
-// (`btn-primary`, `btn-outline-danger`, `badge bg-success`, etc. — ver grep de `variant=`/`bg=`
-// en `frontend/src`).
+// Solo `primary`: el resto de variantes (`outline-secondary` como botón neutro, `alert-danger`,
+// `bg-success`…) toman los colores de estado de la Matriz. Reteñirlas con la marca dejaba, por
+// ejemplo, los botones neutros en el naranja de `color_secondary`.
 const COLORES_SEMANTICOS = {
   color_primary: 'primary',
-  color_secondary: 'secondary',
-  color_success: 'success',
-  color_danger: 'danger',
-  color_warning: 'warning',
-  color_info: 'info',
 }
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/

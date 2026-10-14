@@ -63,7 +63,7 @@ export default function ComponentWrapper({
             {...listeners}
             style={{ cursor: bloqueado ? 'not-allowed' : 'grab' }}
           >
-            ⠿
+            <i className="bi bi-grip-vertical" aria-hidden="true"></i>
           </button>
           <MoveButtons
             onMover={(direccion) => onMover(componente.component_id, direccion)}
@@ -79,7 +79,7 @@ export default function ComponentWrapper({
                 aria-label={`Configurar ${componente.component_id}`}
                 title="Configurar (título, descripción, colores)"
               >
-                ⚙
+                <i className="bi bi-gear" aria-hidden="true"></i>
               </Button>
             )}
             {!bloqueado && (componente.is_visible ? (

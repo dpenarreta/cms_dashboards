@@ -134,21 +134,29 @@ export default function AuditListPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="h4 mb-0">Auditoría</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>Auditoría</h2>
+          <p className="mz-desc">Registro de quién hizo qué, cuándo y desde dónde, en todo el sistema.</p>
+        </div>
         {puedeExportar && (
-          <Button size="sm" variant="outline-secondary" disabled={exportando} onClick={exportar}>
-            {exportando ? 'Exportando…' : 'Exportar CSV'}
-          </Button>
+          <div className="mz-view-actions">
+            <Button size="sm" variant="outline-secondary" disabled={exportando} onClick={exportar}>
+              <i className="bi bi-download" aria-hidden="true"></i> {exportando ? 'Exportando…' : 'Exportar CSV'}
+            </Button>
+          </div>
         )}
       </div>
 
-      <Form className="mb-3" onSubmit={aplicarFiltros}>
-        <div className="d-flex gap-2 mb-2 flex-wrap">
-          <Form.Control
-            size="sm" style={{ maxWidth: 220 }} placeholder="Buscar (acción, mensaje, usuario)..."
-            value={filtros.q} onChange={cambiarFiltro('q')}
-          />
+      <Form className="mz-card mz-card-body mb-3" onSubmit={aplicarFiltros}>
+        <div className="mz-filter-bar mb-2">
+          <label className="mz-fb-search">
+            <i className="bi bi-search" aria-hidden="true"></i>
+            <input
+              type="search" placeholder="Buscar (acción, mensaje, usuario)..."
+              value={filtros.q} onChange={cambiarFiltro('q')}
+            />
+          </label>
           <Form.Select size="sm" style={{ maxWidth: 200 }} value={filtros.domain} onChange={cambiarFiltro('domain')}>
             {DOMINIOS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
           </Form.Select>
@@ -181,8 +189,8 @@ export default function AuditListPage() {
       {cargando && <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>}
 
       {!cargando && (
-        <div className="table-scroll">
-          <Table responsive size="sm" striped bordered hover>
+        <div className="mz-card">
+          <Table responsive size="sm" hover className="mb-0">
             <thead>
               <tr>
                 <th>Fecha y hora</th>
@@ -200,7 +208,7 @@ export default function AuditListPage() {
             <tbody>
               {datos.results.map((e) => (
                 <tr key={e.id}>
-                  <td>{formatFecha(e.created_at)}</td>
+                  <td className="mz-mono">{formatFecha(e.created_at)}</td>
                   <td>{DOMINIOS.find((d) => d.value === e.domain)?.label || e.domain}</td>
                   <td>{e.action}</td>
                   <td><Badge bg={BADGE_RESULTADO[e.result] || 'secondary'}>{e.result}</Badge></td>
@@ -208,7 +216,7 @@ export default function AuditListPage() {
                   <td>{e.actor_username || '—'}</td>
                   <td>{[e.entity_type, e.entity_name || e.entity_id].filter(Boolean).join(': ') || '—'}</td>
                   <td>{e.message || '—'}</td>
-                  <td>{e.ip_address || '—'}</td>
+                  <td className="mz-mono">{e.ip_address || '—'}</td>
                   <td>
                     {puedeVerDetalle && (
                       <Button size="sm" variant="outline-secondary" onClick={() => verDetalle(e)}>Detalle</Button>
@@ -224,12 +232,10 @@ export default function AuditListPage() {
         </div>
       )}
 
-      <div className="d-flex justify-content-between align-items-center">
-        <div className="chart-panel__subtitle mb-0">{datos.count} evento(s)</div>
-        <div className="d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
-          <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
-        </div>
+      <div className="mz-pager">
+        <span className="mz-small mz-faint">{datos.count} evento(s)</span>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
       </div>
 
       <Modal show={!!detalle} onHide={() => setDetalle(null)} size="lg">
@@ -259,15 +265,15 @@ export default function AuditListPage() {
               {'previous_values' in detalle && (
                 <>
                   <h6>Valores anteriores</h6>
-                  <pre className="bg-light p-2 border rounded" style={{ fontSize: '0.8rem', maxHeight: 200, overflow: 'auto' }}>
+                  <pre className="mz-code mz-code-block">
                     {JSON.stringify(detalle.previous_values, null, 2)}
                   </pre>
                   <h6>Valores nuevos</h6>
-                  <pre className="bg-light p-2 border rounded" style={{ fontSize: '0.8rem', maxHeight: 200, overflow: 'auto' }}>
+                  <pre className="mz-code mz-code-block">
                     {JSON.stringify(detalle.new_values, null, 2)}
                   </pre>
                   <h6>Metadata</h6>
-                  <pre className="bg-light p-2 border rounded" style={{ fontSize: '0.8rem', maxHeight: 200, overflow: 'auto' }}>
+                  <pre className="mz-code mz-code-block">
                     {JSON.stringify(detalle.metadata, null, 2)}
                   </pre>
                 </>

@@ -222,7 +222,9 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
                     )}
                   </span>
                   {Boolean(avisoDeIdentidad(sugerencia)) && (
-                    <span className="directorio-sugerencia__alerta" title={avisoDeIdentidad(sugerencia)}>⚠</span>
+                    <span className="directorio-sugerencia__alerta" title={avisoDeIdentidad(sugerencia)}>
+                      <i className="bi bi-exclamation-triangle" aria-hidden="true"></i>
+                    </span>
                   )}
                   <span className="directorio-sugerencia__saldo">{moneda(sugerencia.saldo)}</span>
                 </li>
@@ -255,7 +257,9 @@ export default function BuscadorDeudor({ componente, dashboardId }) {
               <span className="directorio-coincidencia__saldo">{moneda(c.saldo)}</span>
               <span className="directorio-coincidencia__filas">{c.filas} fila{c.filas === 1 ? '' : 's'}</span>
               {Boolean(avisoDeIdentidad(c)) && (
-                <span className="directorio-coincidencia__alerta">⚠ {avisoDeIdentidad(c)}</span>
+                <span className="directorio-coincidencia__alerta">
+                  <i className="bi bi-exclamation-triangle" aria-hidden="true"></i> {avisoDeIdentidad(c)}
+                </span>
               )}
             </button>
           ))}
@@ -292,9 +296,12 @@ function ResultadoDeudor({ detalle, onVolver, hayVarias }) {
       </div>
 
       {Boolean(aviso) && (
-        <div className="directorio-deudor-consulta__alerta">
-          <strong>⚠ Revisá la identidad de este cliente.</strong> {aviso}{' '}
+        <div className="mz-alert mz-alert--warn directorio-deudor-consulta__alerta">
+          <i className="bi bi-exclamation-triangle" aria-hidden="true"></i>
+          <span>
+          <strong>Revisá la identidad de este cliente.</strong> {aviso}{' '}
           Los totales de acá abajo son solo de <em>{detalle.identidad}</em>.
+          </span>
         </div>
       )}
 

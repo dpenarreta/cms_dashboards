@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
+import { Alert, Button, Form, Spinner } from 'react-bootstrap'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import PantallaAcceso from '../../components/auth/PantallaAcceso'
 import * as authService from '../../services/authService'
 
 const LONGITUD_MINIMA = 8
@@ -51,70 +52,67 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '100vh' }}>
-      <Card style={{ width: 380 }} className="p-4 shadow-sm">
-        <Card.Title className="mb-3 text-center">Restablecer contraseña</Card.Title>
+    <PantallaAcceso titulo="Restablecer contraseña" subtitulo="Elija una contraseña nueva para su cuenta.">
 
-        {validando && (
-          <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>
-        )}
+      {validando && (
+        <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>
+      )}
 
-        {!validando && !tokenValido && !completado && (
-          <>
-            <Alert variant="danger" role="alert">
-              Este enlace de recuperación no es válido o ya expiró.
-            </Alert>
-            <div className="text-center">
-              <Link to="/forgot-password">Solicitar un nuevo enlace</Link>
-            </div>
-          </>
-        )}
-
-        {!validando && tokenValido && completado && (
-          <Alert variant="success" role="status">
-            Tu contraseña fue actualizada correctamente. Te redirigiremos al inicio de sesión.
+      {!validando && !tokenValido && !completado && (
+        <>
+          <Alert variant="danger" role="alert">
+            Este enlace de recuperación no es válido o ya expiró.
           </Alert>
-        )}
+          <div className="text-center">
+            <Link to="/forgot-password">Solicitar un nuevo enlace</Link>
+          </div>
+        </>
+      )}
 
-        {!validando && tokenValido && !completado && (
-          <Form onSubmit={enviar}>
-            {error && <Alert variant="danger" role="alert">{error}</Alert>}
+      {!validando && tokenValido && completado && (
+        <Alert variant="success" role="status">
+          Tu contraseña fue actualizada correctamente. Te redirigiremos al inicio de sesión.
+        </Alert>
+      )}
 
-            <Form.Group className="mb-3" controlId="reset-password-new">
-              <Form.Label>Nueva contraseña</Form.Label>
-              <Form.Control
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                isInvalid={muyCorta}
-                required
-                autoFocus
-                disabled={enviando}
-              />
-              <Form.Control.Feedback type="invalid">
-                La contraseña debe tener al menos {LONGITUD_MINIMA} caracteres.
-              </Form.Control.Feedback>
-            </Form.Group>
+      {!validando && tokenValido && !completado && (
+        <Form onSubmit={enviar}>
+          {error && <Alert variant="danger" role="alert">{error}</Alert>}
 
-            <Form.Group className="mb-3" controlId="reset-password-confirm">
-              <Form.Label>Confirmar contraseña</Form.Label>
-              <Form.Control
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                isInvalid={noCoinciden}
-                required
-                disabled={enviando}
-              />
-              <Form.Control.Feedback type="invalid">Las contraseñas no coinciden.</Form.Control.Feedback>
-            </Form.Group>
+          <Form.Group className="mb-3" controlId="reset-password-new">
+            <Form.Label>Nueva contraseña</Form.Label>
+            <Form.Control
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              isInvalid={muyCorta}
+              required
+              autoFocus
+              disabled={enviando}
+            />
+            <Form.Control.Feedback type="invalid">
+              La contraseña debe tener al menos {LONGITUD_MINIMA} caracteres.
+            </Form.Control.Feedback>
+          </Form.Group>
 
-            <Button type="submit" variant="primary" className="w-100" disabled={enviando}>
-              {enviando ? <Spinner size="sm" animation="border" aria-hidden="true" /> : 'Restablecer contraseña'}
-            </Button>
-          </Form>
-        )}
-      </Card>
-    </div>
+          <Form.Group className="mb-3" controlId="reset-password-confirm">
+            <Form.Label>Confirmar contraseña</Form.Label>
+            <Form.Control
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              isInvalid={noCoinciden}
+              required
+              disabled={enviando}
+            />
+            <Form.Control.Feedback type="invalid">Las contraseñas no coinciden.</Form.Control.Feedback>
+          </Form.Group>
+
+          <Button type="submit" variant="primary" className="w-100" disabled={enviando}>
+            {enviando ? <Spinner size="sm" animation="border" aria-hidden="true" /> : 'Restablecer contraseña'}
+          </Button>
+        </Form>
+      )}
+    </PantallaAcceso>
   )
 }

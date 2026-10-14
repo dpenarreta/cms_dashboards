@@ -3,6 +3,10 @@
  * editar una sección no implique tocar JSX. No es un editor visual completo (explícitamente no
  * requerido en esta fase) — es la estructura mínima config-driven que permite reordenar/ocultar
  * secciones y cambiar texto en un solo lugar.
+ *
+ * `icon` es una clase de Bootstrap Icons (`bi-*`) y `color` es un tono de la identidad base de la
+ * Matriz: `info` (azul institucional), `ok`, `warn`, `bad` o `neutral` — los mismos estados de
+ * `mz-pill`/`mz-kpi`, con su versión de modo oscuro.
  */
 
 export const HERO_CONTENT = {
@@ -30,10 +34,10 @@ export const QUE_ES_CONTENT = {
     + 'contenido, configuración y visualización de información — en este caso, dashboards '
     + 'institucionales — sin depender de escribir código para cada cambio.',
   items: [
-    { icon: '🗂️', color: 'primary', title: 'Gestión centralizada', description: 'Todo el contenido y la configuración institucional en un solo lugar.' },
-    { icon: '🧩', color: 'success', title: 'Sin código', description: 'Colores, textos y estructura se ajustan desde una pantalla de administración.' },
-    { icon: '🔐', color: 'info', title: 'Roles y permisos', description: 'Cada usuario ve y edita solo lo que su rol le habilita.' },
-    { icon: '⚡', color: 'warning', title: 'Actualización en tiempo real', description: 'Los cambios se reflejan de inmediato, sin desplegar código nuevo.' },
+    { icon: 'bi-collection', color: 'info', title: 'Gestión centralizada', description: 'Todo el contenido y la configuración institucional en un solo lugar.' },
+    { icon: 'bi-sliders', color: 'ok', title: 'Sin código', description: 'Colores, textos y estructura se ajustan desde una pantalla de administración.' },
+    { icon: 'bi-shield-lock', color: 'info', title: 'Roles y permisos', description: 'Cada usuario ve y edita solo lo que su rol le habilita.' },
+    { icon: 'bi-lightning-charge', color: 'warn', title: 'Actualización en tiempo real', description: 'Los cambios se reflejan de inmediato, sin desplegar código nuevo.' },
   ],
 }
 
@@ -53,15 +57,15 @@ export const LANDING_SECTIONS = [
     title: 'Una sola plataforma para toda la organización',
     description: 'CMS Dashboards permite:',
     items: [
-      { icon: '📊', color: 'primary', title: 'Centralizar dashboards', description: 'Todos los indicadores de la organización en un solo lugar.' },
-      { icon: '📉', color: 'secondary', title: 'Reducir reportes manuales', description: 'Menos hojas de cálculo dispersas y reportes armados a mano.' },
-      { icon: '✅', color: 'success', title: 'Consultar información confiable', description: 'Datos validados antes de mostrarse en cualquier panel.' },
-      { icon: '🔍', color: 'info', title: 'Aplicar filtros', description: 'Explora cada dashboard por los criterios que necesites.' },
-      { icon: '⬇️', color: 'warning', title: 'Exportar datos autorizados', description: 'Descarga solo la información que tu rol permite.' },
-      { icon: '🎨', color: 'danger', title: 'Personalizar componentes', description: 'Orden, tamaño y estilo de cada panel, sin tocar código.' },
-      { icon: '🗃️', color: 'primary', title: 'Organizar dashboards', description: 'Cada área tiene su propio espacio dentro de la plataforma.' },
-      { icon: '🔗', color: 'success', title: 'Conectar vistas de base de datos', description: 'Los dashboards consultan vistas controladas, no datos crudos.' },
-      { icon: '🛡️', color: 'info', title: 'Controlar accesos mediante roles y permisos', description: 'Cada usuario ve solo lo que su rol le habilita.' },
+      { icon: 'bi-bar-chart-line', color: 'info', title: 'Centralizar dashboards', description: 'Todos los indicadores de la organización en un solo lugar.' },
+      { icon: 'bi-graph-down-arrow', color: 'neutral', title: 'Reducir reportes manuales', description: 'Menos hojas de cálculo dispersas y reportes armados a mano.' },
+      { icon: 'bi-patch-check', color: 'ok', title: 'Consultar información confiable', description: 'Datos validados antes de mostrarse en cualquier panel.' },
+      { icon: 'bi-funnel', color: 'info', title: 'Aplicar filtros', description: 'Explora cada dashboard por los criterios que necesites.' },
+      { icon: 'bi-download', color: 'warn', title: 'Exportar datos autorizados', description: 'Descarga solo la información que tu rol permite.' },
+      { icon: 'bi-palette', color: 'bad', title: 'Personalizar componentes', description: 'Orden, tamaño y estilo de cada panel, sin tocar código.' },
+      { icon: 'bi-folder2-open', color: 'info', title: 'Organizar dashboards', description: 'Cada área tiene su propio espacio dentro de la plataforma.' },
+      { icon: 'bi-database-check', color: 'ok', title: 'Conectar vistas de base de datos', description: 'Los dashboards consultan vistas controladas, no datos crudos.' },
+      { icon: 'bi-shield-check', color: 'info', title: 'Controlar accesos mediante roles y permisos', description: 'Cada usuario ve solo lo que su rol le habilita.' },
     ],
   },
   {
@@ -74,16 +78,16 @@ export const LANDING_SECTIONS = [
     // Ilustrativas: no enlazan a dashboards reales ni requieren sesión (sección 6.5: "las
     // tarjetas no deben acceder a dashboards sin autenticación").
     items: [
-      { title: 'Gerencia', icon: '🏢', description: 'Visión general del desempeño institucional.', indicadores: ['Cumplimiento de metas', 'Rentabilidad'] },
-      { title: 'Finanzas', icon: '💰', description: 'Flujo de caja y proyecciones financieras.', indicadores: ['Flujo de caja', 'Margen'] },
-      { title: 'Operaciones', icon: '⚙️', description: 'Eficiencia y cumplimiento de procesos.', indicadores: ['Eficiencia', 'Tiempos de ciclo'] },
-      { title: 'Logística', icon: '🚚', description: 'Cumplimiento de entregas y rutas.', indicadores: ['Entregas a tiempo', 'Costo por ruta'] },
-      { title: 'Comercial', icon: '📈', description: 'Desempeño de ventas por período y canal.', indicadores: ['Ventas', 'Conversión'] },
-      { title: 'Cobranzas', icon: '💳', description: 'Gestión y efectividad de recuperadores.', indicadores: ['Cartera vencida', 'Recuperación'] },
-      { title: 'Talento Humano', icon: '👥', description: 'Dotación, ausentismo y rotación de personal.', indicadores: ['Rotación', 'Ausentismo'] },
-      { title: 'Tecnología', icon: '💻', description: 'Disponibilidad e incidentes de los sistemas.', indicadores: ['Disponibilidad', 'Incidentes'] },
-      { title: 'Servicio al Cliente', icon: '🎧', description: 'Volumen y tiempos de resolución de casos.', indicadores: ['Tiempo de resolución', 'Satisfacción'] },
-      { title: 'Proyectos', icon: '📋', description: 'Avance y cumplimiento de proyectos activos.', indicadores: ['Avance', 'Cumplimiento'] },
+      { title: 'Gerencia', icon: 'bi-building', description: 'Visión general del desempeño institucional.', indicadores: ['Cumplimiento de metas', 'Rentabilidad'] },
+      { title: 'Finanzas', icon: 'bi-cash-coin', description: 'Flujo de caja y proyecciones financieras.', indicadores: ['Flujo de caja', 'Margen'] },
+      { title: 'Operaciones', icon: 'bi-gear', description: 'Eficiencia y cumplimiento de procesos.', indicadores: ['Eficiencia', 'Tiempos de ciclo'] },
+      { title: 'Logística', icon: 'bi-truck', description: 'Cumplimiento de entregas y rutas.', indicadores: ['Entregas a tiempo', 'Costo por ruta'] },
+      { title: 'Comercial', icon: 'bi-graph-up-arrow', description: 'Desempeño de ventas por período y canal.', indicadores: ['Ventas', 'Conversión'] },
+      { title: 'Cobranzas', icon: 'bi-credit-card', description: 'Gestión y efectividad de recuperadores.', indicadores: ['Cartera vencida', 'Recuperación'] },
+      { title: 'Talento Humano', icon: 'bi-people', description: 'Dotación, ausentismo y rotación de personal.', indicadores: ['Rotación', 'Ausentismo'] },
+      { title: 'Tecnología', icon: 'bi-pc-display', description: 'Disponibilidad e incidentes de los sistemas.', indicadores: ['Disponibilidad', 'Incidentes'] },
+      { title: 'Servicio al Cliente', icon: 'bi-headset', description: 'Volumen y tiempos de resolución de casos.', indicadores: ['Tiempo de resolución', 'Satisfacción'] },
+      { title: 'Proyectos', icon: 'bi-clipboard-check', description: 'Avance y cumplimiento de proyectos activos.', indicadores: ['Avance', 'Cumplimiento'] },
     ],
   },
   {
@@ -109,13 +113,13 @@ export const LANDING_SECTIONS = [
     title: 'Seguridad de extremo a extremo',
     description: '',
     items: [
-      { icon: '🔑', title: 'Inicio de sesión seguro', description: 'Autenticación JWT con sesiones revocables.' },
-      { icon: '🔒', title: 'Contraseñas protegidas', description: 'Almacenadas siempre mediante hash, nunca en texto plano.' },
-      { icon: '🧑‍💼', title: 'Roles y permisos', description: 'Cada acción sensible exige un permiso concreto, verificado en el servidor.' },
-      { icon: '🚧', title: 'Protección de rutas', description: 'Acceso restringido por dashboard según el perfil del usuario.' },
-      { icon: '🕵️', title: 'Auditoría unificada', description: 'Registro de accesos y cambios, consultable por un administrador.' },
-      { icon: '✉️', title: 'Recuperación segura de contraseña', description: 'Enlaces de un solo uso, con expiración, enviados por correo.' },
-      { icon: '🗄️', title: 'Fuentes de datos controladas', description: 'La información se consulta desde vistas autorizadas, no directamente.' },
+      { icon: 'bi-key', title: 'Inicio de sesión seguro', description: 'Autenticación JWT con sesiones revocables.' },
+      { icon: 'bi-lock', title: 'Contraseñas protegidas', description: 'Almacenadas siempre mediante hash, nunca en texto plano.' },
+      { icon: 'bi-person-badge', title: 'Roles y permisos', description: 'Cada acción sensible exige un permiso concreto, verificado en el servidor.' },
+      { icon: 'bi-sign-stop', title: 'Protección de rutas', description: 'Acceso restringido por dashboard según el perfil del usuario.' },
+      { icon: 'bi-journal-text', title: 'Auditoría unificada', description: 'Registro de accesos y cambios, consultable por un administrador.' },
+      { icon: 'bi-envelope-check', title: 'Recuperación segura de contraseña', description: 'Enlaces de un solo uso, con expiración, enviados por correo.' },
+      { icon: 'bi-hdd-stack', title: 'Fuentes de datos controladas', description: 'La información se consulta desde vistas autorizadas, no directamente.' },
     ],
   },
   {
@@ -126,16 +130,16 @@ export const LANDING_SECTIONS = [
     title: 'Lo que vas a obtener',
     description: '',
     items: [
-      { icon: '🗂️', color: 'primary', title: 'Una sola plataforma', description: 'Todos los dashboards de la organización en un mismo lugar.' },
-      { icon: '📉', color: 'secondary', title: 'Menos archivos dispersos', description: 'Sin hojas de cálculo repetidas por cada área.' },
-      { icon: '🔄', color: 'success', title: 'Información actualizada', description: 'Los indicadores reflejan siempre el dato más reciente cargado.' },
-      { icon: '🎯', color: 'info', title: 'Mejor toma de decisiones', description: 'Datos confiables, listos para consultar.' },
-      { icon: '🤖', color: 'warning', title: 'Menor dependencia de reportes manuales', description: 'Los KPI se calculan automáticamente.' },
-      { icon: '🛡️', color: 'danger', title: 'Acceso controlado', description: 'Cada usuario ve solo lo que su rol permite.' },
-      { icon: '🕵️', color: 'primary', title: 'Auditoría', description: 'Trazabilidad de accesos y cambios de configuración.' },
-      { icon: '🎨', color: 'success', title: 'Configuración visual', description: 'Identidad institucional propia, sin depender de desarrollo.' },
-      { icon: '📈', color: 'info', title: 'Escalabilidad', description: 'Pensada para sumar nuevas áreas sin rediseñar el sistema.' },
-      { icon: '📐', color: 'warning', title: 'Estandarización', description: 'Un mismo criterio de calidad de datos para toda la organización.' },
+      { icon: 'bi-collection', color: 'info', title: 'Una sola plataforma', description: 'Todos los dashboards de la organización en un mismo lugar.' },
+      { icon: 'bi-graph-down-arrow', color: 'neutral', title: 'Menos archivos dispersos', description: 'Sin hojas de cálculo repetidas por cada área.' },
+      { icon: 'bi-arrow-repeat', color: 'ok', title: 'Información actualizada', description: 'Los indicadores reflejan siempre el dato más reciente cargado.' },
+      { icon: 'bi-bullseye', color: 'info', title: 'Mejor toma de decisiones', description: 'Datos confiables, listos para consultar.' },
+      { icon: 'bi-cpu', color: 'warn', title: 'Menor dependencia de reportes manuales', description: 'Los KPI se calculan automáticamente.' },
+      { icon: 'bi-shield-check', color: 'bad', title: 'Acceso controlado', description: 'Cada usuario ve solo lo que su rol permite.' },
+      { icon: 'bi-journal-text', color: 'info', title: 'Auditoría', description: 'Trazabilidad de accesos y cambios de configuración.' },
+      { icon: 'bi-palette', color: 'ok', title: 'Configuración visual', description: 'Identidad institucional propia, sin depender de desarrollo.' },
+      { icon: 'bi-graph-up-arrow', color: 'info', title: 'Escalabilidad', description: 'Pensada para sumar nuevas áreas sin rediseñar el sistema.' },
+      { icon: 'bi-rulers', color: 'warn', title: 'Estandarización', description: 'Un mismo criterio de calidad de datos para toda la organización.' },
     ],
   },
 ]

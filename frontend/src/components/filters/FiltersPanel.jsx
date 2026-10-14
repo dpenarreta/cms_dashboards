@@ -115,7 +115,7 @@ export default function FiltersPanel({
           aria-expanded={expandido}
           aria-controls="panel-filtros-contenido"
         >
-          {expandido ? 'Contraer ▲' : 'Expandir ▼'}
+          {expandido ? 'Contraer' : 'Expandir'} <i className={`bi ${expandido ? 'bi-chevron-up' : 'bi-chevron-down'}`} aria-hidden="true"></i>
         </Button>
       </div>
 

@@ -40,9 +40,14 @@ export default function RolesListPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="h4 mb-0">Roles</h1>
-        <Button as={Link} to="/admin/roles/new" size="sm">Nuevo rol</Button>
+      <div className="mz-view-head">
+        <div>
+          <h2>Roles</h2>
+          <p className="mz-desc">Conjuntos de permisos que se asignan a los usuarios.</p>
+        </div>
+        <div className="mz-view-actions">
+          <Button as={Link} to="/admin/roles/new" size="sm"><i className="bi bi-plus-lg" aria-hidden="true"></i> Nuevo rol</Button>
+        </div>
       </div>
 
       <UsersRolesTabsBar />
@@ -51,8 +56,8 @@ export default function RolesListPage() {
       {cargando && <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>}
 
       {!cargando && (
-        <div className="table-scroll">
-          <Table responsive size="sm" striped bordered hover>
+        <div className="mz-card">
+          <Table responsive size="sm" hover className="mb-0">
             <thead>
               <tr>
                 <th>Nombre</th>
@@ -64,7 +69,7 @@ export default function RolesListPage() {
               {datos.results.map((rol) => (
                 <tr key={rol.id}>
                   <td><Link to={`/admin/roles/${rol.id}`}>{rol.name}</Link></td>
-                  <td>{rol.permission_codenames.length}</td>
+                  <td className="mz-mono">{rol.permission_codenames.length}</td>
                   <td>
                     <Button size="sm" variant="outline-danger" onClick={() => setRolAEliminar(rol)}>Eliminar</Button>
                   </td>
@@ -78,12 +83,10 @@ export default function RolesListPage() {
         </div>
       )}
 
-      <div className="d-flex justify-content-between align-items-center">
-        <div className="chart-panel__subtitle mb-0">{datos.count} rol(es)</div>
-        <div className="d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
-          <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
-        </div>
+      <div className="mz-pager">
+        <span className="mz-small mz-faint">{datos.count} rol(es)</span>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
       </div>
 
       <ConfirmModal

@@ -14,6 +14,8 @@ const ESTADOS = [
 ]
 
 const ETIQUETA_ESTADO = { active: 'Activo', disabled: 'Deshabilitado', blocked: 'Bloqueado' }
+// Píldora de estado de la Matriz (`mz-pill--*`) para cada estado de la cuenta.
+const PILDORA_ESTADO = { active: 'mz-pill--ok', disabled: 'mz-pill--neutral', blocked: 'mz-pill--bad' }
 
 // Mismo patrón que `AuditListPage.jsx::formatFecha` — sin formateador de fecha+hora compartido
 // en `utils/format.js` (ese solo tiene `formatDate`, sin hora).
@@ -76,21 +78,28 @@ export default function UsersListPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="h4 mb-0">Usuarios</h1>
-        <Button as={Link} to="/admin/users/new" size="sm">Nuevo usuario</Button>
+      <div className="mz-view-head">
+        <div>
+          <h2>Usuarios</h2>
+          <p className="mz-desc">Cuentas con acceso al sistema, su estado y los roles que tienen asignados.</p>
+        </div>
+        <div className="mz-view-actions">
+          <Button as={Link} to="/admin/users/new" size="sm"><i className="bi bi-plus-lg" aria-hidden="true"></i> Nuevo usuario</Button>
+        </div>
       </div>
 
       <UsersRolesTabsBar />
 
-      <div className="d-flex gap-2 mb-3 flex-wrap">
-        <Form.Control
-          size="sm"
-          style={{ maxWidth: 260 }}
-          placeholder="Buscar por usuario, correo o nombre..."
-          value={busqueda}
-          onChange={(e) => { setPagina(1); setBusqueda(e.target.value) }}
-        />
+      <div className="mz-filter-bar">
+        <label className="mz-fb-search">
+          <i className="bi bi-search" aria-hidden="true"></i>
+          <input
+            type="search"
+            placeholder="Buscar por usuario, correo o nombre..."
+            value={busqueda}
+            onChange={(e) => { setPagina(1); setBusqueda(e.target.value) }}
+          />
+        </label>
         <Form.Select size="sm" style={{ maxWidth: 200 }} value={estado} onChange={(e) => { setPagina(1); setEstado(e.target.value) }}>
           {ESTADOS.map((e) => <option key={e.value} value={e.value}>{e.label}</option>)}
         </Form.Select>
@@ -100,8 +109,8 @@ export default function UsersListPage() {
       {cargando && <div className="text-center py-3" role="status" aria-live="polite"><Spinner animation="border" size="sm" /></div>}
 
       {!cargando && (
-        <div className="table-scroll">
-          <Table responsive size="sm" striped bordered hover>
+        <div className="mz-card">
+          <Table responsive size="sm" hover className="mb-0">
             <thead>
               <tr>
                 <th>Usuario</th>
@@ -118,11 +127,11 @@ export default function UsersListPage() {
                 <tr key={u.id}>
                   <td>
                     <Link to={`/admin/users/${u.id}`}>{u.username}</Link>
-                    {u.is_superuser && <Badge bg="dark" className="ms-2">Superusuario</Badge>}
+                    {u.is_superuser && <Badge bg="info" className="ms-2">Superusuario</Badge>}
                   </td>
                   <td>{u.email}</td>
                   <td>{[u.first_name, u.last_name].filter(Boolean).join(' ') || '—'}</td>
-                  <td>{ETIQUETA_ESTADO[u.status] || u.status}</td>
+                  <td><span className={`mz-pill ${PILDORA_ESTADO[u.status] || 'mz-pill--neutral'}`}>{ETIQUETA_ESTADO[u.status] || u.status}</span></td>
                   <td>{u.roles.join(', ') || '—'}</td>
                   <td>{formatFecha(u.ultima_conexion)}</td>
                   <td>
@@ -147,12 +156,10 @@ export default function UsersListPage() {
         </div>
       )}
 
-      <div className="d-flex justify-content-between align-items-center">
-        <div className="chart-panel__subtitle mb-0">{datos.count} usuario(s)</div>
-        <div className="d-flex gap-2">
-          <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
-          <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
-        </div>
+      <div className="mz-pager">
+        <span className="mz-small mz-faint">{datos.count} usuario(s)</span>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.previous || cargando} onClick={() => setPagina((p) => p - 1)}>Anterior</Button>
+        <Button size="sm" variant="outline-secondary" disabled={!datos.next || cargando} onClick={() => setPagina((p) => p + 1)}>Siguiente</Button>
       </div>
 
       <ConfirmModal
