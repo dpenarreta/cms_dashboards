@@ -68,10 +68,10 @@ export default function PlantillaBasePage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <div className="mz-view-head">
         <div>
-          <h1 className="h4 mb-1">Plantilla base de dashboards</h1>
-          <p className="chart-panel__subtitle mb-0">
+          <h2>Plantilla base de dashboards</h2>
+          <p className="mz-desc">
             Estas 13 posiciones, con datos de ejemplo, son las que trae todo dashboard nuevo desde
             su creación. Los cambios guardados acá no afectan a los dashboards que ya existen.
           </p>

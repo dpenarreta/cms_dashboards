@@ -95,3 +95,97 @@ describe('encabezados de las tablas del informe', () => {
     expect(regla[1]).not.toMatch(/white-space:\s*nowrap/)
   })
 })
+
+describe('tablas del informe en pantallas angostas', () => {
+  /**
+   * A 520px de ventana la tabla de concentración medía 377px contra 291px disponibles y aparecía
+   * desplazamiento lateral. Se cierra apretando la tabla (menos relleno y un punto menos de letra),
+   * NO partiendo los nombres: con `overflow-wrap: anywhere` en la primera columna la tabla entraba
+   * exacta, pero la columna quedaba en 46px y "TRANSEXPRESS" se leía "TRA / NSE / XPR / ESS".
+   *
+   * Entrar en pantalla no sirve de nada si el contenido deja de leerse — de ahí esta guarda.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+
+  it('aprietan el relleno de sus celdas', () => {
+    const angosto = css().match(/@media \(max-width: 767\.98px\)\s*\{([\s\S]*?)\n\}/)
+
+    expect(angosto, 'debería existir el bloque para pantallas angostas').not.toBeNull()
+    expect(angosto[1]).toMatch(/padding-left:\s*[0-4]px/)
+  })
+
+  it('no parten los nombres por la mitad para lograrlo', () => {
+    expect(css()).not.toMatch(/overflow-wrap:\s*(anywhere|break-word)/)
+    expect(css()).not.toMatch(/word-break:\s*break-all/)
+  })
+})
+
+describe('cortes de ancho del grid de paneles', () => {
+  /**
+   * Miden el GRID, no la ventana. Entre una y otro hay un menú lateral —que además se pliega— más
+   * los rellenos del contenido: a 1100px de ventana el grid mide 917, y con `@media` seguía en el
+   * escalón de "pantalla chica", así que los cuatro KPI se acomodaban de a dos y cada tarjeta
+   * quedaba de 459px para mostrar un número de seis cifras.
+   *
+   * Verificado con la ventana fija en 1400px, angostando solo el grid: 1217 → 4 por fila,
+   * 700 → 2×2, 420 → apilados.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'dashboard.css'), 'utf8'))
+
+  it('el grid se declara como contenedor de consulta', () => {
+    expect(css()).toMatch(/\.dashboard-grid\s*\{[^}]*container-type:\s*inline-size/)
+  })
+
+  it('los escalones de la celda son @container y no @media', () => {
+    // Una regla de celda dentro de un @media volvería a medir la ventana.
+    for (const bloque of css().matchAll(/@media[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
+      expect(bloque[1], 'un corte de .dashboard-grid__celda quedó en @media').not.toMatch(
+        /\.dashboard-grid__celda/,
+      )
+    }
+    expect(css()).toMatch(/@container[^{]*\{[\s\S]*?\.dashboard-grid__celda/)
+  })
+})
+
+describe('tarjetas resumen de la concentración de cartera', () => {
+  /**
+   * Mismo problema que el grid de paneles, un nivel más adentro: los cortes miraban la ventana y
+   * el que manda es el ancho del PANEL, que ocupa media rejilla o la rejilla entera según cómo
+   * esté armado el dashboard. A 700px de ventana el panel medía 471 y las dos tarjetas se
+   * apilaban, cada una de 471px para un importe de siete cifras; a 1100 la tarjeta tenía 423px de
+   * sobra y la letra se achicaba igual.
+   */
+
+  const css = () => sinComentarios(readFileSync(join(DIRECTORIO, 'directorio.css'), 'utf8'))
+
+  it('la tarjeta se declara como contenedor de consulta', () => {
+    const regla = css().match(/\.directorio-kpi--interno\s*\{([^}]*)\}/)
+
+    expect(regla).not.toBeNull()
+    expect(regla[1]).toMatch(/container:\s*tarjeta-resumen\s*\/\s*inline-size/)
+  })
+
+  it('el tamaño del importe depende de la tarjeta y no de la ventana', () => {
+    expect(css()).toMatch(/@container tarjeta-resumen[^{]*\{[\s\S]*?\.directorio-kpi__valor/)
+    for (const bloque of css().matchAll(/@media[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
+      expect(bloque[1], 'el corte del importe volvió a un @media').not.toMatch(
+        /\.directorio-kpi--interno/,
+      )
+    }
+  })
+
+  /**
+   * Apretar el relleno de la tarjeta cambia el ancho que su propia consulta mide, y una regla que
+   * se realimenta así oscila entre dos estados. Por eso el relleno cuelga del PANEL.
+   */
+  it('el relleno no se aprieta desde la consulta de la propia tarjeta', () => {
+    const porTarjeta = css().matchAll(/@container tarjeta-resumen[^{]*\{((?:[^{}]|\{[^{}]*\})*)\}/g)
+    for (const bloque of porTarjeta) {
+      expect(bloque[1], 'el relleno de la tarjeta se decide dentro de su propia consulta')
+        .not.toMatch(/padding/)
+    }
+    expect(css()).toMatch(/@container panel-resumen[^{]*\{[\s\S]*?padding/)
+  })
+})

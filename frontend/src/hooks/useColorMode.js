@@ -1,43 +1,30 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useTheme } from '../context/ThemeContext'
 
 const CLAVE_ALMACENAMIENTO = 'tema-color-modo'
-const COLOR_FONDO_OSCURO = '#10141b'
 
-/** Aplica el modo claro/oscuro a todo el documento: `data-theme` (variables propias de
- * `dashboard.css`, ver `:root[data-theme="dark"]`) y `data-bs-theme` (soporte nativo de
- * Bootstrap 5.3 para modales/offcanvas/formularios/tablas — así "toda la página" se retiñe sin
- * tener que redefinir cada componente de Bootstrap a mano). `--color-background` es la única
- * variable que también pertenece a la identidad institucional (`ThemeContext.jsx::aplicarTema`,
- * `apps.branding`) — se sobreescribe en línea acá, con el mismo mecanismo, porque un estilo en
- * línea siempre gana sobre cualquier regla de hoja de estilos (la de `dashboard.css` no alcanza
- * por sí sola una vez que la identidad institucional ya escribió la suya). */
+/** Aplica el modo claro/oscuro a todo el documento con los dos atributos que pide la identidad
+ * base de la Matriz: `data-theme` cambia los tokens `--mz-*` (y, a través de `identidad-cms.css`,
+ * las variables propias de este proyecto) y `data-bs-theme` cambia los campos, modales, tablas y
+ * botones de Bootstrap 5.3. Hacen falta los dos siempre.
+ *
+ * No escribe ningún color en línea: los valores de cada modo viven en las hojas de estilo. Antes
+ * se pisaba `--color-background` en línea porque la identidad institucional también lo escribía
+ * en línea; desde que la base es la Matriz, la marca ya no toca fondos ni textos. */
 function aplicarModo(oscuro) {
   const raiz = document.documentElement
   raiz.setAttribute('data-theme', oscuro ? 'dark' : 'light')
   raiz.setAttribute('data-bs-theme', oscuro ? 'dark' : 'light')
-  if (oscuro) raiz.style.setProperty('--color-background', COLOR_FONDO_OSCURO)
-  else raiz.style.removeProperty('--color-background')
 }
 
-/**
- * Alterna el modo claro/oscuro de toda la aplicación (botón en `AdminSidebar`) — persiste en
- * `localStorage`, mismo patrón ya usado por el colapso del propio menú. Depende de `useTheme()`
- * únicamente para volver a aplicar el modo oscuro cada vez que la identidad institucional
- * (`ThemeProvider`) (re)carga: esa carga es asincrónica y escribe `--color-background` en línea
- * sobre el mismo elemento — sin esta dependencia, un usuario que vuelve con el modo oscuro ya
- * guardado vería el fondo institucional (claro) "ganarle" al oscuro apenas termina de cargar el
- * tema de marca, porque esa carga sucede después del primer render de este hook.
- */
+/** Alterna el modo claro/oscuro de toda la aplicación (botón de la barra superior,
+ * `AdminLayout`) y lo recuerda en `localStorage`. */
 export function useColorMode() {
-  const { theme } = useTheme()
   const [oscuro, setOscuro] = useState(() => localStorage.getItem(CLAVE_ALMACENAMIENTO) === '1')
 
   useEffect(() => {
     localStorage.setItem(CLAVE_ALMACENAMIENTO, oscuro ? '1' : '0')
     aplicarModo(oscuro)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `theme` es deliberado, ver docstring: reaplica el modo oscuro cada vez que la identidad institucional (re)carga
-  }, [oscuro, theme])
+  }, [oscuro])
 
   const alternar = useCallback(() => setOscuro((v) => !v), [])
 

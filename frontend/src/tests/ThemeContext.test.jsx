@@ -37,7 +37,9 @@ describe('ThemeContext', () => {
 
     await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('Mi Institución'))
     expect(document.documentElement.style.getPropertyValue('--color-primary')).toBe('#123456')
-    expect(document.documentElement.style.getPropertyValue('--border-radius')).toBe('4px')
+    // Fondos, textos, tipografía y radios los fija la identidad base de la Matriz, no la marca.
+    expect(document.documentElement.style.getPropertyValue('--border-radius')).toBe('')
+    expect(document.documentElement.style.getPropertyValue('--color-background')).toBe('')
     expect(document.title).toBe('Mi Institución')
   })
 
@@ -65,24 +67,26 @@ describe('ThemeContext', () => {
     const css = document.getElementById('theme-bootstrap-overrides').textContent
 
     expect(css).toMatch(/\.btn-primary\s*\{[^}]*--bs-btn-bg:\s*#123456/)
-    expect(css).toMatch(/\.btn-outline-danger\s*\{[^}]*--bs-btn-color:\s*#dc3545/)
-    expect(css).toMatch(/\.bg-success\s*\{\s*background-color:\s*#198754\s*!important/)
-    expect(css).toMatch(/\.text-warning\s*\{\s*color:\s*#ffc107\s*!important/)
+    // Los colores de estado (y el botón neutro `outline-secondary`) son los de la Matriz.
+    expect(css).not.toMatch(/\.btn-outline-danger/)
+    expect(css).not.toMatch(/\.btn-outline-secondary/)
     expect(css).toMatch(/a, \.btn-link \{\s*color:\s*#0000ff/)
     // Oscurecido ~20% de #0000ff: cada canal se multiplica por 0.8 (0 -> 0, 255 -> 204 = 0xcc).
     expect(css).toMatch(/a:hover, \.btn-link:hover \{\s*color:\s*#0000cc/)
   })
 
-  it('reteñe .alert-* (react-bootstrap <Alert variant>, usado en toda la app) y el foco/checked de formularios', async () => {
-    // `.alert-danger` tampoco lee `--bs-danger`: fija `--bs-alert-bg`/`--bs-alert-color` desde
-    // colores "subtle/emphasis" resueltos por Sass — mismo problema que los botones.
+  it('reteñe .alert-primary y el foco/checked de formularios con el primario de la marca', async () => {
+    // `.alert-primary` no lee `--bs-primary`: fija `--bs-alert-bg`/`--bs-alert-color` desde colores
+    // resueltos por Sass — mismo problema que los botones. Los avisos de estado (danger, warning…)
+    // ya no se reteñen: usan los colores de la Matriz.
     brandingService.getCurrent.mockResolvedValue(TEMA)
     render(<ThemeProvider><Sonda /></ThemeProvider>)
 
     await waitFor(() => expect(screen.getByTestId('estado')).toHaveTextContent('Mi Institución'))
     const css = document.getElementById('theme-bootstrap-overrides').textContent
 
-    expect(css).toMatch(/\.alert-danger\s*\{[^}]*--bs-alert-bg:/)
+    expect(css).toMatch(/\.alert-primary\s*\{[^}]*--bs-alert-bg:/)
+    expect(css).not.toMatch(/\.alert-danger/)
     expect(css).toMatch(/\.form-check-input:checked\s*\{[^}]*background-color:\s*#123456/)
     expect(css).toMatch(/\.form-control:focus,[^{]*\{[^}]*border-color:\s*#123456/)
   })

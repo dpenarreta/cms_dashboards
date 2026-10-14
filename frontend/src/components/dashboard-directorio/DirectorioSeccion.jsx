@@ -57,7 +57,10 @@ function TarjetaKpi({ componente, componentes }) {
   else subtitulo = content?.descripcion
 
   return (
-    <div className="directorio-kpi" style={{ borderLeftColor: styles?.colorPrincipal }}>
+    // El filete toma el color de estado del tono (`mz-kpi--ok/bad/info`); si el componente tiene
+    // un color principal elegido en "Configurar componente", ese gana — es una preferencia
+    // explícita de quien armó el dashboard.
+    <div className={`directorio-kpi directorio-kpi--${tono}`} style={{ borderLeftColor: styles?.colorPrincipal }}>
       <div className="directorio-kpi__etiqueta">{content?.titulo}</div>
       <div className="directorio-kpi__valor">{moneda(content?.valor)}</div>
       <div className={`directorio-kpi__sub directorio-kpi__sub--${tono}`}>{subtitulo}</div>
@@ -77,7 +80,8 @@ function GraficoAntiguedad({ componente, componentes, hallazgoIA }) {
     // El monto y el % van SOBRE la barra: la altura sola no deja leer un tramo de $10K al lado de
     // uno de $2.100K. Se derivan del contenido, así que se actualizan solos al cambiar el mapeo.
     etiqueta: `${compacto(valores[i] ?? 0)} (${porcentaje(total ? ((valores[i] ?? 0) / total) * 100 : 0)})`,
-    color: colores[categoria],
+    // Sin color elegido para el tramo, la serie de la paleta (que el modo oscuro reteñe sola).
+    color: colores[categoria] || `var(--series-${(i % 8) + 1})`,
   }))
 
   return (
@@ -98,7 +102,7 @@ function GraficoAntiguedad({ componente, componentes, hallazgoIA }) {
             domain={ticks ? [0, ticks[ticks.length - 1]] : undefined}
           />
           <Tooltip formatter={(valor) => moneda(valor)} />
-          <Bar dataKey="valor" radius={[3, 3, 0, 0]} maxBarSize={64}>
+          <Bar dataKey="valor" radius={[6, 6, 0, 0]} maxBarSize={64}>
             <LabelList dataKey="etiqueta" position="top" className="directorio-barra__etiqueta" />
             {filas.map((fila) => <Cell key={fila.categoria} fill={fila.color} />)}
           </Bar>
@@ -144,8 +148,13 @@ function TablaCumplimiento({ componente, hallazgoIA }) {
                 <td>{tramo}</td>
                 <td className="text-end directorio-tabla__meta">{etiquetaMeta(metas[i])}</td>
                 <td className="text-end">{moneda(valor)}</td>
-                <td className={`text-end ${sinMeta ? '' : (cumple ? 'directorio-ok' : 'directorio-falla')}`}>
-                  {porcentaje(pct)} {sinMeta ? '' : (cumple ? '✓' : '✗')}
+                <td className="text-end">
+                  {/* Con meta, el resultado va como píldora de estado de la Matriz. */}
+                  {sinMeta ? porcentaje(pct) : (
+                    <span className={`mz-pill directorio-pill ${cumple ? 'mz-pill--ok' : 'mz-pill--bad'}`}>
+                      {porcentaje(pct)} {cumple ? '✓' : '✗'}
+                    </span>
+                  )}
                 </td>
               </tr>
             )
@@ -177,13 +186,13 @@ function SeccionConcentracion({ componente, hallazgoIA }) {
     <div className="chart-panel directorio-seccion">
       <TituloSeccion>{titulo}</TituloSeccion>
       <div className="directorio-resumen">
-        <div className="directorio-kpi directorio-kpi--interno" style={{ borderLeftColor: '#D4AF37' }}>
+        <div className="directorio-kpi directorio-kpi--interno directorio-kpi--top">
           <div className="directorio-kpi__etiqueta">TOP {topN} CLIENTES</div>
           <div className="directorio-kpi__valor">{moneda(saldoTop)}</div>
           <div className="directorio-kpi__sub">{porcentaje(pctTop, 2)} del saldo total</div>
         </div>
         {resto && (
-          <div className="directorio-kpi directorio-kpi--interno" style={{ borderLeftColor: '#1E88E5' }}>
+          <div className="directorio-kpi directorio-kpi--interno directorio-kpi--resto">
             <div className="directorio-kpi__etiqueta">{etiquetaResto(resto[0], mapeo?.columna_id).toUpperCase()}</div>
             <div className="directorio-kpi__valor">{moneda(resto[1])}</div>
             <div className="directorio-kpi__sub">{porcentaje(resto[2], 2)} del saldo total</div>

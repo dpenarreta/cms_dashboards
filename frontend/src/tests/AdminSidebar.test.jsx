@@ -4,10 +4,10 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import AdminSidebar from '../components/admin/AdminSidebar'
 import { useAuth } from '../context/AuthContext'
-import { useTheme } from '../context/ThemeContext'
+import { useMarca } from '../hooks/useMarca'
 
 vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
-vi.mock('../context/ThemeContext', () => ({ useTheme: vi.fn() }))
+vi.mock('../hooks/useMarca', () => ({ useMarca: vi.fn() }))
 
 function renderSidebar(usuario = { permissions: ['usuarios.ver', 'roles.ver'], username: 'ana' }, logout = vi.fn()) {
   useAuth.mockReturnValue({ isAuthenticated: true, user: usuario, logout })
@@ -16,10 +16,7 @@ function renderSidebar(usuario = { permissions: ['usuarios.ver', 'roles.ver'], u
 
 describe('AdminSidebar', () => {
   beforeEach(() => {
-    localStorage.clear()
-    useTheme.mockReturnValue({ theme: null })
-    document.documentElement.removeAttribute('data-theme')
-    document.documentElement.removeAttribute('data-bs-theme')
+    useMarca.mockReturnValue(null)
   })
 
   it('solo lista los módulos administrativos que el usuario tiene permiso de ver', () => {
@@ -56,12 +53,12 @@ describe('AdminSidebar', () => {
 
   it('el bloque de avatar/nombre enlaza a /admin/profile', () => {
     renderSidebar({ permissions: [], username: 'roberto' })
-    expect(screen.getByRole('link', { name: 'roberto' })).toHaveAttribute('href', '/admin/profile')
+    expect(screen.getByRole('link', { name: /roberto/ })).toHaveAttribute('href', '/admin/profile')
   })
 
   it('con avatar_url, muestra la imagen en vez de la inicial', () => {
     renderSidebar({ permissions: [], username: 'roberto', avatar_url: 'http://localhost:8000/media/avatars/foto.png' })
-    const imagen = screen.getByRole('link', { name: 'roberto' }).querySelector('img')
+    const imagen = screen.getByRole('link', { name: /roberto/ }).querySelector('img')
     expect(imagen).toHaveAttribute('src', 'http://localhost:8000/media/avatars/foto.png')
     expect(screen.queryByText('R')).not.toBeInTheDocument()
   })
@@ -71,35 +68,59 @@ describe('AdminSidebar', () => {
     expect(screen.getByRole('link', { name: /dashboards/i })).toHaveAttribute('href', '/app/dashboards')
   })
 
-  it('el botón de colapso oculta el menú y se recuerda entre renders (localStorage)', async () => {
-    const { unmount } = renderSidebar()
-
-    const boton = screen.getByRole('button', { name: 'Ocultar menú' })
-    await userEvent.click(boton)
-
-    expect(screen.getByRole('button', { name: 'Expandir menú' })).toBeInTheDocument()
-    expect(localStorage.getItem('admin-sidebar-colapsado')).toBe('1')
-
-    unmount()
-    renderSidebar()
-    expect(screen.getByRole('button', { name: 'Expandir menú' })).toBeInTheDocument()
-  })
-
-  it('el botón "Cerrar sesión" está siempre en el menú (parte inferior) y llama a logout al hacer clic', async () => {
+  it('el botón "Cerrar sesión" está al pie del menú y llama a logout al hacer clic', async () => {
     const logout = vi.fn()
     renderSidebar(undefined, logout)
 
     const boton = screen.getByRole('button', { name: 'Cerrar sesión' })
-    expect(boton.closest('.admin-sidebar__footer')).not.toBeNull()
+    expect(boton.closest('.mz-sidebar-foot')).not.toBeNull()
 
     await userEvent.click(boton)
     expect(logout).toHaveBeenCalled()
   })
 
-  describe('tema claro/oscuro', () => {
-    it('sin preferencia guardada, muestra el botón para pasar a tema oscuro', () => {
+  it('al pie muestra el rol (Superusuario o el primer rol asignado) y el correo', () => {
+    const { unmount } = renderSidebar({ permissions: [], username: 'ana', email: 'ana@example.com', is_superuser: true, roles: ['Lector'] })
+    expect(screen.getByText('Superusuario')).toBeInTheDocument()
+    expect(screen.getByText('ana@example.com')).toBeInTheDocument()
+    unmount()
+
+    renderSidebar({ permissions: [], username: 'ana', roles: ['Lector'] })
+    expect(screen.getByText('Lector')).toBeInTheDocument()
+  })
+
+  it('sin logo en la identidad institucional, muestra las iniciales del nombre del sitio', () => {
+    useMarca.mockReturnValue({ site_name: 'Dashboards LCE', short_name: '' })
+    renderSidebar()
+    expect(screen.getByText('DL')).toBeInTheDocument()
+    expect(screen.getByText('Dashboards LCE')).toBeInTheDocument()
+  })
+
+  it('abierto (pantallas chicas), el fondo y cada enlace cierran el menú', async () => {
+    const onCerrar = vi.fn()
+    useAuth.mockReturnValue({ isAuthenticated: true, user: { permissions: [], username: 'ana' }, logout: vi.fn() })
+    render(<MemoryRouter><AdminSidebar abierto onCerrar={onCerrar} /></MemoryRouter>)
+
+    expect(screen.getByRole('navigation', { name: 'Menú principal' })).toHaveClass('mz-sidebar--open')
+    await userEvent.click(screen.getByRole('button', { name: 'Cerrar menú' }))
+    await userEvent.click(screen.getByRole('link', { name: /dashboards/i }))
+    expect(onCerrar).toHaveBeenCalledTimes(2)
+  })
+
+  describe('tema claro/oscuro (al pie del menú, encima del usuario)', () => {
+    beforeEach(() => {
+      localStorage.clear()
+      document.documentElement.removeAttribute('data-theme')
+      document.documentElement.removeAttribute('data-bs-theme')
+    })
+
+    it('está al pie del menú y antes del bloque de usuario y de "Cerrar sesión"', () => {
       renderSidebar()
-      expect(screen.getByRole('button', { name: 'Tema oscuro' })).toBeInTheDocument()
+      const boton = screen.getByRole('button', { name: 'Tema oscuro' })
+      const pie = boton.closest('.mz-sidebar-foot')
+      expect(pie).not.toBeNull()
+      const usuario = pie.querySelector('.mz-user')
+      expect(boton.compareDocumentPosition(usuario) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('clic en el botón activa el tema oscuro para toda la página (data-theme/data-bs-theme) y lo persiste', async () => {
@@ -116,12 +137,6 @@ describe('AdminSidebar', () => {
       localStorage.setItem('tema-color-modo', '1')
       renderSidebar()
       expect(screen.getByRole('button', { name: 'Tema claro' })).toBeInTheDocument()
-    })
-
-    it('el botón de tema está siempre en el menú (parte inferior), junto a "Cerrar sesión"', () => {
-      renderSidebar()
-      const boton = screen.getByRole('button', { name: 'Tema oscuro' })
-      expect(boton.closest('.admin-sidebar__footer')).not.toBeNull()
     })
   })
 })

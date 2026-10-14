@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
+import { Alert, Button, Form, Spinner } from 'react-bootstrap'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
+import PantallaAcceso from '../../components/auth/PantallaAcceso'
 
 /**
  * Tras iniciar sesión se abre el listado de dashboards, no un dashboard fijo: el listado
@@ -57,39 +58,36 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="d-flex align-items-center justify-content-center" style={{ minHeight: '100vh' }}>
-      <Card style={{ width: 380 }} className="p-4 shadow-sm">
-        <Card.Title className="mb-3 text-center">Iniciar sesión</Card.Title>
-        {error && <Alert variant="danger" role="alert">{error}</Alert>}
-        <Form onSubmit={enviar}>
-          <Form.Group className="mb-3" controlId="login-identifier">
-            <Form.Label>Usuario o correo</Form.Label>
-            <Form.Control
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              required
-              autoFocus
-              disabled={cargando}
-            />
-          </Form.Group>
-          <Form.Group className="mb-3" controlId="login-password">
-            <Form.Label>Contraseña</Form.Label>
-            <Form.Control
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={cargando}
-            />
-          </Form.Group>
-          <Button type="submit" className="w-100" disabled={cargando}>
-            {cargando ? <Spinner size="sm" animation="border" aria-hidden="true" /> : 'Ingresar'}
-          </Button>
-        </Form>
-        <div className="text-center mt-3">
-          <Link to="/forgot-password">¿Olvidaste tu contraseña?</Link>
-        </div>
-      </Card>
-    </div>
+    <PantallaAcceso titulo="Iniciar sesión" subtitulo="Ingrese con su usuario o correo corporativo.">
+      {error && <Alert variant="danger" role="alert">{error}</Alert>}
+      <Form onSubmit={enviar}>
+        <Form.Group className="mb-3" controlId="login-identifier">
+          <Form.Label>Usuario o correo</Form.Label>
+          <Form.Control
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            required
+            autoFocus
+            disabled={cargando}
+          />
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="login-password">
+          <Form.Label>Contraseña</Form.Label>
+          <Form.Control
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            disabled={cargando}
+          />
+        </Form.Group>
+        <Button type="submit" className="w-100" disabled={cargando}>
+          {cargando ? <Spinner size="sm" animation="border" aria-hidden="true" /> : 'Ingresar'}
+        </Button>
+      </Form>
+      <div className="text-center mt-3">
+        <Link to="/forgot-password">¿Olvidaste tu contraseña?</Link>
+      </div>
+    </PantallaAcceso>
   )
 }

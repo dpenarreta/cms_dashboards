@@ -214,6 +214,14 @@ PASSWORD_RESET_TOKEN_LIFETIME_MINUTES = int(os.getenv('PASSWORD_RESET_TOKEN_LIFE
 # CarteraError (codigo='IA_NO_CONFIGURADA') en vez de fallar con un error genérico de red.
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-flash-latest')
+# Modelos a los que recurrir cuando el principal responde 503 ("high demand"). El 503 es POR
+# MODELO y no por cuenta —midiendo seis en el mismo minuto, tres respondieron 200 y tres 503—, así
+# que cambiar de modelo resuelve en el acto donde reintentar contra el mismo no lo haría. Uno que
+# ya no exista responde 404 y se saltea, así que una lista desactualizada no rompe nada.
+GEMINI_MODELOS_RESPALDO = [
+    m.strip() for m in os.getenv('GEMINI_MODELOS_RESPALDO', 'gemini-3.6-flash,gemini-3.5-flash-lite').split(',')
+    if m.strip()
+]
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(os.getenv('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', 15))),

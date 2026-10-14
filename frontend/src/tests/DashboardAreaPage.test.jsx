@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import DashboardAreaPage from '../pages/dashboards/DashboardAreaPage'
@@ -671,7 +671,36 @@ describe('DashboardAreaPage', () => {
 
       await userEvent.click(await screen.findByRole('button', { name: /Actualizar ahora/ }))
 
-      await waitFor(() => expect(carteraService.actualizarFuenteBDAhora).toHaveBeenCalledWith('finanzas'))
+      await waitFor(() => expect(carteraService.actualizarFuenteBDAhora).toHaveBeenCalledWith('finanzas', undefined))
+      await waitFor(() => expect(recargar).toHaveBeenCalled())
+    })
+
+    it('con un procedimiento con fecha, "Actualizar ahora" pide la fecha (sugiere hoy) y la envía', async () => {
+      // Sin frecuencia no hay período que avanzar: sin este paso se reenviaba la fecha guardada y el
+      // procedimiento devolvía los mismos datos de la vez anterior.
+      dashboardLayoutService.obtenerFuenteBD.mockResolvedValue({
+        tipo: 'procedimiento', nombre: 'dbo.sp_cartera', parametros: { FechaCorte: '2026-09-30' },
+        frecuencia_actualizacion: '', ultima_actualizacion: '2026-09-30', proxima_actualizacion: null,
+      })
+      carteraService.actualizarFuenteBDAhora.mockResolvedValue({ ok: true, mensaje: 'Actualizado con 10 fila(s).' })
+      const recargar = vi.fn()
+      useGenericDashboardBuilder.mockReturnValue(builderBase())
+      useDashboardLayout.mockReturnValue(layoutBase({ recargar }))
+      renderPagina()
+
+      await userEvent.click(await screen.findByRole('button', { name: /Actualizar ahora/ }))
+
+      const campo = await screen.findByLabelText(/Fecha de corte/)
+      const hoy = new Date()
+      const hoyISO = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`
+      expect(campo).toHaveValue(hoyISO)
+      expect(screen.getByText(/Última usada: 30\/09\/2026/)).toBeInTheDocument()
+      expect(carteraService.actualizarFuenteBDAhora).not.toHaveBeenCalled()
+
+      fireEvent.change(campo, { target: { value: '2026-10-13' } })
+      await userEvent.click(screen.getByRole('button', { name: 'Actualizar' }))
+
+      await waitFor(() => expect(carteraService.actualizarFuenteBDAhora).toHaveBeenCalledWith('finanzas', '2026-10-13'))
       await waitFor(() => expect(recargar).toHaveBeenCalled())
     })
 

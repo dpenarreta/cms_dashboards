@@ -8,11 +8,11 @@ import { Offcanvas } from 'react-bootstrap'
  * `dispersion`) abren `AgregarComponentePersonalModal` para elegir columnas antes de crear el
  * componente; `separador`/`titulo` (sin datos) se crean de inmediato. */
 const TARJETAS = [
-  { tipo: 'separador', etiqueta: 'Separador', descripcion: 'Línea divisoria', icono: '—' },
-  { tipo: 'titulo', etiqueta: 'Título', descripcion: 'Bloque de encabezado', icono: 'T' },
-  { tipo: 'kpi', etiqueta: 'Tarjeta KPI', descripcion: 'Un solo valor', icono: '#' },
-  { tipo: 'chart', etiqueta: 'Gráfico', descripcion: 'Datos por columna', icono: '📊' },
-  { tipo: 'tabla', etiqueta: 'Tabla', descripcion: 'Detalle por filas', icono: '▦' },
+  { tipo: 'separador', etiqueta: 'Separador', descripcion: 'Línea divisoria', icono: 'bi-dash-lg' },
+  { tipo: 'titulo', etiqueta: 'Título', descripcion: 'Bloque de encabezado', icono: 'bi-type-h1' },
+  { tipo: 'kpi', etiqueta: 'Tarjeta KPI', descripcion: 'Un solo valor', icono: 'bi-123' },
+  { tipo: 'chart', etiqueta: 'Gráfico', descripcion: 'Datos por columna', icono: 'bi-bar-chart-line' },
+  { tipo: 'tabla', etiqueta: 'Tabla', descripcion: 'Detalle por filas', icono: 'bi-table' },
 ]
 
 function TarjetaComponente({ tipo, etiqueta, descripcion, icono, onElegirTipo }) {
@@ -27,7 +27,7 @@ function TarjetaComponente({ tipo, etiqueta, descripcion, icono, onElegirTipo })
       className="d-flex align-items-center gap-2 w-100 text-start mb-2 p-2 border rounded bg-body"
       style={{ cursor: 'grab', opacity: isDragging ? 0.4 : 1 }}
     >
-      <span aria-hidden="true" style={{ fontSize: '1.1rem', width: 24, textAlign: 'center' }}>{icono}</span>
+      <i className={`bi ${icono}`} aria-hidden="true" style={{ fontSize: '1.1rem', width: 24, textAlign: 'center' }}></i>
       <span>
         <div className="fw-semibold" style={{ fontSize: '0.9rem' }}>{etiqueta}</div>
         <div className="chart-panel__subtitle mb-0" style={{ fontSize: '0.75rem' }}>{descripcion}</div>

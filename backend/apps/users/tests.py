@@ -371,3 +371,95 @@ class EscaladaDePrivilegiosTests(TestCase):
         resp = self.client.post(f'/api/users/{self.otro.id}/reset_password/', {}, format='json')
         self.assertEqual(resp.status_code, 200)
         self.assertIn('temporary_password', resp.json())
+
+
+class CrearUsuarioConRolTests(TestCase):
+    """El rol se elige en el mismo formulario que da de alta la cuenta.
+
+    Antes había que guardar el usuario y volver a entrar a editarlo: entre una cosa y la otra la
+    cuenta existía sin ningún rol. Va en la misma petición para que sea una sola operación.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.rol = Group.objects.create(name='LECTOR')
+        self.rol.permissions.add(
+            Permission.objects.get(codename='dashboard.view', content_type__app_label='permissions'),
+        )
+
+    def _alta(self, datos_extra=None):
+        return self.client.post('/api/users/', {
+            'username': 'nueva', 'email': 'nueva@example.com',
+            'first_name': 'N', 'last_name': 'U', 'password': 'Clave-Segura-123',
+            **(datos_extra or {}),
+        }, format='json')
+
+    def _con_permisos(self, *codenames):
+        usuario = User.objects.create_user(
+            username=f'op{User.objects.count()}', email=f'op{User.objects.count()}@example.com',
+            password='Clave-Segura-123',
+        )
+        for codename in codenames:
+            usuario.user_permissions.add(
+                Permission.objects.get(codename=codename, content_type__app_label='permissions'),
+            )
+        self.client.force_authenticate(user=usuario)
+        return usuario
+
+    def test_la_cuenta_nace_con_el_rol_puesto(self):
+        self._con_permisos('usuarios.crear', 'usuarios.editar')
+
+        resp = self._alta({'role_ids': [self.rol.id]})
+
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(list(User.objects.get(username='nueva').groups.values_list('name', flat=True)), ['LECTOR'])
+
+    def test_sin_rol_elegido_se_crea_igual(self):
+        self._con_permisos('usuarios.crear')
+
+        resp = self._alta()
+
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertFalse(User.objects.get(username='nueva').groups.exists())
+
+    def test_quien_solo_puede_crear_no_puede_asignar_un_rol_al_pasar(self):
+        """Crear una cuenta y decidir qué puede hacer son permisos distintos.
+
+        Sin esta guarda, alguien que solo da de alta usuarios crearía uno con el rol de
+        administrador y entraría con él: el formulario de alta sería la puerta de atrás de
+        `usuarios.editar`.
+        """
+        self._con_permisos('usuarios.crear')
+
+        resp = self._alta({'role_ids': [self.rol.id]})
+
+        self.assertEqual(resp.status_code, 403, resp.content)
+        self.assertFalse(User.objects.filter(username='nueva').exists(), 'no debe quedar la cuenta creada')
+
+    def test_un_rol_inexistente_no_crea_la_cuenta(self):
+        self._con_permisos('usuarios.crear', 'usuarios.editar')
+
+        resp = self._alta({'role_ids': [99999]})
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(User.objects.filter(username='nueva').exists())
+
+    def test_se_pueden_asignar_varios_roles(self):
+        otro = Group.objects.create(name='EDITOR')
+        self._con_permisos('usuarios.crear', 'usuarios.editar')
+
+        self._alta({'role_ids': [self.rol.id, otro.id]})
+
+        self.assertEqual(
+            sorted(User.objects.get(username='nueva').groups.values_list('name', flat=True)),
+            ['EDITOR', 'LECTOR'],
+        )
+
+    def test_la_asignacion_queda_auditada(self):
+        # Quién le dio ese rol a la cuenta tiene que poder reconstruirse después.
+        from apps.audit.models import AuditEvent
+        self._con_permisos('usuarios.crear', 'usuarios.editar')
+
+        self._alta({'role_ids': [self.rol.id]})
+
+        self.assertTrue(AuditEvent.objects.filter(action='USER_ROLES_ASSIGNED').exists())

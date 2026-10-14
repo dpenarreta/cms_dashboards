@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap'
+import { Alert, Button, Col, Form, Row, Spinner } from 'react-bootstrap'
 import SettingsTabsBar from '../../../components/admin/SettingsTabsBar'
 import ConfirmModal from '../../../components/dashboard-editor/ConfirmModal'
 import * as brandingService from '../../../services/brandingService'
@@ -152,97 +152,122 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="h4 mb-0">Configuración institucional</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>Configuración institucional</h2>
+          <p className="mz-desc">Nombre, logotipo y colores de marca del sistema.</p>
+        </div>
       </div>
 
       <SettingsTabsBar />
+
+      {/* La apariencia la fija la identidad base de la Matriz (`styles/matriz.css`): de esta
+          pantalla solo se aplican los campos que `ThemeContext.jsx` sigue leyendo. El resto se
+          guarda igual, para no perder lo configurado, pero no cambia nada en pantalla. */}
+      <div className="mz-note mb-3" role="note">
+        <i className="bi bi-info-circle" aria-hidden="true"></i>
+        <span>
+          El sistema usa la identidad base de la Matriz: de esta pantalla solo se aplican el nombre,
+          el nombre corto, el logo, el favicon, el color primario y el color de enlaces. Los demás
+          campos (fondo, textos, menú, colores de estado, tipografías, tamaño y radios) se guardan,
+          pero ya no cambian la apariencia: esos valores los fija la identidad base, en modo claro
+          y oscuro.
+        </span>
+      </div>
 
       {error && <Alert variant="danger">{error}</Alert>}
       {exito && <Alert variant="success">{exito}</Alert>}
 
       <Form onSubmit={guardar}>
-        <Card className="chart-panel mb-3">
-          <h6>Identidad</h6>
-          <Row>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-site-name">
-              <Form.Label>Nombre del sitio</Form.Label>
-              <Form.Control value={campos.site_name} onChange={(e) => actualizarCampo('site_name', e.target.value)} required />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-short-name">
-              <Form.Label>Nombre corto</Form.Label>
-              <Form.Control value={campos.short_name} onChange={(e) => actualizarCampo('short_name', e.target.value)} />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-logo-url">
-              <Form.Label>URL del logo</Form.Label>
-              <Form.Control value={campos.logo_url} onChange={(e) => actualizarCampo('logo_url', e.target.value)} placeholder="https://..." />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-favicon-url">
-              <Form.Label>URL del favicon</Form.Label>
-              <Form.Control value={campos.favicon_url} onChange={(e) => actualizarCampo('favicon_url', e.target.value)} placeholder="https://..." />
-            </Form.Group>
-          </Row>
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Identidad</h3></div>
+          <div className="mz-card-body">
+            <Row>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-site-name">
+                <Form.Label>Nombre del sitio</Form.Label>
+                <Form.Control value={campos.site_name} onChange={(e) => actualizarCampo('site_name', e.target.value)} required />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-short-name">
+                <Form.Label>Nombre corto</Form.Label>
+                <Form.Control value={campos.short_name} onChange={(e) => actualizarCampo('short_name', e.target.value)} />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-logo-url">
+                <Form.Label>URL del logo</Form.Label>
+                <Form.Control value={campos.logo_url} onChange={(e) => actualizarCampo('logo_url', e.target.value)} placeholder="https://..." />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-favicon-url">
+                <Form.Label>URL del favicon</Form.Label>
+                <Form.Control value={campos.favicon_url} onChange={(e) => actualizarCampo('favicon_url', e.target.value)} placeholder="https://..." />
+              </Form.Group>
+            </Row>
+          </div>
+        </section>
 
-        <Card className="chart-panel mb-3">
-          <h6>Colores</h6>
-          <Row>
-            {CAMPOS_COLOR.map((c) => (
-              <CampoColor
-                key={c.clave} clave={c.clave} etiqueta={c.etiqueta} valor={campos[c.clave]}
-                contraValor={c.contraClave ? campos[c.contraClave] : undefined}
-                onCambiar={actualizarCampo}
-              />
-            ))}
-          </Row>
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Colores</h3></div>
+          <div className="mz-card-body">
+            <Row>
+              {CAMPOS_COLOR.map((c) => (
+                <CampoColor
+                  key={c.clave} clave={c.clave} etiqueta={c.etiqueta} valor={campos[c.clave]}
+                  contraValor={c.contraClave ? campos[c.contraClave] : undefined}
+                  onCambiar={actualizarCampo}
+                />
+              ))}
+            </Row>
+          </div>
+        </section>
 
-        <Card className="chart-panel mb-3">
-          <h6>Colores semánticos (Bootstrap)</h6>
-          <p className="chart-panel__subtitle">
-            Se conectan con las variables de Bootstrap (<code>--bs-success</code>, <code>--bs-danger</code>, etc.) que usan los
-            componentes de la aplicación (alertas, badges, botones).
-          </p>
-          <Row>
-            {CAMPOS_COLOR_SEMANTICOS.map((c) => (
-              <CampoColor
-                key={c.clave} clave={c.clave} etiqueta={c.etiqueta} valor={campos[c.clave]}
-                contraValor={c.contraClave ? campos[c.contraClave] : undefined}
-                onCambiar={actualizarCampo}
-              />
-            ))}
-          </Row>
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Colores semánticos (Bootstrap)</h3></div>
+          <div className="mz-card-body">
+            <p className="chart-panel__subtitle">
+              Se conectan con las variables de Bootstrap (<code>--bs-success</code>, <code>--bs-danger</code>, etc.) que usan los
+              componentes de la aplicación (alertas, badges, botones).
+            </p>
+            <Row>
+              {CAMPOS_COLOR_SEMANTICOS.map((c) => (
+                <CampoColor
+                  key={c.clave} clave={c.clave} etiqueta={c.etiqueta} valor={campos[c.clave]}
+                  contraValor={c.contraClave ? campos[c.contraClave] : undefined}
+                  onCambiar={actualizarCampo}
+                />
+              ))}
+            </Row>
+          </div>
+        </section>
 
-        <Card className="chart-panel mb-3">
-          <h6>Tipografía y estilo</h6>
-          <Row>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-primary">
-              <Form.Label>Fuente principal</Form.Label>
-              <Form.Select value={campos.font_primary} onChange={(e) => actualizarCampo('font_primary', e.target.value)}>
-                {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
-              </Form.Select>
-              <VistaPreviaFuente etiqueta="fuente principal" fuente={fuentePrimaria} />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-secondary">
-              <Form.Label>Fuente secundaria</Form.Label>
-              <Form.Select value={campos.font_secondary} onChange={(e) => actualizarCampo('font_secondary', e.target.value)}>
-                {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
-              </Form.Select>
-              <VistaPreviaFuente etiqueta="fuente secundaria" fuente={fuenteSecundaria} />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-size">
-              <Form.Label>Tamaño de fuente base</Form.Label>
-              <Form.Control value={campos.font_size_base} onChange={(e) => actualizarCampo('font_size_base', e.target.value)} placeholder="16px" />
-            </Form.Group>
-            <Form.Group as={Col} md={6} className="mb-2" controlId="settings-border-radius">
-              <Form.Label>Radio de bordes</Form.Label>
-              <Form.Select value={campos.border_radius} onChange={(e) => actualizarCampo('border_radius', e.target.value)}>
-                {opciones.border_radii.map((r) => <option key={r.slug} value={r.slug}>{r.label}</option>)}
-              </Form.Select>
-            </Form.Group>
-          </Row>
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Tipografía y estilo</h3></div>
+          <div className="mz-card-body">
+            <Row>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-primary">
+                <Form.Label>Fuente principal</Form.Label>
+                <Form.Select value={campos.font_primary} onChange={(e) => actualizarCampo('font_primary', e.target.value)}>
+                  {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
+                </Form.Select>
+                <VistaPreviaFuente etiqueta="fuente principal" fuente={fuentePrimaria} />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-secondary">
+                <Form.Label>Fuente secundaria</Form.Label>
+                <Form.Select value={campos.font_secondary} onChange={(e) => actualizarCampo('font_secondary', e.target.value)}>
+                  {opciones.fonts.map((f) => <option key={f.slug} value={f.slug}>{f.label}</option>)}
+                </Form.Select>
+                <VistaPreviaFuente etiqueta="fuente secundaria" fuente={fuenteSecundaria} />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-font-size">
+                <Form.Label>Tamaño de fuente base</Form.Label>
+                <Form.Control value={campos.font_size_base} onChange={(e) => actualizarCampo('font_size_base', e.target.value)} placeholder="16px" />
+              </Form.Group>
+              <Form.Group as={Col} md={6} className="mb-2" controlId="settings-border-radius">
+                <Form.Label>Radio de bordes</Form.Label>
+                <Form.Select value={campos.border_radius} onChange={(e) => actualizarCampo('border_radius', e.target.value)}>
+                  {opciones.border_radii.map((r) => <option key={r.slug} value={r.slug}>{r.label}</option>)}
+                </Form.Select>
+              </Form.Group>
+            </Row>
+          </div>
+        </section>
 
         <div className="d-flex gap-2">
           <Button type="submit" disabled={guardando}>{guardando ? <Spinner size="sm" animation="border" /> : 'Guardar cambios'}</Button>

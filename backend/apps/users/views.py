@@ -1,10 +1,12 @@
+from django.db import transaction
 from django.db.models import OuterRef, Subquery
 from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from apps.authentication.models import Session
-from apps.permissions.authorization import get_user_permission_codenames
+from apps.permissions.authorization import get_user_permission_codenames, user_has_permission
 from apps.permissions.permissions import IsSuperuser, require_permission
 from cartera.exceptions import CarteraError
 
@@ -124,8 +126,24 @@ class UserAdminViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset().annotate(ultima_conexion=Subquery(ultima_sesion.values('created_at')[:1]))
         return filter_users(queryset, self.request.query_params)
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        usuario = UserAdminService.create_user(data=serializer.validated_data, created_by=self.request.user, request=self.request)
+        # `role_ids` no es un campo del modelo: `create_user` hace `User(**data)` y reventaría.
+        datos = dict(serializer.validated_data)
+        roles = datos.pop('role_ids', [])
+
+        # Crear una cuenta y decidir qué puede hacer esa cuenta son dos permisos distintos
+        # (`usuarios.crear` y `usuarios.editar`). Elegir el rol en el formulario de alta no puede
+        # volverse la puerta de atrás para lo segundo: sin esta comprobación, alguien que solo
+        # puede dar de alta usuarios podría crear uno con el rol de administrador y entrar con él.
+        if roles and not user_has_permission(self.request.user, 'usuarios.editar'):
+            raise PermissionDenied('No tiene permiso para asignar roles. Puede crear la cuenta sin rol.')
+
+        usuario = UserAdminService.create_user(data=datos, created_by=self.request.user, request=self.request)
+        if roles:
+            UserAdminService.assign_roles(
+                usuario=usuario, role_ids=roles, actor=self.request.user, request=self.request,
+            )
         serializer.instance = usuario
 
     def perform_update(self, serializer):

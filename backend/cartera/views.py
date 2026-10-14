@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from datetime import date
 
 import pandas as pd
 from django.conf import settings
@@ -267,7 +268,20 @@ class ActualizarFuenteBDAhoraView(APIView):
                 codigo='FUENTE_BD_NO_CONFIGURADA',
             )
 
-        resultado = fuente_bd_scheduler.actualizar_dashboard(dashboard)
+        # Opcional: la elige quien pulsa el botón (sin frecuencia no hay período que avanzar, ver
+        # `fuente_bd_scheduler.fijar_fecha_corte`). Sin ella se conserva el comportamiento anterior.
+        fecha_corte = None
+        valor_fecha = (request.data.get('fecha_corte') or '').strip()
+        if valor_fecha:
+            try:
+                fecha_corte = date.fromisoformat(valor_fecha)
+            except ValueError:
+                raise CarteraError(
+                    'La fecha de corte no es válida (formato esperado AAAA-MM-DD).',
+                    codigo='FECHA_CORTE_INVALIDA',
+                )
+
+        resultado = fuente_bd_scheduler.actualizar_dashboard(dashboard, fecha_corte=fecha_corte)
         return Response(resultado, status=200)
 
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Col, Form, Row, Spinner } from 'react-bootstrap'
+import { Alert, Button, Col, Form, Row, Spinner } from 'react-bootstrap'
 import ReactQuill from 'react-quill-new'
 import 'react-quill-new/dist/quill.snow.css'
 import '../../../styles/emailTemplates.css'
@@ -126,8 +126,11 @@ export default function EmailTemplatesPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-        <h1 className="h4 mb-0">Plantilla de correo: recuperación de contraseña</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>Plantilla de correo: recuperación de contraseña</h2>
+          <p className="mz-desc">Asunto y cuerpo del correo que recibe quien pide restablecer su contraseña.</p>
+        </div>
       </div>
 
       <SettingsTabsBar />
@@ -136,7 +139,7 @@ export default function EmailTemplatesPage() {
       {exito && <Alert variant="success">{exito}</Alert>}
 
       {variables.length > 0 && (
-        <Alert variant="secondary" className="mb-3">
+        <Alert variant="info" className="mb-3">
           <div className="fw-semibold mb-1">Variables disponibles</div>
           <div className="d-flex flex-column gap-1" style={{ fontSize: '0.85rem' }}>
             {variables.map((v) => (
@@ -149,16 +152,18 @@ export default function EmailTemplatesPage() {
       <Form onSubmit={guardar}>
         <Row className="g-3">
           <Col lg={7}>
-            <Card className="chart-panel mb-3">
-              <Form.Group className="mb-3" controlId="email-template-subject">
-                <Form.Label>Asunto</Form.Label>
-                <Form.Control value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} required />
-              </Form.Group>
-              <Form.Group controlId="email-template-body">
-                <Form.Label>Cuerpo del correo</Form.Label>
-                <ReactQuill theme="snow" value={htmlBody} onChange={setHtmlBody} modules={OPCIONES_EDITOR} />
-              </Form.Group>
-            </Card>
+            <section className="mz-card mb-3">
+              <div className="mz-card-body">
+                <Form.Group className="mb-3" controlId="email-template-subject">
+                  <Form.Label>Asunto</Form.Label>
+                  <Form.Control value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} required />
+                </Form.Group>
+                <Form.Group controlId="email-template-body">
+                  <Form.Label>Cuerpo del correo</Form.Label>
+                  <ReactQuill theme="snow" value={htmlBody} onChange={setHtmlBody} modules={OPCIONES_EDITOR} />
+                </Form.Group>
+              </div>
+            </section>
 
             <div className="d-flex gap-2">
               <Button type="submit" disabled={guardando || restableciendo}>
@@ -174,16 +179,18 @@ export default function EmailTemplatesPage() {
           </Col>
 
           <Col lg={5}>
-            <Card className="chart-panel">
-              <div className="fw-semibold mb-2">Vista previa (con datos de ejemplo)</div>
-              <div className="chart-panel__subtitle mb-2">Asunto: {asuntoPreview}</div>
-              <iframe
-                title="Vista previa del correo"
-                srcDoc={htmlPreview}
-                sandbox=""
-                style={{ width: '100%', minHeight: 420, border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }}
-              />
-            </Card>
+            <section className="mz-card">
+              <div className="mz-card-body">
+                <div className="fw-semibold mb-2">Vista previa (con datos de ejemplo)</div>
+                <div className="chart-panel__subtitle mb-2">Asunto: {asuntoPreview}</div>
+                <iframe
+                  title="Vista previa del correo"
+                  srcDoc={htmlPreview}
+                  sandbox=""
+                  style={{ width: '100%', minHeight: 420, border: '1px solid var(--border)', borderRadius: 8, background: '#fff' }}
+                />
+              </div>
+            </section>
           </Col>
         </Row>
       </Form>

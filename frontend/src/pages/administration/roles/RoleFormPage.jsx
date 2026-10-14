@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
+import { Alert, Button, Form, Spinner } from 'react-bootstrap'
 import { useNavigate, useParams } from 'react-router-dom'
 import * as permissionsService from '../../../services/permissionsService'
 import * as rolesService from '../../../services/rolesService'
@@ -56,35 +56,44 @@ export default function RoleFormPage() {
 
   return (
     <div>
-      <h1 className="h4 mb-3">{esEdicion ? 'Editar rol' : 'Nuevo rol'}</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>{esEdicion ? 'Editar rol' : 'Nuevo rol'}</h2>
+          <p className="mz-desc">Nombre del rol y permisos que otorga a quienes lo tengan asignado.</p>
+        </div>
+      </div>
       {error && <Alert variant="danger">{error}</Alert>}
 
       <Form onSubmit={enviar}>
-        <Card className="chart-panel mb-3">
-          <Form.Group className="mb-0" controlId="role-name">
-            <Form.Label>Nombre del rol</Form.Label>
-            <Form.Control value={nombre} onChange={(e) => setNombre(e.target.value)} required />
-          </Form.Group>
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-body">
+            <Form.Group className="mb-0" controlId="role-name">
+              <Form.Label>Nombre del rol</Form.Label>
+              <Form.Control value={nombre} onChange={(e) => setNombre(e.target.value)} required />
+            </Form.Group>
+          </div>
+        </section>
 
-        <Card className="chart-panel mb-3">
-          <h6>Permisos</h6>
-          {Object.entries(catalogoModulos).map(([modulo, permisos]) => (
-            <div key={modulo} className="mb-2">
-              <div className="fw-semibold text-capitalize" style={{ fontSize: '0.85rem' }}>{modulo}</div>
-              {permisos.map((p) => (
-                <Form.Check
-                  key={p.codename}
-                  type="checkbox"
-                  id={`role-permiso-${p.codename}`}
-                  label={p.name}
-                  checked={permisosSeleccionados.includes(p.codename)}
-                  onChange={() => alternarPermiso(p.codename)}
-                />
-              ))}
-            </div>
-          ))}
-        </Card>
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Permisos</h3></div>
+          <div className="mz-card-body">
+            {Object.entries(catalogoModulos).map(([modulo, permisos]) => (
+              <div key={modulo} className="mb-2">
+                <div className="fw-semibold text-capitalize" style={{ fontSize: '0.85rem' }}>{modulo}</div>
+                {permisos.map((p) => (
+                  <Form.Check
+                    key={p.codename}
+                    type="checkbox"
+                    id={`role-permiso-${p.codename}`}
+                    label={p.name}
+                    checked={permisosSeleccionados.includes(p.codename)}
+                    onChange={() => alternarPermiso(p.codename)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
 
         <Button type="submit" disabled={guardando}>
           {guardando ? <Spinner size="sm" animation="border" /> : 'Guardar'}

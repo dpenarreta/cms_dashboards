@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useTheme } from '../../context/ThemeContext'
 import PublicNavbar from '../../components/public/PublicNavbar'
 import { CTA_CONTENT, FOOTER_CONTENT, HERO_CONTENT, seccionesDeContenido } from '../../config/landingContent'
+import { NOMBRE_SITIO_POR_DEFECTO, inicialesDeMarca } from '../../utils/marca'
 import '../../styles/landing.css'
 
 const SECCIONES = seccionesDeContenido()
@@ -35,26 +36,31 @@ function DashboardMockup({ compacto = false }) {
   )
 }
 
-// Composición decorativa alrededor del mockup (inspirada en la disposición de íconos de un panel
-// CMS — carrito/engranaje/nube/documento — construida en CSS/emoji propios, no arte de terceros).
+// Composición decorativa alrededor del mockup: íconos de Bootstrap Icons en nodos flotantes,
+// construida en CSS propio (nada de arte de terceros).
+const NODOS_ILUSTRACION = ['bi-cart3', 'bi-cloud-arrow-up', 'bi-wrench', 'bi-image', 'bi-file-earmark-text', 'bi-gear']
+
 function HeroIllustration() {
   return (
     <div className="hero-illustration">
-      <span className="hero-illustration__node hero-illustration__node--1" aria-hidden="true">🛒</span>
-      <span className="hero-illustration__node hero-illustration__node--2" aria-hidden="true">☁️</span>
-      <span className="hero-illustration__node hero-illustration__node--3" aria-hidden="true">🔧</span>
-      <span className="hero-illustration__node hero-illustration__node--4" aria-hidden="true">🖼️</span>
-      <span className="hero-illustration__node hero-illustration__node--5" aria-hidden="true">📄</span>
-      <span className="hero-illustration__node hero-illustration__node--6" aria-hidden="true">🪛</span>
+      {NODOS_ILUSTRACION.map((icono, indice) => (
+        <span key={icono} className={`hero-illustration__node hero-illustration__node--${indice + 1}`} aria-hidden="true">
+          <i className={`bi ${icono}`} />
+        </span>
+      ))}
       <DashboardMockup />
     </div>
   )
 }
 
-// Reutiliza `bg-{color}` (ya conectado a los colores institucionales reales por el Módulo B —
-// ver ThemeContext.jsx/generarEstilosBootstrap) en vez de definir una paleta nueva aquí.
+// `color` es un tono de la Matriz (info/ok/warn/bad/neutral, ver `landingContent.js`): fondo y
+// trazo salen de `--mz-{tono}-bg`/`-fg`, con su versión de modo oscuro.
 function IconoCirculo({ icon, color }) {
-  return <div className={`icon-circle bg-${color || 'primary'}`} aria-hidden="true">{icon}</div>
+  return (
+    <div className={`icon-circle icon-circle--${color || 'info'}`} aria-hidden="true">
+      <i className={`bi ${icon}`} />
+    </div>
+  )
 }
 
 function TarjetaIconGrid({ item }) {
@@ -70,7 +76,7 @@ function TarjetaIconGrid({ item }) {
 function TarjetaDashboard({ item }) {
   return (
     <div className="landing-card">
-      {item.icon && <div className="landing-card__icono" aria-hidden="true">{item.icon}</div>}
+      {item.icon && <div className="landing-card__icono" aria-hidden="true"><i className={`bi ${item.icon}`} /></div>}
       <h3 className="landing-card__titulo">{item.title}</h3>
       <p className="landing-card__descripcion">{item.description}</p>
       {item.indicadores && (
@@ -78,7 +84,11 @@ function TarjetaDashboard({ item }) {
           {item.indicadores.map((indicador) => <li key={indicador}>{indicador}</li>)}
         </ul>
       )}
-      {item.indicadores && <span className="badge bg-secondary landing-card__restringido">Acceso restringido</span>}
+      {item.indicadores && (
+        <span className="mz-pill mz-pill--neutral landing-card__restringido">
+          <i className="bi bi-lock" aria-hidden="true" /> Acceso restringido
+        </span>
+      )}
     </div>
   )
 }
@@ -86,7 +96,7 @@ function TarjetaDashboard({ item }) {
 function ItemChecklist({ item }) {
   return (
     <li className="checklist-item">
-      <span className="checklist-item__icono" aria-hidden="true">{item.icon || '✔️'}</span>
+      <span className="checklist-item__icono" aria-hidden="true"><i className={`bi ${item.icon || 'bi-check2-circle'}`} /></span>
       <div>
         <h3 className="checklist-item__titulo">{item.title}</h3>
         <p className="checklist-item__descripcion">{item.description}</p>
@@ -101,10 +111,11 @@ function DiagramaFuncionamiento({ pasos }) {
       {pasos.map((paso, indice) => (
         <div key={paso.title} className="landing-flow__nodo-wrapper">
           <div className="landing-flow__nodo">
+            <span className="landing-flow__paso">{indice + 1}</span>
             <h3 className="landing-flow__titulo">{paso.title}</h3>
             <p className="landing-flow__descripcion">{paso.description}</p>
           </div>
-          {indice < pasos.length - 1 && <div className="landing-flow__flecha" aria-hidden="true">↓</div>}
+          {indice < pasos.length - 1 && <div className="landing-flow__flecha" aria-hidden="true"><i className="bi bi-arrow-down" /></div>}
         </div>
       ))}
     </div>
@@ -176,7 +187,7 @@ function Seccion({ seccion }) {
 export default function LandingPage() {
   const { theme } = useTheme()
   const anioActual = new Date().getFullYear()
-  const nombreSitio = theme?.site_name || 'Dashboard de Cartera'
+  const nombreSitio = theme?.site_name || NOMBRE_SITIO_POR_DEFECTO
 
   return (
     <div className="landing-page">
@@ -205,14 +216,18 @@ export default function LandingPage() {
       <section className="landing-cta">
         <h2>{CTA_CONTENT.title}</h2>
         <p>{CTA_CONTENT.subtitle}</p>
-        <Link to={CTA_CONTENT.ctaHref} className="btn btn-light btn-lg">{CTA_CONTENT.ctaLabel}</Link>
+        <Link to={CTA_CONTENT.ctaHref} className="btn btn-light btn-lg">
+          {CTA_CONTENT.ctaLabel} <i className="bi bi-arrow-right" aria-hidden="true" />
+        </Link>
       </section>
 
       <footer className="landing-footer">
         <div className="landing-footer__inner">
           <div className="landing-footer__marca">
             <div className="landing-footer__marca-linea">
-              {theme?.logo_url && <img src={theme.logo_url} alt="" height={22} />}
+              {theme?.logo_url
+                ? <img src={theme.logo_url} alt="" height={22} />
+                : <span className="landing-glyph" aria-hidden="true">{inicialesDeMarca(theme, nombreSitio)}</span>}
               <span>{nombreSitio}</span>
             </div>
             <p className="landing-footer__descripcion">{FOOTER_CONTENT.description}</p>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Alert, Button, Card, Form, Spinner } from 'react-bootstrap'
+import { Alert, Button, Form, Spinner } from 'react-bootstrap'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../../../context/AuthContext'
 import * as permissionsService from '../../../services/permissionsService'
@@ -7,6 +7,30 @@ import * as rolesService from '../../../services/rolesService'
 import * as usersService from '../../../services/usersService'
 
 const CAMPOS_INICIALES = { username: '', email: '', first_name: '', last_name: '', password: '', must_change_password: true }
+
+// Cuántos permisos se nombran antes de resumir el resto. El catálogo entero son 29: listarlos
+// todos bajo cada rol convierte la pantalla en un muro de texto y se deja de leer.
+const PERMISOS_A_NOMBRAR = 5
+
+/** `{ 'usuarios.ver': 'Ver usuarios', … }` a partir del catálogo agrupado por módulo. */
+function nombresPorCodename(modulos) {
+  return Object.values(modulos).flat().reduce((mapa, p) => ({ ...mapa, [p.codename]: p.name }), {})
+}
+
+/**
+ * Qué habilita un rol, en una línea. Es el dato que faltaba para elegir: la lista de roles solo
+ * mostraba nombres ("LECTOR", "OPERADOR"), y saber qué significaba cada uno obligaba a abrir la
+ * pantalla de roles en otra pestaña.
+ */
+function resumenDeRol(rol, nombres) {
+  const codenames = rol.permission_codenames || []
+  if (codenames.length === 0) return 'No otorga ningún permiso todavía.'
+  const legibles = codenames.map((c) => nombres[c] || c)
+  const visibles = legibles.slice(0, PERMISOS_A_NOMBRAR).join(', ')
+  const restantes = legibles.length - PERMISOS_A_NOMBRAR
+  const permisos = codenames.length === 1 ? '1 permiso' : `${codenames.length} permisos`
+  return restantes > 0 ? `Otorga ${permisos}: ${visibles} y ${restantes} más.` : `Otorga ${permisos}: ${visibles}.`
+}
 
 export default function UserFormPage() {
   const { id } = useParams()
@@ -56,6 +80,8 @@ export default function UserFormPage() {
     }
   }, [id, esEdicion])
 
+  const nombresDePermisos = nombresPorCodename(catalogoModulos)
+
   const alternarRol = (roleId) => {
     setRolesSeleccionados((prev) => (prev.includes(roleId) ? prev.filter((r) => r !== roleId) : [...prev, roleId]))
   }
@@ -77,9 +103,13 @@ export default function UserFormPage() {
         if (puedeAsignarSuperusuario) await usersService.setSuperuser(id, esSuperusuario)
         setExito('Cambios guardados.')
       } else {
+        // Los roles viajan en la misma petición que crea la cuenta y no en una segunda: si
+        // fueran dos, un fallo en la segunda dejaría el usuario creado y sin rol, que es
+        // justamente lo que se venía haciendo a mano.
         await usersService.create({
           username: campos.username, email: campos.email, first_name: campos.first_name,
           last_name: campos.last_name, password: campos.password, must_change_password: campos.must_change_password,
+          role_ids: rolesSeleccionados,
         })
         navigate('/admin/users')
       }
@@ -94,100 +124,118 @@ export default function UserFormPage() {
 
   return (
     <div>
-      <h1 className="h4 mb-3">{esEdicion ? 'Editar usuario' : 'Nuevo usuario'}</h1>
+      <div className="mz-view-head">
+        <div>
+          <h2>{esEdicion ? 'Editar usuario' : 'Nuevo usuario'}</h2>
+          <p className="mz-desc">Datos de la cuenta, roles y permisos directos.</p>
+        </div>
+      </div>
       {error && <Alert variant="danger">{error}</Alert>}
       {exito && <Alert variant="success">{exito}</Alert>}
 
       <Form onSubmit={enviar}>
-        <Card className="chart-panel mb-3">
-          <h6>Datos generales</h6>
-          {!esEdicion && (
-            <Form.Group className="mb-2" controlId="user-username">
-              <Form.Label>Nombre de usuario</Form.Label>
-              <Form.Control value={campos.username} onChange={(e) => setCampos({ ...campos, username: e.target.value })} required />
-            </Form.Group>
-          )}
-          <Form.Group className="mb-2" controlId="user-email">
-            <Form.Label>Correo</Form.Label>
-            <Form.Control type="email" value={campos.email} onChange={(e) => setCampos({ ...campos, email: e.target.value })} required />
-          </Form.Group>
-          <Form.Group className="mb-2" controlId="user-first-name">
-            <Form.Label>Nombre</Form.Label>
-            <Form.Control value={campos.first_name} onChange={(e) => setCampos({ ...campos, first_name: e.target.value })} />
-          </Form.Group>
-          <Form.Group className="mb-2" controlId="user-last-name">
-            <Form.Label>Apellido</Form.Label>
-            <Form.Control value={campos.last_name} onChange={(e) => setCampos({ ...campos, last_name: e.target.value })} />
-          </Form.Group>
-          {!esEdicion && (
-            <>
-              <Form.Group className="mb-2" controlId="user-password">
-                <Form.Label>Contraseña</Form.Label>
-                <Form.Control type="password" value={campos.password} onChange={(e) => setCampos({ ...campos, password: e.target.value })} required minLength={8} />
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Datos generales</h3></div>
+          <div className="mz-card-body">
+            {!esEdicion && (
+              <Form.Group className="mb-2" controlId="user-username">
+                <Form.Label>Nombre de usuario</Form.Label>
+                <Form.Control value={campos.username} onChange={(e) => setCampos({ ...campos, username: e.target.value })} required />
               </Form.Group>
-              <Form.Check
-                type="checkbox"
-                id="user-must-change-password"
-                label="Exigir cambio de contraseña en el próximo inicio de sesión"
-                checked={campos.must_change_password}
-                onChange={(e) => setCampos({ ...campos, must_change_password: e.target.checked })}
-              />
-            </>
-          )}
-        </Card>
+            )}
+            <Form.Group className="mb-2" controlId="user-email">
+              <Form.Label>Correo</Form.Label>
+              <Form.Control type="email" value={campos.email} onChange={(e) => setCampos({ ...campos, email: e.target.value })} required />
+            </Form.Group>
+            <Form.Group className="mb-2" controlId="user-first-name">
+              <Form.Label>Nombre</Form.Label>
+              <Form.Control value={campos.first_name} onChange={(e) => setCampos({ ...campos, first_name: e.target.value })} />
+            </Form.Group>
+            <Form.Group className="mb-2" controlId="user-last-name">
+              <Form.Label>Apellido</Form.Label>
+              <Form.Control value={campos.last_name} onChange={(e) => setCampos({ ...campos, last_name: e.target.value })} />
+            </Form.Group>
+            {!esEdicion && (
+              <>
+                <Form.Group className="mb-2" controlId="user-password">
+                  <Form.Label>Contraseña</Form.Label>
+                  <Form.Control type="password" value={campos.password} onChange={(e) => setCampos({ ...campos, password: e.target.value })} required minLength={8} />
+                </Form.Group>
+                <Form.Check
+                  type="checkbox"
+                  id="user-must-change-password"
+                  label="Exigir cambio de contraseña en el próximo inicio de sesión"
+                  checked={campos.must_change_password}
+                  onChange={(e) => setCampos({ ...campos, must_change_password: e.target.checked })}
+                />
+              </>
+            )}
+          </div>
+        </section>
 
         {esEdicion && puedeAsignarSuperusuario && (
-          <Card className="chart-panel mb-3">
-            <h6>Superusuario</h6>
-            <div className="chart-panel__subtitle">
-              Un superusuario tiene acceso completo a todo el sistema, sin importar sus roles o
-              permisos, y puede otorgar este mismo estado a otras cuentas.
+          <section className="mz-card mb-3">
+            <div className="mz-card-head"><h3>Superusuario</h3></div>
+            <div className="mz-card-body">
+              <div className="chart-panel__subtitle">
+                Un superusuario tiene acceso completo a todo el sistema, sin importar sus roles o
+                permisos, y puede otorgar este mismo estado a otras cuentas.
+              </div>
+              <Form.Check
+                type="checkbox"
+                id="user-is-superuser"
+                label="Superusuario"
+                checked={esSuperusuario}
+                onChange={(e) => setEsSuperusuario(e.target.checked)}
+              />
             </div>
-            <Form.Check
-              type="checkbox"
-              id="user-is-superuser"
-              label="Superusuario"
-              checked={esSuperusuario}
-              onChange={(e) => setEsSuperusuario(e.target.checked)}
-            />
-          </Card>
+          </section>
         )}
 
-        {esEdicion && (
-          <>
-            <Card className="chart-panel mb-3">
-              <h6>Roles</h6>
-              {rolesDisponibles.length === 0 && <div className="chart-panel__subtitle">No hay roles creados todavía.</div>}
-              {rolesDisponibles.map((rol) => (
+        <section className="mz-card mb-3">
+          <div className="mz-card-head"><h3>Roles</h3></div>
+          <div className="mz-card-body">
+            <div className="chart-panel__subtitle">
+              Bajo cada rol se indica qué habilita. Un usuario puede tener más de uno: se suman.
+            </div>
+            {rolesDisponibles.length === 0 && <div className="chart-panel__subtitle">No hay roles creados todavía.</div>}
+            {rolesDisponibles.map((rol) => (
+              <div key={rol.id} className="mb-2">
                 <Form.Check
-                  key={rol.id}
                   type="checkbox"
                   id={`rol-${rol.id}`}
                   label={rol.name}
                   checked={rolesSeleccionados.includes(rol.id)}
                   onChange={() => alternarRol(rol.id)}
                 />
-              ))}
-            </Card>
+                <div className="chart-panel__subtitle ms-4 mt-0">{resumenDeRol(rol, nombresDePermisos)}</div>
+              </div>
+            ))}
+          </div>
+        </section>
 
-            <Card className="chart-panel mb-3">
-              <h6>Permisos directos (además de los que otorgan sus roles)</h6>
-              {Object.entries(catalogoModulos).map(([modulo, permisos]) => (
-                <div key={modulo} className="mb-2">
-                  <div className="fw-semibold text-capitalize" style={{ fontSize: '0.85rem' }}>{modulo}</div>
-                  {permisos.map((p) => (
-                    <Form.Check
-                      key={p.codename}
-                      type="checkbox"
-                      id={`permiso-${p.codename}`}
-                      label={p.name}
-                      checked={permisosSeleccionados.includes(p.codename)}
-                      onChange={() => alternarPermiso(p.codename)}
-                    />
-                  ))}
-                </div>
-              ))}
-            </Card>
+        {esEdicion && (
+          <>
+            <section className="mz-card mb-3">
+              <div className="mz-card-head"><h3>Permisos directos (además de los que otorgan sus roles)</h3></div>
+              <div className="mz-card-body">
+                {Object.entries(catalogoModulos).map(([modulo, permisos]) => (
+                  <div key={modulo} className="mb-2">
+                    <div className="fw-semibold text-capitalize" style={{ fontSize: '0.85rem' }}>{modulo}</div>
+                    {permisos.map((p) => (
+                      <Form.Check
+                        key={p.codename}
+                        type="checkbox"
+                        id={`permiso-${p.codename}`}
+                        label={p.name}
+                        checked={permisosSeleccionados.includes(p.codename)}
+                        onChange={() => alternarPermiso(p.codename)}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </section>
           </>
         )}
 

@@ -131,18 +131,20 @@ export default function DashboardHistoricoPage() {
 
   return (
     <div className="cartera-app">
-      <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+      <div className="mz-view-head">
         <div>
-          <h3 className="mb-1">Histórico de cargas</h3>
-          <p className="chart-panel__subtitle mb-0">
+          <h2>Histórico de cargas</h2>
+          <p className="mz-desc">
             Compará la evolución de una o más columnas a través de las cargas de este dashboard.
             Desmarcar "Incluir" excluye esa carga de esta comparación y también de la tabla
             histórica dentro del dashboard.
           </p>
         </div>
-        <Button as={Link} to={`/app/dashboards/${dashboardId}`} variant="outline-secondary" size="sm">
-          Volver al dashboard
-        </Button>
+        <div className="mz-view-actions">
+          <Button as={Link} to={`/app/dashboards/${dashboardId}`} variant="outline-secondary" size="sm">
+            <i className="bi bi-arrow-left" aria-hidden="true"></i> Volver al dashboard
+          </Button>
+        </div>
       </div>
 
       {cargando && <div className="text-center mb-3" role="status"><Spinner animation="border" /></div>}
@@ -183,9 +185,9 @@ export default function DashboardHistoricoPage() {
                       />
                     </td>
                     <td>{carga.nombre_original}</td>
-                    <td>{formatDate(carga.fecha_carga.slice(0, 10))}</td>
-                    <td>{carga.fecha_corte ? formatDate(carga.fecha_corte) : '—'}</td>
-                    <td className="text-end">{formatNumber(carga.total_filas)}</td>
+                    <td className="mz-mono">{formatDate(carga.fecha_carga.slice(0, 10))}</td>
+                    <td className="mz-mono">{carga.fecha_corte ? formatDate(carga.fecha_corte) : '—'}</td>
+                    <td className="text-end mz-mono">{formatNumber(carga.total_filas)}</td>
                     <td className="d-flex gap-2">
                       <Button size="sm" variant="outline-secondary" onClick={() => verArchivo(carga)}>
                         Ver archivo

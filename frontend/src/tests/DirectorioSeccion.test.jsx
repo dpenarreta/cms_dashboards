@@ -197,6 +197,37 @@ describe('DirectorioSeccion — título con el corte y hallazgos', () => {
     render(<DirectorioSeccion componente={antiguedad()} componentes={[total, antiguedad()]} />)
     expect(screen.getByText(/según "Fecha de Vencimiento"/)).toBeInTheDocument()
   })
+
+  /**
+   * El prompt le pide a la IA que resalte los números y nombres entre `**dobles asteriscos**`
+   * (`dashboard_interpretation.py::_construir_prompt_hallazgos`). Las secciones que muestran el
+   * hallazgo como nota al pie —cumplimiento de metas y mayores deudores— lo imprimían crudo: en
+   * producción se leía "El **cumplimiento de metas** evidencia…" con los asteriscos a la vista.
+   */
+  it('las negritas del hallazgo se interpretan también en la nota al pie', () => {
+    // La sección de deudores muestra su hallazgo como nota al pie y no en la caja destacada: es
+    // el camino que imprimía los asteriscos crudos.
+    const deudores = {
+      config: { bloque: 'deudores' },
+      mapeo: { cuantos: 2 },
+      content: {
+        titulo: 'MAYORES DEUDORES',
+        deudores: [{ nombre: 'ACME', total: 500, porcentaje_cartera: 50, tramos: [] }],
+      },
+    }
+
+    render(
+      <DirectorioSeccion
+        componente={deudores}
+        componentes={[deudores]}
+        hallazgoIA="El tramo **+120 días** concentra **$364,164**."
+      />,
+    )
+
+    expect(screen.getByText('+120 días').tagName).toBe('STRONG')
+    expect(screen.getByText('$364,164').tagName).toBe('STRONG')
+    expect(document.body.textContent).not.toContain('**')
+  })
 })
 
 describe('DirectorioSeccion — nomenclatura del informe', () => {

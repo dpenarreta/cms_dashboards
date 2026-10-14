@@ -229,7 +229,7 @@ export default function DashboardTabsBar({ dashboardId, modoEdicion = false }) {
                       className="text-secondary"
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMostrarModalEditar(true) }}
                     >
-                      ✎
+                      <i className="bi bi-pencil" aria-hidden="true"></i>
                     </span>
                   )}
                   {puedeEliminar && (
@@ -239,7 +239,7 @@ export default function DashboardTabsBar({ dashboardId, modoEdicion = false }) {
                       className="text-danger"
                       onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMostrarModalEliminar(true) }}
                     >
-                      🗑
+                      <i className="bi bi-trash" aria-hidden="true"></i>
                     </span>
                   )}
                 </>
@@ -249,7 +249,7 @@ export default function DashboardTabsBar({ dashboardId, modoEdicion = false }) {
         ))}
         {puedeCrear && pestanas.length < LIMITE_PESTANAS && (
           <Nav.Item>
-            <Nav.Link onClick={() => setMostrarModalCrear(true)} aria-label="Agregar pestaña">+</Nav.Link>
+            <Nav.Link onClick={() => setMostrarModalCrear(true)} aria-label="Agregar pestaña"><i className="bi bi-plus-lg" aria-hidden="true"></i></Nav.Link>
           </Nav.Item>
         )}
       </Nav>
